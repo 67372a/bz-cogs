@@ -10,7 +10,7 @@ from discord import Message
 from redbot.core import commands
 
 from aiuser.config.defaults import DEFAULT_PROMPT
-from aiuser.config.models import OTHER_MODELS_LIMITS
+from aiuser.config.models import MODELS_LIMITS
 from aiuser.messages_list.converter.converter import MessageConverter
 from aiuser.messages_list.entry import MessageEntry
 from aiuser.messages_list.opt_view import OptView
@@ -282,8 +282,8 @@ class MessagesList:
         limit = 7000
 
         model = model.split("/")[-1].split(":")[0]
-        if model in OTHER_MODELS_LIMITS:
-            limit = OTHER_MODELS_LIMITS.get(model, limit) - 1000 # 1000 token buffer
+        if model in MODELS_LIMITS:
+            limit = MODELS_LIMITS.get(model, limit) - 1000 # 1000 token buffer
 
         return limit
 

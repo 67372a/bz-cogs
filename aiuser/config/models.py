@@ -105,7 +105,7 @@ UNSUPPORTED_LOGIT_BIAS_MODELS = [
     "o3-mini-2025-01-31"
 ]
 
-{
+MODELS_LIMITS = {
     "yi-large": 32768,
     "mn-starcannon-12b": 16384,
     "deepcoder-14b-preview": 96000,
