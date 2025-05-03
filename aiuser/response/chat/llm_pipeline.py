@@ -64,6 +64,7 @@ class LLMPipeline:
             )
             return response.choices[0].message.content
         else:
+            logger.info(f'Generated request kwargs {kwargs}: ')
             response: ChatCompletion = await self.openai_client.chat.completions.create(
                 model=self.model, messages=self.msg_list.get_json(), **kwargs
             )
