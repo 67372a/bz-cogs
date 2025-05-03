@@ -68,6 +68,7 @@ class LLMPipeline:
                 model=self.model, messages=self.msg_list.get_json(), **kwargs
             )
 
+            logger.info(f'Generated response in {response}: ')
             tools_calls: List[ChatCompletionMessageToolCall] = response.choices[0].message.tool_calls or []
 
             return response.choices[0].message.content, tools_calls
