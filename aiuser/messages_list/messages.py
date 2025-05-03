@@ -280,21 +280,10 @@ class MessagesList:
     @staticmethod
     def _get_token_limit(model) -> int:
         limit = 7000
-        
-        if 'gemini-2' in model or 'gpt-4.1' in model or 'llama-4.1' in model:
-            limit = 1000000
-        if "gpt-4o" in model or "llama-3.1" in model or "llama-3.2" in model or 'grok-3' in model:
-            limit = 123000
-        if "100k" in model or "claude" in model:
-            limit = 98000
-        if "16k" in model:
-            limit = 15000
-        if "32k" in model:
-            limit = 31000
 
         model = model.split("/")[-1].split(":")[0]
         if model in OTHER_MODELS_LIMITS:
-            limit = OTHER_MODELS_LIMITS.get(model, limit)
+            limit = OTHER_MODELS_LIMITS.get(model, limit) - 1000 # 1000 token buffer
 
         return limit
 
