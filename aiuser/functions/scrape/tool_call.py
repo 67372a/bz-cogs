@@ -28,6 +28,6 @@ class ScrapeToolCall(ToolCall):
         logger.info(f'Attempting scrape of {arguments["url"]} in {self.ctx.guild}')
         try:
             return await scrape_page(arguments["url"])
-        except Exception:
-            logger.debug(f"Failed to scrape {arguments['url']}")
-            return None
+        except Exception as exc:
+            logger.exception(f"Failed to scrape {arguments['url']}")
+            return "An error occured while attempting to access the given URL."
