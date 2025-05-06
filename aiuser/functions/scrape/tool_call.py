@@ -20,7 +20,7 @@ class ScrapeToolCall(ToolCall):
                         "description": "The URL or link to open",
                     }
             },
-            required=["query"]
+            required=["url"]
         )))
     function_name = schema.function.name
 
