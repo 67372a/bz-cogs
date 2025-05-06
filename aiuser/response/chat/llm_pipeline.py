@@ -57,6 +57,7 @@ class LLMPipeline:
         self.available_tools_schemas = [tool.schema for tool in self.enabled_tools]
 
     async def call_client(self, kwargs: Dict[str, Any]) -> Union[str, Tuple[str, List[ChatCompletionMessageToolCall]]]:
+        logger.info(f'Generated request kwargs {kwargs}: ')
         if "gpt-3.5-turbo-instruct" in self.model:
             prompt = "\n".join(message["content"] for message in self.messages)
             response: Completion = await self.openai_client.completions.create(
