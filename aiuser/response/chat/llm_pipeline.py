@@ -85,7 +85,8 @@ class LLMPipeline:
 
             self.completion, tool_calls = await self.call_client(kwargs)
 
-            if tool_calls and not self.completion:
+            # Gemini can call and complete
+            if tool_calls and (not self.completion or 'gemini' in self.model.lower()):
                 await self.handle_tool_calls(tool_calls)
             else:
                 break
