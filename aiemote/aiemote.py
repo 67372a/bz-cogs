@@ -1,5 +1,5 @@
 import asyncio
-import json # Added for JSON parsing
+import json
 import logging
 import random
 import re
@@ -17,7 +17,6 @@ from redbot.core.utils.views import SimpleMenu
 
 logger = logging.getLogger("red.bz_cogs.aiemote")
 
-# Default model, can be changed via config
 DEFAULT_LLM_MODEL = "gpt-4o-mini"
 DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
@@ -33,7 +32,6 @@ class AIEmote(commands.Cog):
         self.encoding = None
         self.aclient: Optional[AsyncOpenAI] = None
 
-        # LLM settings
         self.llm_provider: str = "openai"
         self.llm_model: str = DEFAULT_LLM_MODEL
         self.openrouter_api_key: Optional[str] = None
@@ -84,28 +82,41 @@ class AIEmote(commands.Cog):
         self.openrouter_referer = global_config.get("openrouter_referer")
         self.openrouter_title = global_config.get("openrouter_title")
 
-        asyncio.create_task(self.initialize_llm_client())
+        asyncio.create_task(self.initialize_llm_client()) # Called without ctx
 
     @commands.Cog.listener()
     async def on_red_api_tokens_update(self, service_name, api_tokens):
         if service_name in ["openai", "openrouter"]:
             logger.info(f"API token updated for {service_name}, re-initializing LLM client.")
-            asyncio.create_task(self.initialize_llm_client())
+            asyncio.create_task(self.initialize_llm_client()) # Called without ctx
 
     async def initialize_llm_client(self, ctx: Optional[commands.Context] = None):
         self.aclient = None
         api_key = None
         base_url = None
         default_headers = None
+        provider_name_for_msg = "" # For user-friendly messages
 
         if self.llm_provider == "openai":
+            provider_name_for_msg = "OpenAI"
             api_key = (await self.bot.get_shared_api_tokens("openai")).get("api_key")
             if not api_key:
-                msg = f"OpenAI API key not set for `aiemote`. Please set it with `{ctx.clean_prefix if ctx else ''}set api openai api_key,API_KEY`"
-                if ctx: await ctx.send(msg)
-                else: logger.error(msg)
+                # Construct clean_prefix part carefully
+                prefix_str = ""
+                if ctx and hasattr(ctx, 'clean_prefix') and ctx.clean_prefix:
+                    prefix_str = ctx.clean_prefix
+                elif hasattr(self.bot, ' όταν') and self.bot. όταν: # fallback to a common prefix if possible
+                    prefix_str = self.bot. όταν[0] if isinstance(self.bot. όταν, list) else self.bot. όταν
+
+                msg = f"{provider_name_for_msg} API key not set for `aiemote`. Please set it with `{prefix_str}set api openai api_key,API_KEY`"
+                if ctx: # Only send message if ctx is provided (user-initiated command)
+                    await ctx.send(msg)
+                    logger.warning(msg) # Log as warning if user command failed due to this
+                else: # Log as error if system-initiated and failing
+                    logger.error(msg)
                 return
         elif self.llm_provider == "openrouter":
+            provider_name_for_msg = "OpenRouter"
             api_key = self.openrouter_api_key
             if not api_key:
                 api_key = (await self.bot.get_shared_api_tokens("openrouter")).get("api_key")
@@ -113,23 +124,26 @@ class AIEmote(commands.Cog):
                 api_key = (await self.bot.get_shared_api_tokens("openai")).get("api_key")
 
             if not api_key:
-                msg = f"OpenRouter API key not set. Configure via `[p]aiemoteowner setopenrouterkey`, shared token `openrouter`, or shared token `openai`."
-                if ctx: await ctx.send(msg)
-                else: logger.error(msg)
+                msg = f"{provider_name_for_msg} API key not set. Configure via owner commands, or shared tokens for 'openrouter' or 'openai'."
+                if ctx:
+                    await ctx.send(msg)
+                    logger.warning(msg)
+                else:
+                    logger.error(msg)
                 return
 
             base_url = self.openrouter_base_url or DEFAULT_OPENROUTER_BASE_URL
             default_headers = {}
-            if self.openrouter_referer:
-                default_headers["HTTP-Referer"] = self.openrouter_referer
-            if self.openrouter_title:
-                default_headers["X-Title"] = self.openrouter_title
-            if not default_headers:
-                default_headers = None
+            if self.openrouter_referer: default_headers["HTTP-Referer"] = self.openrouter_referer
+            if self.openrouter_title: default_headers["X-Title"] = self.openrouter_title
+            if not default_headers: default_headers = None
         else:
             msg = f"Invalid LLM provider: {self.llm_provider}. Choose 'openai' or 'openrouter'."
-            if ctx: await ctx.send(msg)
-            else: logger.error(msg)
+            if ctx:
+                await ctx.send(msg)
+                logger.warning(msg)
+            else:
+                logger.error(msg)
             return
 
         try:
@@ -141,10 +155,10 @@ class AIEmote(commands.Cog):
             )
             logger.info(f"LLM client initialized for provider: {self.llm_provider}, model: {self.llm_model}")
         except Exception as e:
-            self.aclient = None
-            logger.exception("Failed to initialize AsyncOpenAI client:", exc_info=e)
-            if ctx: await ctx.send(f"Error initializing LLM client: {e}")
-            return
+            self.aclient = None # Ensure client is None on failure
+            logger.exception(f"Failed to initialize AsyncOpenAI client for {self.llm_provider}:", exc_info=e)
+            if ctx: await ctx.send(f"Error initializing LLM client for {self.llm_provider}: {e}")
+            return # Do not proceed to tiktoken if client init failed
 
         try:
             self.encoding = tiktoken.encoding_for_model(self.llm_model)
@@ -152,15 +166,13 @@ class AIEmote(commands.Cog):
             logger.warning(f"Could not get tiktoken encoding for model {self.llm_model}. Falling back to cl100k_base.")
             self.encoding = tiktoken.get_encoding("cl100k_base")
 
-
     @commands.Cog.listener()
     async def on_message_without_command(self, message: discord.Message):
         if not self.aclient:
-            if message.guild:
-                 ctx_temp = await self.bot.get_context(message)
-                 await self.initialize_llm_client(ctx_temp)
+            await self.initialize_llm_client() # No ctx, will only log if key missing
             if not self.aclient:
-                logger.debug("LLM client not available, skipping reaction.")
+                # initialize_llm_client would have logged the error.
+                # No need to log again here, just means cog is not functional for reacting.
                 return
 
         ctx: commands.Context = await self.bot.get_context(message)
@@ -176,8 +188,8 @@ class AIEmote(commands.Cog):
                 logger.warning(f"Failed to add reaction {emoji} in {message.guild.name if message.guild else 'DM'}: {e}")
 
     async def pick_emoji(self, message: discord.Message):
-        if not self.aclient:
-            logger.error("LLM client not available in pick_emoji. This should not happen.")
+        if not self.aclient: # Should be caught by on_message_without_command, but as a safeguard
+            logger.error("LLM client not available in pick_emoji. This should not happen if checks above are working.")
             return None
 
         options_str = "\n"
@@ -193,11 +205,11 @@ class AIEmote(commands.Cog):
 
         supports_json_mode = "gemini" in self.llm_model.lower()
         extra_instruction = await self.config.extra_instruction()
-        guild_name_log = message.guild.name if message.guild else 'DM' # For logging
+        guild_name_log = message.guild.name if message.guild else 'DM'
 
         request_kwargs = {
             "model": self.llm_model,
-            "messages": [], # Will be populated below
+            "messages": [],
         }
 
         if supports_json_mode:
@@ -208,9 +220,9 @@ class AIEmote(commands.Cog):
                 f"and an integer value corresponding to the chosen option, between 0 and {len(emojis)-1}. "
                 f"For example: {{\"emoji_index\": 0}}"
             )
-            request_kwargs["max_tokens"] = 15 # A bit more for JSON structure
+            request_kwargs["max_tokens"] = 15
             request_kwargs["response_format"] = {"type": "json_object"}
-            logger.debug(f"Using JSON mode for model {self.llm_model} in {guild_name_log}.")
+            # logger.debug(f"Using JSON mode for model {self.llm_model} in {guild_name_log}.") # Can be noisy
         else:
             system_prompt = (
                 f"You are in a chat room. You will pick an emoji for the following message. "
@@ -219,7 +231,7 @@ class AIEmote(commands.Cog):
                 f"between 0 and {len(emojis)-1}."
             )
             request_kwargs["max_tokens"] = 5
-            logger.debug(f"Using plain/regex mode for model {self.llm_model} in {guild_name_log}.")
+            # logger.debug(f"Using plain/regex mode for model {self.llm_model} in {guild_name_log}.") # Can be noisy
 
         content = f"{message.author.display_name} : {self.stringify_any_mentions(message)}"
         request_kwargs["messages"] = [
@@ -234,7 +246,7 @@ class AIEmote(commands.Cog):
             return None
 
         response_content = response.choices[0].message.content
-        if not response_content: # Handles None or empty string
+        if not response_content:
             logger.warning(
                 f"Skipping react in {guild_name_log}! LLM ({self.llm_model}) returned empty content."
             )
@@ -260,33 +272,30 @@ class AIEmote(commands.Cog):
             except json.JSONDecodeError:
                 logger.warning(
                     f"Skipping react in {guild_name_log}! Failed to parse JSON response from model {self.llm_model} (JSON mode was active): '{response_content}'. Falling back to regex.")
-                # Fallback to regex if JSON mode fails for some reason for a Gemini model
                 match = re.search(r'\d+', response_content)
                 if match:
                     try:
                         chosen_index = int(match.group(0))
-                    except ValueError: # Should not happen if regex matches \d+
+                    except ValueError:
                         logger.warning(f"Skipping react in {guild_name_log}! Could not parse int from model {self.llm_model} (JSON mode fallback regex) response: '{response_content}'")
-                else: # No number found even with regex
+                else:
                     logger.warning(f"Skipping react in {guild_name_log}! No parsable number in response from model {self.llm_model} (JSON mode fallback regex): '{response_content}'")
 
-
-        if not supports_json_mode or chosen_index is None and supports_json_mode : # If not JSON mode OR JSON mode failed and chosen_index is still None
-            if not supports_json_mode: # Only log regex mode if it was the primary mode
+        if not supports_json_mode or (chosen_index is None and supports_json_mode):
+            if not supports_json_mode:
                  logger.debug(f"Attempting regex parsing for model {self.llm_model} in {guild_name_log}.")
             match = re.search(r'\d+', response_content)
             if match:
                 try:
                     potential_index = int(match.group(0))
-                    # Only set if chosen_index wasn't already set by a successful JSON parse (though this path implies it wasn't)
                     if chosen_index is None:
                         chosen_index = potential_index
                 except ValueError:
-                    if not supports_json_mode: # Avoid redundant logging if JSON fallback already logged
+                    if not supports_json_mode:
                         logger.warning(
                             f"Skipping react in {guild_name_log}! Could not parse int from model {self.llm_model} (regex mode) response: '{response_content}'")
             else:
-                if not supports_json_mode: # Avoid redundant logging
+                if not supports_json_mode:
                     logger.warning(
                         f"Skipping react in {guild_name_log}! No parsable number in response from model {self.llm_model} (regex mode): '{response_content}'.")
 
@@ -303,7 +312,6 @@ class AIEmote(commands.Cog):
                     f"Skipping react in {guild_name_log}! Index {chosen_index} out of range (0-{len(emojis)-1}) for model {self.llm_model}. Response: '{response_content}'")
                 return None
         else:
-            # Logging for failure to extract index would have happened above
             return None
 
     async def is_valid_to_react(self, ctx: commands.Context):
@@ -311,9 +319,9 @@ class AIEmote(commands.Cog):
             return False
 
         if not self.aclient:
-            await self.initialize_llm_client(ctx)
+            await self.initialize_llm_client() # No ctx, will only log if key missing
             if not self.aclient:
-                logger.debug("LLM client not ready, cannot react.")
+                # initialize_llm_client would have logged the error.
                 return False
 
         whitelist = self.whitelist.get(ctx.guild.id, [])
@@ -343,7 +351,7 @@ class AIEmote(commands.Cog):
             return False
 
         if len(ctx.message.content) > 1500 or len(ctx.message.content) < 10:
-            logger.debug(f"Skipping message in {ctx.guild.name} with length {len(ctx.message.content)}")
+            # logger.debug(f"Skipping message in {ctx.guild.name} with length {len(ctx.message.content)}") # Can be noisy
             return False
 
         return True
@@ -378,6 +386,7 @@ class AIEmote(commands.Cog):
         """
         pass
 
+    # ... (rest of the commands remain the same, they correctly pass `ctx` to initialize_llm_client if needed)
     @aiemote.command(name="whitelist")
     @checks.admin_or_permissions(manage_guild=True)
     async def whitelist_list(self, ctx: commands.Context):
@@ -633,8 +642,8 @@ class AIEmote(commands.Cog):
         if pred.result is True:
             await self.config.clear_all_guilds()
             await self.config.clear_all_globals()
-            await self.cog_load()
-            await self.initialize_llm_client(ctx)
+            await self.cog_load() # Reloads defaults from config definition
+            await self.initialize_llm_client(ctx) # Attempt re-init with (now default) settings, passing ctx for feedback if still issue
             await confirm_msg.edit(content="All AIEmote settings have been reset to default.", embed=None)
         else:
             await confirm_msg.edit(content="Reset cancelled.", embed=None)
@@ -678,15 +687,15 @@ class AIEmote(commands.Cog):
             return await ctx.send("Invalid provider. Use 'openai' or 'openrouter'.")
         self.llm_provider = provider
         await self.config.llm_provider.set(provider)
-        await self.initialize_llm_client(ctx)
+        await self.initialize_llm_client(ctx) # Pass ctx for feedback on this direct command
         await ctx.send(f"LLM provider set to `{provider}`. Client re-initialized.")
 
     @aiemote_owner.command(name="setmodel")
     async def set_llm_model(self, ctx: commands.Context, *, model_name: str):
-        """Set the LLM model name (e.g., 'gpt-4o-mini', 'google/gemini-pro').""" # Updated example
+        """Set the LLM model name (e.g., 'gpt-4o-mini', 'google/gemini-pro')."""
         self.llm_model = model_name
         await self.config.llm_model.set(model_name)
-        await self.initialize_llm_client(ctx)
+        await self.initialize_llm_client(ctx) # Pass ctx
         await ctx.send(f"LLM model set to `{model_name}`. Client re-initialized, TikToken encoding updated.")
 
     @aiemote_owner.command(name="setopenrouterkey")
@@ -697,7 +706,7 @@ class AIEmote(commands.Cog):
         """
         self.openrouter_api_key = api_key
         await self.config.openrouter_api_key.set(api_key)
-        await self.initialize_llm_client(ctx)
+        await self.initialize_llm_client(ctx) # Pass ctx
         if api_key:
             await ctx.send("OpenRouter API key set for AIEmote.")
         else:
@@ -711,7 +720,7 @@ class AIEmote(commands.Cog):
         final_url = url or DEFAULT_OPENROUTER_BASE_URL
         self.openrouter_base_url = final_url
         await self.config.openrouter_base_url.set(final_url)
-        await self.initialize_llm_client(ctx)
+        await self.initialize_llm_client(ctx) # Pass ctx
         await ctx.send(f"OpenRouter base URL set to `{final_url}`.")
 
     @aiemote_owner.command(name="setopenrouterheaders")
@@ -719,12 +728,12 @@ class AIEmote(commands.Cog):
         """Set custom HTTP-Referer and X-Title headers for OpenRouter.
            Provide "clear" for a header to remove it. No args clears both.
         """
-        if referer == "clear": referer = None
-        if title == "clear": title = None
+        if referer and referer.lower() == "clear": referer = None
+        if title and title.lower() == "clear": title = None
 
         self.openrouter_referer = referer
         self.openrouter_title = title
         await self.config.openrouter_referer.set(referer)
         await self.config.openrouter_title.set(title)
-        await self.initialize_llm_client(ctx)
+        await self.initialize_llm_client(ctx) # Pass ctx
         await ctx.send(f"OpenRouter headers updated: Referer=`{referer or 'Not Set'}`, Title=`{title or 'Not Set'}`.")
