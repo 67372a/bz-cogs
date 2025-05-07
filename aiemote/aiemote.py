@@ -4,6 +4,9 @@ import logging
 import random
 import re
 from typing import Optional
+# Add these imports at the top of aiemote.py
+from discord.ui import Modal, TextInput, View, Button, Select # Make sure Select is imported
+from discord import ButtonStyle, Interaction # Interaction for type hinting
 
 import discord
 import tiktoken
@@ -17,7 +20,8 @@ from redbot.core.utils.views import SimpleMenu
 
 logger = logging.getLogger("red.bz_cogs.aiemote")
 
-DEFAULT_LLM_MODEL = "gpt-4o-mini"
+EMOJIS_PER_PAGE = 5 # Keep it small for clarity in the select menu
+DEFAULT_LLM_MODEL = "google/gemini-2.5-flash-preview"
 DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 class AIEmote(commands.Cog):
@@ -32,7 +36,7 @@ class AIEmote(commands.Cog):
         self.encoding = None
         self.aclient: Optional[AsyncOpenAI] = None
 
-        self.llm_provider: str = "openai"
+        self.llm_provider: str = "openrouter"
         self.llm_model: str = DEFAULT_LLM_MODEL
         self.openrouter_api_key: Optional[str] = None
         self.openrouter_base_url: str = DEFAULT_OPENROUTER_BASE_URL
@@ -48,7 +52,7 @@ class AIEmote(commands.Cog):
             "extra_instruction": "",
             "optin": [],
             "optout": [],
-            "llm_provider": "openai",
+            "llm_provider": "openrouter",
             "llm_model": DEFAULT_LLM_MODEL,
             "openrouter_api_key": None,
             "openrouter_base_url": DEFAULT_OPENROUTER_BASE_URL,
@@ -372,6 +376,65 @@ class AIEmote(commands.Cog):
                 content = content.replace(mentioned_item.mention, f'@{mentioned_item.display_name}')
         return content
 
+    def _is_discord_emoji(self, emoji_str: str) -> bool:
+        return bool(re.fullmatch(self.MATCH_DISCORD_EMOJI_REGEX, emoji_str))
+
+    # Modified create_emoji_embed_pages for the view
+    def create_emoji_embed_pages_for_view(self, title: str, emojis: list, chunk_size: int = EMOJIS_PER_PAGE):
+        embeds = []
+        if not emojis:
+            embed = discord.Embed(title=title, description="No emojis configured yet.", color=discord.Color.blue())
+            embeds.append(embed)
+            return embeds
+
+        for i in range(0, len(emojis), chunk_size):
+            embed = discord.Embed(title=title, color=discord.Color.blue()) # Consistent color
+            chunk = emojis[i:i + chunk_size]
+            for item_idx, item in enumerate(chunk):
+                display_emoji = item["emoji"]
+                # For custom emojis, discord.utils.get may be needed if we want to display it as emoji in field name
+                # but PartialEmoji used in SelectOption handles this. String is fine for field name.
+                embed.add_field(name=f"{display_emoji}", value=item["description"][:1020], inline=False)
+            
+            if len(emojis) > chunk_size : # Only add footer if there are multiple pages potentially
+                 embed.set_footer(text=f"Page {(i // chunk_size) + 1} of {-(-len(emojis) // chunk_size)}") # Ceiling division for total pages
+            embeds.append(embed)
+        return embeds
+
+    # New helper for view to validate emoji using interaction for ephemeral feedback
+    async def check_valid_emoji_interaction(self, interaction: Interaction, emoji_str: str) -> bool:
+        if emoji_str in EMOJI_DATA:
+            return True
+        match = re.fullmatch(self.MATCH_DISCORD_EMOJI_REGEX, emoji_str)
+        if not match:
+            await interaction.response.send_message(f"'{emoji_str}' is not a valid standard emoji or custom Discord emoji format.",ephemeral=True)
+            return False
+        try:
+            partial_emoji = discord.PartialEmoji.from_str(emoji_str)
+            if partial_emoji.id:
+                found_emoji = discord.utils.get(self.bot.emojis, id=partial_emoji.id)
+                if not found_emoji:
+                    await interaction.response.send_message(f"I cannot use the custom emoji {emoji_str}. It might be from a server I'm not in, or I don't have permissions.",ephemeral=True)
+                    return False
+        except ValueError:
+            await interaction.response.send_message(f"Could not parse '{emoji_str}' as an emoji.",ephemeral=True)
+            return False
+        return True
+
+    # Helpers to get/save emoji lists (slightly refactored for clarity)
+    async def _get_emoji_list(self, config_group, emoji_list_attr_name: str) -> list:
+        if emoji_list_attr_name == "global_emojis":
+            return await self.config.global_emojis()
+        elif emoji_list_attr_name == "server_emojis" and config_group is not self.config : # Make sure config_group is a guild config
+            return await config_group.server_emojis()
+        return []
+
+    async def _save_emoji_list(self, config_group, emoji_list_attr_name: str, new_list: list):
+        if emoji_list_attr_name == "global_emojis":
+            await self.config.global_emojis.set(new_list)
+        elif emoji_list_attr_name == "server_emojis" and config_group is not self.config:
+            await config_group.server_emojis.set(new_list)
+
     @commands.group(name="aiemote", alias=["ai_emote"])
     @checks.admin_or_permissions(manage_guild=True)
     async def aiemote(self, _):
@@ -554,24 +617,6 @@ class AIEmote(commands.Cog):
         del emoji_list[index_to_remove]
         return True
 
-    @aiemote_owner.command(name="addglobal")
-    async def add_global_emoji(self, ctx: commands.Context, emoji: str, *, description: str):
-        """ Add an emoji to the global list. """
-        if not await self.check_valid_emoji(ctx, emoji):
-            return
-        emojis = await self.config.global_emojis()
-        if await self._add_emoji_to_list(ctx, emojis, emoji, description):
-            await self.config.global_emojis.set(emojis)
-            await ctx.tick()
-
-    @aiemote_owner.command(name="rmglobal", aliases=["removeglobal"])
-    async def remove_global_emoji(self, ctx: commands.Context, emoji: str):
-        """ Remove an emoji from the global list. """
-        emojis = await self.config.global_emojis()
-        if await self._remove_emoji_from_list(ctx, emojis, emoji):
-            await self.config.global_emojis.set(emojis)
-            await ctx.tick()
-
     async def create_emoji_embed_pages(self, ctx: commands.Context, title: str, emojis: list):
         embeds = []
         chunk_size = 8
@@ -648,27 +693,54 @@ class AIEmote(commands.Cog):
         else:
             await confirm_msg.edit(content="Reset cancelled.", embed=None)
 
-    @aiemote_owner.command(name="addserver")
-    async def add_server_emoji(self, ctx: commands.Context, emoji: str, *, description: str):
-        """ Add an emoji to the current server's list. """
-        if not ctx.guild:
-            return await ctx.send("This command can only be used in a server.")
-        if not await self.check_valid_emoji(ctx, emoji):
-            return
-        emojis = await self.config.guild(ctx.guild).server_emojis()
-        if await self._add_emoji_to_list(ctx, emojis, emoji, description):
-            await self.config.guild(ctx.guild).server_emojis.set(emojis)
-            await ctx.tick()
+    @aiemote_owner.group(name="manageemojis", invoke_without_command=True)
+    async def manageemojis_owner(self, ctx: commands.Context):
+        """Manage global and server emojis interactively."""
+        await ctx.send_help()
 
-    @aiemote_owner.command(name="rmserver", aliases=["removeserver"])
-    async def remove_server_emoji(self, ctx: commands.Context, emoji: str):
-        """ Remove an emoji from the current server's list. """
+    @manageemojis_owner.command(name="global")
+    @checks.is_owner() # Ensure owner check
+    async def manage_global_emojis(self, ctx: commands.Context):
+        """Manage global emojis interactively."""
+        view = ManageEmojisView(self, ctx, self.config, "global_emojis")
+        await view.start()
+
+    @aiemote.group(name="manageemojis", invoke_without_command=True) # New group under aiemote for guild admins
+    @checks.admin_or_permissions(manage_guild=True)
+    async def manageemojis_guild(self, ctx: commands.Context):
+        """Manage server-specific emojis interactively."""
+        await ctx.send_help()
+
+    @manageemojis_guild.command(name="server")
+    @checks.admin_or_permissions(manage_guild=True)
+    async def manage_server_emojis(self, ctx: commands.Context):
+        """Manage this server's specific emojis interactively."""
         if not ctx.guild:
             return await ctx.send("This command can only be used in a server.")
-        emojis = await self.config.guild(ctx.guild).server_emojis()
-        if await self._remove_emoji_from_list(ctx, emojis, emoji):
-            await self.config.guild(ctx.guild).server_emojis.set(emojis)
-            await ctx.tick()
+        guild_config = self.config.guild(ctx.guild)
+        view = ManageEmojisView(self, ctx, guild_config, "server_emojis")
+        await view.start()
+
+    # --- Deprecate old commands ---
+    @aiemote_owner.command(name="addglobal", hidden=True)
+    async def deprecated_add_global_emoji(self, ctx: commands.Context, emoji: str, *, description: str):
+        """(Deprecated) Use `[p]aiemoteowner manageemojis global` instead."""
+        await ctx.send(f"This command is deprecated. Please use `{ctx.prefix}aiemoteowner manageemojis global`.")
+
+    @aiemote_owner.command(name="rmglobal", aliases=["removeglobal"], hidden=True)
+    async def deprecated_remove_global_emoji(self, ctx: commands.Context, emoji: str):
+        """(Deprecated) Use `[p]aiemoteowner manageemojis global` instead."""
+        await ctx.send(f"This command is deprecated. Please use `{ctx.prefix}aiemoteowner manageemojis global`.")
+
+    @aiemote_owner.command(name="addserver", hidden=True) # Was owner only, could be admin. New one is admin.
+    async def deprecated_add_server_emoji(self, ctx: commands.Context, emoji: str, *, description: str):
+        """(Deprecated) Use `[p]aiemote manageemojis server` instead."""
+        await ctx.send(f"This command is deprecated. Please use `{ctx.prefix}aiemote manageemojis server`.")
+
+    @aiemote_owner.command(name="rmserver", aliases=["removeserver"], hidden=True)
+    async def deprecated_remove_server_emoji(self, ctx: commands.Context, emoji: str):
+        """(Deprecated) Use `[p]aiemote manageemojis server` instead."""
+        await ctx.send(f"This command is deprecated. Please use `{ctx.prefix}aiemote manageemojis server`.")
 
     @aiemote_owner.command(name="percent")
     async def set_percent(self, ctx: commands.Context, percent_chance: int):
@@ -737,3 +809,314 @@ class AIEmote(commands.Cog):
         await self.config.openrouter_title.set(title)
         await self.initialize_llm_client(ctx) # Pass ctx
         await ctx.send(f"OpenRouter headers updated: Referer=`{referer or 'Not Set'}`, Title=`{title or 'Not Set'}`.")
+
+class AddEmojiModal(Modal, title="Add New Emoji"):
+    emoji_str_input = TextInput( # Renamed to avoid conflict with a potential variable
+        label="Emoji",
+        placeholder="e.g., 👍 or <:custom_emoji:123456789012345678>",
+        style=discord.TextStyle.short,
+        required=True,
+        max_length=100 # Emojis aren't that long
+    )
+    description_input = TextInput( # Renamed
+        label="Description for LLM",
+        placeholder="A brief description of when this emoji is appropriate",
+        style=discord.TextStyle.long,
+        required=True,
+        max_length=200,
+    )
+
+    def __init__(self, manager_view: View): # manager_view is the instance of ManageEmojisView
+        super().__init__(timeout=300) # 5 minutes timeout
+        self.manager_view = manager_view
+
+    async def on_submit(self, interaction: Interaction):
+        # Defer here as validation and config update might take time
+        # await interaction.response.defer(ephemeral=True) # defer before processing
+        # The actual processing will send its own ephemeral message
+        await self.manager_view.process_add_emoji(
+            interaction,
+            self.emoji_str_input.value,
+            self.description_input.value
+        )
+
+    async def on_error(self, interaction: Interaction, error: Exception):
+        logger.exception("Error in AddEmojiModal:", exc_info=error)
+        await interaction.response.send_message(
+            "An unexpected error occurred. Please try again later.", ephemeral=True
+        )
+
+class ConfirmRemoveButton(Button):
+    def __init__(self, manager_view: View, emoji_to_remove: dict):
+        super().__init__(label=f"Yes, remove {emoji_to_remove['emoji']}", style=ButtonStyle.danger, custom_id=f"confirm_remove_{emoji_to_remove['emoji']}")
+        self.manager_view = manager_view
+        self.emoji_to_remove = emoji_to_remove
+
+    async def callback(self, interaction: Interaction):
+        await self.manager_view.process_remove_emoji_confirmed(interaction, self.emoji_to_remove)
+
+class CancelRemoveButton(Button):
+    def __init__(self, manager_view: View):
+        super().__init__(label="Cancel", style=ButtonStyle.secondary, custom_id="cancel_remove_action")
+        self.manager_view = manager_view
+
+    async def callback(self, interaction: Interaction):
+        # Simply re-render the view without the confirmation buttons for removal
+        self.view.remove_item(self.manager_view.confirm_remove_button_instance)
+        self.view.remove_item(self.manager_view.cancel_remove_button_instance)
+        self.manager_view.confirm_remove_button_instance = None
+        self.manager_view.cancel_remove_button_instance = None
+        await self.manager_view.update_message(interaction, "Removal cancelled.")
+
+EMOJIS_PER_PAGE = 5 # Keep it small for clarity in the select menu
+
+class ManageEmojisView(View):
+    def __init__(self, cog_instance: AIEmote, ctx: commands.Context, config_group, emoji_list_attr_name: str):
+        super().__init__(timeout=300) # View times out after 5 minutes of inactivity
+        self.cog = cog_instance
+        self.ctx = ctx
+        self.author = ctx.author
+        self.config_group = config_group # This is either self.config (global) or guild_config
+        self.emoji_list_attr_name = emoji_list_attr_name # "global_emojis" or "server_emojis"
+        
+        self.emojis: list = []
+        self.embed_pages: list[discord.Embed] = []
+        self.current_page_index: int = 0
+        self.message: Optional[discord.Message] = None
+
+        self.remove_select_menu: Optional[Select] = None
+        self.confirm_remove_button_instance: Optional[ConfirmRemoveButton] = None
+        self.cancel_remove_button_instance: Optional[CancelRemoveButton] = None
+
+
+    async def interaction_check(self, interaction: Interaction) -> bool:
+        if interaction.user.id == self.author.id:
+            return True
+        await interaction.response.send_message("You are not allowed to interact with this menu.", ephemeral=True)
+        return False
+
+    async def on_timeout(self):
+        if self.message:
+            try:
+                await self.message.edit(content="This emoji management menu has timed out.", view=None, embed=None)
+            except discord.NotFound:
+                pass # Message might have been deleted
+        self.stop()
+
+    async def start(self):
+        await self._load_emojis()
+        self._build_embed_pages()
+        self._add_initial_buttons()
+        embed_to_show = self.embed_pages[0] if self.embed_pages else self._get_empty_embed()
+        self.message = await self.ctx.send(embed=embed_to_show, view=self)
+
+    async def _load_emojis(self):
+        self.emojis = await self.cog._get_emoji_list(self.config_group, self.emoji_list_attr_name)
+
+    def _get_empty_embed(self) -> discord.Embed:
+        title = "Global Emojis Management" if self.emoji_list_attr_name == "global_emojis" else "Server Emojis Management"
+        return discord.Embed(title=title, description="No emojis configured yet.", color=discord.Color.blue())
+
+    def _build_embed_pages(self):
+        title = "Global Emojis Management" if self.emoji_list_attr_name == "global_emojis" else f"Server Emojis for {self.ctx.guild.name}"
+        # Use the cog's existing method, but pass a dummy context if it expects one for color
+        # Or adapt create_emoji_embed_pages to not strictly need ctx for color
+        self.embed_pages = self.cog.create_emoji_embed_pages_for_view(title, self.emojis, EMOJIS_PER_PAGE) # New helper needed
+        if not self.embed_pages: # Ensure there's at least one page (empty state)
+            self.embed_pages.append(self._get_empty_embed())
+        self.current_page_index = min(self.current_page_index, len(self.embed_pages) -1) # Adjust if list shrinks
+
+    def _add_initial_buttons(self):
+        self.clear_items() # Clear any existing buttons before re-adding
+
+        # Pagination buttons
+        prev_button = Button(label="⬅️ Prev", style=ButtonStyle.secondary, custom_id="prev_page_emojis", disabled=self.current_page_index == 0)
+        prev_button.callback = self.go_to_prev_page
+        self.add_item(prev_button)
+
+        next_button = Button(label="Next ➡️", style=ButtonStyle.secondary, custom_id="next_page_emojis", disabled=self.current_page_index >= len(self.embed_pages) - 1)
+        next_button.callback = self.go_to_next_page
+        self.add_item(next_button)
+        
+        # Action buttons
+        add_button = Button(label="✨ Add Emoji", style=ButtonStyle.success, custom_id="add_new_emoji")
+        add_button.callback = self.show_add_emoji_modal
+        self.add_item(add_button)
+
+        remove_button = Button(label="➖ Show Remove Options", style=ButtonStyle.danger, custom_id="toggle_remove_emoji_select", disabled=not self.emojis)
+        remove_button.callback = self.toggle_remove_select
+        self.add_item(remove_button)
+
+        close_button = Button(label="❌ Close", style=ButtonStyle.grey, custom_id="close_emoji_menu")
+        close_button.callback = self.close_menu
+        self.add_item(close_button)
+
+        # If a select menu or confirm/cancel buttons were active, re-add them
+        if self.remove_select_menu:
+            self.add_item(self.remove_select_menu)
+        if self.confirm_remove_button_instance and self.cancel_remove_button_instance:
+            self.add_item(self.confirm_remove_button_instance)
+            self.add_item(self.cancel_remove_button_instance)
+
+
+    async def update_message(self, interaction: Optional[Interaction] = None, ephemeral_feedback: Optional[str] = None):
+        if not self.message: return
+
+        self._build_embed_pages() # Rebuild embeds in case list changed
+        self._add_initial_buttons() # Rebuild buttons to update their states (e.g., prev/next, remove select)
+
+        current_embed = self.embed_pages[self.current_page_index] if self.embed_pages else self._get_empty_embed()
+        
+        if interaction: # If called from an interaction, use its response
+            if interaction.response.is_done():
+                 await interaction.followup.edit_message(self.message.id, embed=current_embed, view=self)
+            else:
+                await interaction.response.edit_message(embed=current_embed, view=self)
+            if ephemeral_feedback:
+                await interaction.followup.send(ephemeral_feedback, ephemeral=True) # Send feedback after edit
+        else: # If called without interaction (e.g. initial start), edit self.message
+            await self.message.edit(embed=current_embed, view=self)
+
+
+    async def go_to_prev_page(self, interaction: Interaction):
+        if self.current_page_index > 0:
+            self.current_page_index -= 1
+            # If remove select was active, remove it as page changed
+            if self.remove_select_menu:
+                self.remove_item(self.remove_select_menu)
+                self.remove_select_menu = None
+            await self.update_message(interaction)
+
+    async def go_to_next_page(self, interaction: Interaction):
+        if self.current_page_index < len(self.embed_pages) - 1:
+            self.current_page_index += 1
+            if self.remove_select_menu:
+                self.remove_item(self.remove_select_menu)
+                self.remove_select_menu = None
+            await self.update_message(interaction)
+
+    async def show_add_emoji_modal(self, interaction: Interaction):
+        modal = AddEmojiModal(manager_view=self)
+        await interaction.response.send_modal(modal)
+
+    async def process_add_emoji(self, interaction: Interaction, emoji_str: str, description: str):
+        # await interaction.response.defer(ephemeral=True, thinking=True) # Defer before heavy lifting
+        
+        is_valid = await self.cog.check_valid_emoji_interaction(interaction, emoji_str) # New helper needed
+        if not is_valid:
+            # check_valid_emoji_interaction should send ephemeral message on failure
+            return
+
+        if any(item["emoji"] == emoji_str for item in self.emojis):
+            await interaction.response.send_message(f"Emoji {emoji_str} is already in the list.", ephemeral=True)
+            return
+
+        self.emojis.append({"description": description, "emoji": emoji_str})
+        await self.cog._save_emoji_list(self.config_group, self.emoji_list_attr_name, self.emojis)
+        
+        feedback = f"Emoji {emoji_str} added successfully!"
+        # We need to edit the main message and then send ephemeral feedback
+        # The update_message will handle the edit. If called with interaction, it handles response.
+        # However, this current interaction is from a MODAL, so its response is for the modal itself.
+        # We need to ensure the modal interaction is acked, then edit the original view message.
+        await interaction.response.send_message(feedback, ephemeral=True) # Ack the modal interaction
+        await self.update_message() # Update the view message (no interaction needed here as modal already responded)
+
+
+    async def toggle_remove_select(self, interaction: Interaction):
+        # If confirm/cancel buttons are present from a previous select, remove them
+        if self.confirm_remove_button_instance:
+            self.remove_item(self.confirm_remove_button_instance)
+            self.confirm_remove_button_instance = None
+        if self.cancel_remove_button_instance:
+            self.remove_item(self.cancel_remove_button_instance)
+            self.cancel_remove_button_instance = None
+
+        if self.remove_select_menu: # If select is already there, remove it (toggle off)
+            self.remove_item(self.remove_select_menu)
+            self.remove_select_menu = None
+            await self.update_message(interaction, "Emoji removal options hidden.")
+        else: # Add the select menu
+            current_page_emojis = self._get_emojis_on_current_page()
+            if not current_page_emojis:
+                await interaction.response.send_message("No emojis on this page to remove.", ephemeral=True)
+                return
+
+            options = [
+                discord.SelectOption(label=f"{item['emoji']} - {item['description'][:50]}", value=item["emoji"], emoji=discord.PartialEmoji.from_str(item["emoji"]) if self.cog._is_discord_emoji(item["emoji"]) else None)
+                for item in current_page_emojis
+            ]
+            self.remove_select_menu = Select(
+                placeholder="Choose emoji(s) to remove...", # Multi-select could be an option but complicates things. Let's do single for now.
+                options=options,
+                custom_id="select_emoji_to_remove",
+                # min_values=1, max_values=1 # For single select
+            )
+            self.remove_select_menu.callback = self.process_remove_selection
+            # self.add_item(self.remove_select_menu) # This will be handled by update_message via _add_initial_buttons
+            await self.update_message(interaction, "Select an emoji to remove.")
+
+    def _get_emojis_on_current_page(self) -> list:
+        start_index = self.current_page_index * EMOJIS_PER_PAGE
+        end_index = start_index + EMOJIS_PER_PAGE
+        return self.emojis[start_index:end_index]
+
+    async def process_remove_selection(self, interaction: Interaction):
+        if not self.remove_select_menu or not interaction.data or not interaction.data.get("values"):
+            await interaction.response.send_message("No emoji selected or selection error.",ephemeral=True)
+            return
+        
+        selected_emoji_str = interaction.data["values"][0]
+        emoji_to_remove = next((e for e in self.emojis if e["emoji"] == selected_emoji_str), None)
+
+        if not emoji_to_remove:
+            await interaction.response.send_message(f"Could not find emoji {selected_emoji_str} to remove. It might have been removed already.",ephemeral=True)
+            return
+
+        # Remove the select menu itself
+        if self.remove_select_menu:
+            self.remove_item(self.remove_select_menu)
+            self.remove_select_menu = None
+        
+        # Add confirmation buttons
+        self.confirm_remove_button_instance = ConfirmRemoveButton(self, emoji_to_remove)
+        self.cancel_remove_button_instance = CancelRemoveButton(self)
+        # these will be added by update_message if _add_initial_buttons is smart
+        # self.add_item(self.confirm_remove_button_instance)
+        # self.add_item(self.cancel_remove_button_instance)
+        
+        await self.update_message(interaction, f"Are you sure you want to remove {emoji_to_remove['emoji']}?")
+
+
+    async def process_remove_emoji_confirmed(self, interaction: Interaction, emoji_dict_to_remove: dict):
+        emoji_str_to_remove = emoji_dict_to_remove["emoji"]
+        
+        original_length = len(self.emojis)
+        self.emojis = [e for e in self.emojis if e["emoji"] != emoji_str_to_remove]
+
+        if len(self.emojis) < original_length:
+            await self.cog._save_emoji_list(self.config_group, self.emoji_list_attr_name, self.emojis)
+            feedback = f"Emoji {emoji_str_to_remove} removed successfully!"
+             # Ensure current page index is valid if we removed the last item on a page that no longer exists
+            if self.current_page_index * EMOJIS_PER_PAGE >= len(self.emojis) and self.current_page_index > 0:
+                self.current_page_index -=1
+
+        else:
+            feedback = f"Could not find emoji {emoji_str_to_remove} to remove (it may have already been removed by another action)."
+
+        # Clean up confirmation buttons
+        if self.confirm_remove_button_instance:
+            self.remove_item(self.confirm_remove_button_instance)
+            self.confirm_remove_button_instance = None
+        if self.cancel_remove_button_instance:
+            self.remove_item(self.cancel_remove_button_instance)
+            self.cancel_remove_button_instance = None
+
+        await self.update_message(interaction, feedback)
+
+
+    async def close_menu(self, interaction: Interaction):
+        await interaction.response.defer() # Ack the interaction
+        if self.message:
+            await self.message.edit(content="Emoji management menu closed.", view=None, embed=None)
+        self.stop()
