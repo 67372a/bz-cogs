@@ -33,7 +33,6 @@ class AIEmote(commands.Cog):
         super().__init__()
         self.bot: Red = bot
         self.config = Config.get_conf(self, identifier=75406969)
-        self.encoding = None
         self.aclient: Optional[AsyncOpenAI] = None
 
         self.llm_provider: str = "openrouter"
@@ -164,12 +163,6 @@ class AIEmote(commands.Cog):
             if ctx: await ctx.send(f"Error initializing LLM client for {self.llm_provider}: {e}")
             return # Do not proceed to tiktoken if client init failed
 
-        try:
-            self.encoding = tiktoken.encoding_for_model(self.llm_model)
-        except Exception:
-            logger.warning(f"Could not get tiktoken encoding for model {self.llm_model}. Falling back to cl100k_base.")
-            self.encoding = tiktoken.get_encoding("cl100k_base")
-
     @commands.Cog.listener()
     async def on_message_without_command(self, message: discord.Message):
         if not self.aclient:
@@ -226,7 +219,7 @@ class AIEmote(commands.Cog):
             )
             request_kwargs["max_tokens"] = 15
             request_kwargs["response_format"] = {"type": "json_object"}
-            # logger.debug(f"Using JSON mode for model {self.llm_model} in {guild_name_log}.") # Can be noisy
+            logger.debug(f"Using JSON mode for model {self.llm_model} in {guild_name_log}.")
         else:
             system_prompt = (
                 f"You are in a chat room. You will pick an emoji for the following message. "
@@ -235,7 +228,7 @@ class AIEmote(commands.Cog):
                 f"between 0 and {len(emojis)-1}."
             )
             request_kwargs["max_tokens"] = 5
-            # logger.debug(f"Using plain/regex mode for model {self.llm_model} in {guild_name_log}.") # Can be noisy
+            logger.debug(f"Using plain/regex mode for model {self.llm_model} in {guild_name_log}.")
 
         content = f"{message.author.display_name} : {self.stringify_any_mentions(message)}"
         request_kwargs["messages"] = [
@@ -355,7 +348,7 @@ class AIEmote(commands.Cog):
             return False
 
         if len(ctx.message.content) > 1500 or len(ctx.message.content) < 10:
-            # logger.debug(f"Skipping message in {ctx.guild.name} with length {len(ctx.message.content)}") # Can be noisy
+            logger.debug(f"Skipping message in {ctx.guild.name} with length {len(ctx.message.content)}")
             return False
 
         return True

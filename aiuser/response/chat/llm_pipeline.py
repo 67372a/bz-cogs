@@ -147,11 +147,11 @@ class LLMPipeline:
         self.completion = current_llm_text_response
         if self.completion:
             log_preview = f'{self.completion[:200]}{"..." if len(self.completion) > 200 else ""}'
-            logger.debug(
+            logger.info(
                 f'Final LLM response for guild {self.ctx.guild.name} (model {self.model}): "{log_preview}"'
             )
         else:
-            logger.debug(
+            logger.info(
                 f"Final LLM response for guild {self.ctx.guild.name} (model {self.model}) is empty/None."
             )
         return self.completion
