@@ -66,8 +66,9 @@ class MessageConverter():
                 and not self.ctx.interaction and await self.config.guild(message.guild).scan_images() and 
                 (message.attachments[0].size <= await self.config.guild(message.guild).max_image_size())):
                 logger.info(f"Supported document. type=[{message.attachments[0].content_type}] filename=[{message.attachments[0].filename}]")
-                
                 content = await format_supported_document(message) or format_generic_document(message)
+                
+                logger.info(f"Supported document content '{content}'.")
                 await self.add_entry(content, res, role)
                 if isinstance(content, list):
                     return
