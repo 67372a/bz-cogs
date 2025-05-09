@@ -46,6 +46,8 @@ class MessageConverter():
     
     # scans only if the msg is the trigger, or if the msg was replied to by the trigger
     async def handle_attachment(self, message: Message, res, role):
+        logger.info(f"Content Type {message.attachments[0].content_type}")
+
         if message.attachments[0].content_type.startswith('image/'):
             if (((self.init_msg.id == message.id) or (self.init_msg.reference and self.init_msg.reference.message_id == message.id)) \
                 and not self.ctx.interaction and await self.config.guild(message.guild).scan_images() and 
