@@ -78,13 +78,27 @@ class LLMPipeline:
         self, kwargs: Dict[str, Any]
     ) -> Tuple[Optional[str], List[ChatCompletionMessageToolCall]]:
         current_messages_json = self.msg_list.get_json()
+
         logger.info(
             f"Sending request to LLM (model: {self.model}) with {len(current_messages_json)} messages. Kwarg keys: {list(kwargs.keys())}"
         )
 
+
+        plugins = [
+            {
+                "id": "file-parser",
+                "pdf": {
+                    "engine": "native"
+                }
+            }
+        ]
+
         response: ChatCompletion = (
             await self.openai_client.chat.completions.create(
-                model=self.model, messages=current_messages_json, **kwargs
+                model=self.model, 
+                messages=current_messages_json, 
+                plugins=plugins,
+                **kwargs
             )
         )
 
