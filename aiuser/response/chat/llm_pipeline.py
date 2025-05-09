@@ -97,7 +97,7 @@ class LLMPipeline:
             await self.openai_client.chat.completions.create(
                 model=self.model, 
                 messages=current_messages_json, 
-                plugins=plugins,
+                extra_body={"plugins": plugins},
                 **kwargs
             )
         )
