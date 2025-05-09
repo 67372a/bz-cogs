@@ -42,21 +42,30 @@ def format_generic_document(message: Message):
 
 async def format_supported_document(message: Message):
     attachment = message.attachments[0]
-    buffer = BytesIO()
-    await attachment.save(buffer)
 
     content = []
     if message.content != "":
         content.append({"type": "text", "text": format_text_content(message)})
 
-    buffer.seek(0)
+    with BytesIO() as buffer: # Use BytesIO as a context manager
+        await attachment.save(buffer)
+        logger.info(f"Attachment '{attachment.filename}' saved to buffer.")
+
+        buffer.seek(0)  # Reset buffer pointer to the beginning for reading
+        binary_data = buffer.read()
+
+    base64_encoded_data = base64.b64encode(binary_data).decode('utf-8')
+    mime_type = get_mime_type(attachment.content_type) 
+
+    file_data = f"data:{mime_type};base64,{base64_encoded_data}"
+
     content.append(
         {
             "type": "file", 
             "file": 
             {
-                "filename": message.attachments[0].filename,
-                "file_data": f"data:{message.attachments[0].content_type};base64,{base64.b64encode(buffer.read()).decode()}"
+                "filename": attachment.filename,
+                "file_data": file_data
             }
         })
     return content
@@ -91,3 +100,38 @@ def mention_to_text(message: Message) -> str:
             content = content.replace(mentioned.mention, f'@{mentioned.display_name}')
 
     return content
+
+def get_mime_type(content_type_string):
+    """
+    Parses a content type string and returns just the main type/subtype,
+    stripping away any parameters like 'charset'.
+
+    Args:
+        content_type_string (str): The full content type string,
+            e.g., "text/plain; charset=utf-8", "application/json",
+            "  image/jpeg ; quality=0.8  ".
+            Can be None or an empty string.
+
+    Returns:
+        str: The main type/subtype (e.g., "text/plain", "application/json", "image/jpeg").
+             Returns an empty string if the input is None, empty, or contains only whitespace,
+             or if the part before the first semicolon is empty after stripping.
+    """
+    if not content_type_string:
+        return ""
+
+    # Strip leading/trailing whitespace from the whole string first
+    stripped_content_type = content_type_string.strip()
+
+    if not stripped_content_type:
+        return ""
+
+    # Split the string at the first semicolon
+    # The `maxsplit=1` argument ensures we only split on the first occurrence
+    parts = stripped_content_type.split(';', 1)
+
+    # The main content type is the first part.
+    # Strip any whitespace from this part as well (e.g., "text/plain " -> "text/plain")
+    main_type = parts[0].strip()
+
+    return main_type

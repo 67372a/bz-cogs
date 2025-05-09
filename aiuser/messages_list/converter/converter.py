@@ -49,7 +49,8 @@ class MessageConverter():
     # scans only if the msg is the trigger, or if the msg was replied to by the trigger
     async def handle_attachment(self, message: Message, res, role):
         if message.attachments[0].content_type.startswith('image/'):
-            if (((self.init_msg.id == message.id) or (self.init_msg.reference and self.init_msg.reference.message_id == message.id)) \
+            logger.info(f"Supported image. type=[{message.attachments[0].content_type}] filename=[{message.attachments[0].filename}]")
+            if (((self.init_msg.id == message.id) or (self.init_msg.reference and self.init_msg.reference.message_id == message.id)) 
                 and not self.ctx.interaction and await self.config.guild(message.guild).scan_images() and 
                 (message.attachments[0].size <= await self.config.guild(message.guild).max_image_size())):
                 content = await transcribe_image(self.cog, message) or format_generic_image(message)
@@ -61,10 +62,12 @@ class MessageConverter():
                 await self.add_entry(content, res, role)
 
         elif any(message.attachments[0].content_type.startswith(content_type) for content_type in SUPPORTED_DOCUMENT_CONTENT_TYPES):
-            if (((self.init_msg.id == message.id) or (self.init_msg.reference and self.init_msg.reference.message_id == message.id)) \
+            if (((self.init_msg.id == message.id) or (self.init_msg.reference and self.init_msg.reference.message_id == message.id)) 
                 and not self.ctx.interaction and await self.config.guild(message.guild).scan_images() and 
                 (message.attachments[0].size <= await self.config.guild(message.guild).max_image_size())):
-                content = format_generic_document(message)
+                logger.info(f"Supported document. type=[{message.attachments[0].content_type}] filename=[{message.attachments[0].filename}]")
+                
+                content = await format_supported_document(message) or format_generic_document(message)
                 await self.add_entry(content, res, role)
                 if isinstance(content, list):
                     return
