@@ -17,6 +17,8 @@ from aiuser.messages_list.entry import MessageEntry
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
+SUPPORTED_DOCUMENT_CONTENT_TYPES = ["application/pdf","text/plain"]
+
 
 class MessageConverter():
     def __init__(self, cog: MixinMeta, ctx: commands.Context):
@@ -46,8 +48,6 @@ class MessageConverter():
     
     # scans only if the msg is the trigger, or if the msg was replied to by the trigger
     async def handle_attachment(self, message: Message, res, role):
-        logger.info(f"Content Type {message.attachments[0].content_type}")
-
         if message.attachments[0].content_type.startswith('image/'):
             if (((self.init_msg.id == message.id) or (self.init_msg.reference and self.init_msg.reference.message_id == message.id)) \
                 and not self.ctx.interaction and await self.config.guild(message.guild).scan_images() and 
@@ -60,7 +60,7 @@ class MessageConverter():
                 content = format_generic_image(message)
                 await self.add_entry(content, res, role)
 
-        elif message.attachments[0].content_type in {"application/pdf", "text/plain"}:
+        elif any(message.attachments[0].content_type.startswith(content_type) for content_type in SUPPORTED_DOCUMENT_CONTENT_TYPES):
             if (((self.init_msg.id == message.id) or (self.init_msg.reference and self.init_msg.reference.message_id == message.id)) \
                 and not self.ctx.interaction and await self.config.guild(message.guild).scan_images() and 
                 (message.attachments[0].size <= await self.config.guild(message.guild).max_image_size())):
@@ -74,6 +74,7 @@ class MessageConverter():
         elif message.id in self.message_cache:
             await self.add_entry(self.message_cache[message.id], res, role)
         else:
+            logger.info(f"Unsupported attachment content Type. type={message.attachments[0].content_type} filename={message.attachments[0].filename}")
             content = f'User "{message.author.display_name}" sent: [Attachment: "{message.attachments[0].filename}"]'
             await self.add_entry(content, res, role)
 
