@@ -1,4 +1,6 @@
 import logging
+from io import BytesIO
+import base64
 
 from discord import Message, MessageType
 
@@ -33,6 +35,31 @@ def format_generic_image(message: Message):
         return f'[Image: "{message.attachments[0].filename}"]'
     return f'User "{message.author.display_name}" sent: [Image: "{message.attachments[0].filename}"]'
 
+def format_generic_document(message: Message):
+    if message.author.id == message.guild.me.id:
+        return f'[Document: "{message.attachments[0].filename}"]'
+    return f'User "{message.author.display_name}" sent: [Document: "{message.attachments[0].filename}"]'
+
+async def format_supported_document(message: Message):
+    attachment = message.attachments[0]
+    buffer = BytesIO()
+    await attachment.save(buffer)
+
+    content = []
+    if message.content != "":
+        content.append({"type": "text", "text": format_text_content(message)})
+
+    buffer.seek(0)
+    content.append(
+        {
+            "type": "file", 
+            "file": 
+            {
+                "filename": message.attachments[0].filename,
+                "file_data": f"data:{message.attachments[0].content_type};base64,{base64.b64encode(buffer.read()).decode()}"
+            }
+        })
+    return content
 
 async def format_sticker_content(message: Message):
     try:

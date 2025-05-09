@@ -9,7 +9,9 @@ from aiuser.messages_list.converter.embed.formatter import format_embed_content
 from aiuser.messages_list.converter.helpers import (format_embed_text_content,
                                                     format_generic_image,
                                                     format_sticker_content,
-                                                    format_text_content)
+                                                    format_text_content,
+                                                    format_generic_document,
+                                                    format_supported_document)
 from aiuser.messages_list.converter.image.caption import transcribe_image
 from aiuser.messages_list.entry import MessageEntry
 
@@ -41,25 +43,36 @@ class MessageConverter():
             await self.add_entry(content, res, role)
 
         return res or None
-
+    
+    # scans only if the msg is the trigger, or if the msg was replied to by the trigger
     async def handle_attachment(self, message: Message, res, role):
-        if not message.attachments[0].content_type.startswith('image/'):
-            content = f'User "{message.author.display_name}" sent: [Attachment: "{message.attachments[0].filename}"]'
-            await self.add_entry(content, res, role)
-        elif message.attachments[0].size > await self.config.guild(message.guild).max_image_size():
-            content = format_generic_image(message)
-            await self.add_entry(content, res, role)
-        # scans images only if the msg is the trigger, or if the msg was replied to by the trigger
-        elif ((self.init_msg.id == message.id) or (self.init_msg.reference and self.init_msg.reference.message_id == message.id)) \
-                and not self.ctx.interaction and await self.config.guild(message.guild).scan_images():
-            content = await transcribe_image(self.cog, message) or format_generic_image(message)
-            await self.add_entry(content, res, role)
-            if isinstance(content, list):
-                return
+        if message.attachments[0].content_type.startswith('image/'):
+            if (((self.init_msg.id == message.id) or (self.init_msg.reference and self.init_msg.reference.message_id == message.id)) \
+                and not self.ctx.interaction and await self.config.guild(message.guild).scan_images() and 
+                (message.attachments[0].size <= await self.config.guild(message.guild).max_image_size())):
+                content = await transcribe_image(self.cog, message) or format_generic_image(message)
+                await self.add_entry(content, res, role)
+                if isinstance(content, list):
+                    return
+            else:
+                content = format_generic_image(message)
+                await self.add_entry(content, res, role)
+
+        elif message.attachments[0].content_type in {"application/pdf", "text/plain"}:
+            if (((self.init_msg.id == message.id) or (self.init_msg.reference and self.init_msg.reference.message_id == message.id)) \
+                and not self.ctx.interaction and await self.config.guild(message.guild).scan_images() and 
+                (message.attachments[0].size <= await self.config.guild(message.guild).max_image_size())):
+                content = await format_supported_document(message) or format_generic_document(message)
+                await self.add_entry(content, res, role)
+                if isinstance(content, list):
+                    return
+            else:
+                content = format_generic_document(message)
+                await self.add_entry(content, res, role)
         elif message.id in self.message_cache:
             await self.add_entry(self.message_cache[message.id], res, role)
         else:
-            content = format_generic_image(message)
+            content = f'User "{message.author.display_name}" sent: [Attachment: "{message.attachments[0].filename}"]'
             await self.add_entry(content, res, role)
 
         content = format_text_content(message)
