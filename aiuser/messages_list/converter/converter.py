@@ -64,7 +64,7 @@ class MessageConverter():
             if (((self.init_msg.id == message.id) or (self.init_msg.reference and self.init_msg.reference.message_id == message.id)) \
                 and not self.ctx.interaction and await self.config.guild(message.guild).scan_images() and 
                 (message.attachments[0].size <= await self.config.guild(message.guild).max_image_size())):
-                content = await format_supported_document(message) or format_generic_document(message)
+                content = format_generic_document(message)
                 await self.add_entry(content, res, role)
                 if isinstance(content, list):
                     return
