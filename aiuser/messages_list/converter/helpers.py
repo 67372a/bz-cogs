@@ -77,12 +77,12 @@ async def format_text_document(message: Message):
     if message.content != "":
         content.append({"type": "text", "text": format_text_content(message)})
 
-    with TextIOWrapper(BytesIO(), encoding='utf-8') as buffer: # Use BytesIO as a context manager
+    with BytesIO() as buffer: # Use BytesIO as a context manager
         await attachment.save(buffer)
         logger.info(f"Attachment '{attachment.filename}' saved to buffer.")
 
         buffer.seek(0)  # Reset buffer pointer to the beginning for reading
-        text_data = buffer.read()
+        text_data = TextIOWrapper(buffer, encoding='utf-8').read()
 
     mime_type = get_mime_type(attachment.content_type)
 
