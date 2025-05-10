@@ -89,7 +89,7 @@ async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_l
     
     cleaned_reasoning = None
     if reasoning:
-       cleaned_response, cleaned_reasoning = asyncio.gather(remove_patterns_from_response(ctx, cog.config, response),
+       cleaned_response, cleaned_reasoning = await asyncio.gather(remove_patterns_from_response(ctx, cog.config, response),
                                          remove_patterns_from_response(ctx, cog.config, reasoning),
                                          return_exceptions=True)
     else:
@@ -99,7 +99,7 @@ async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_l
         return False
     
     if cleaned_reasoning:
-        response_outcome, reasoning_outcome = asyncio.gather(send_response(ctx, cog.config, cleaned_response),
+        response_outcome, reasoning_outcome = await asyncio.gather(send_response(ctx, cog.config, cleaned_response),
                                                              send_response(ctx, cog.config, cleaned_reasoning, target_channel = ctx.guild.get_channel(1370556550334386226)),
                                                              return_exceptions=True)
         success = response_outcome
