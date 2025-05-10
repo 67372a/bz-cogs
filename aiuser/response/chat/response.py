@@ -4,7 +4,7 @@ import random
 import re
 from datetime import datetime, timezone
 
-from discord import AllowedMentions
+from discord import AllowedMentions, Embed
 from redbot.core import Config, commands
 
 from aiuser.config.constants import REGEX_RUN_TIMEOUT
@@ -68,46 +68,54 @@ async def should_reply(ctx: commands.Context) -> bool:
             return True
     return False
 
-async def send_response(ctx: commands.Context, response: str, can_reply: bool, target_channel = None) -> bool:
+async def send_response(ctx: commands.Context, response: str, can_reply: bool) -> bool:
     allowed = AllowedMentions(everyone=False, roles=False, users=[ctx.message.author])
 
-    if target_channel:
-        target = target_channel
-    else:
-        target = ctx
     if len(response) >= 2000:
         for i in range(0, len(response), 2000):
-            target.send(response[i:i + 2000], allowed_mentions=allowed)
+            ctx.send(response[i:i + 2000], allowed_mentions=allowed)
     elif can_reply and await should_reply(ctx):
-        await target.message.reply(response, mention_author=False, allowed_mentions=allowed)
+        await ctx.message.reply(response, mention_author=False, allowed_mentions=allowed)
     elif ctx.interaction:
-        await target.interaction.followup.send(response, allowed_mentions=allowed)
+        await ctx.interaction.followup.send(response, allowed_mentions=allowed)
     else:
-        await target.send(response, allowed_mentions=allowed)
+        await ctx.send(response, allowed_mentions=allowed)
+    return True
+
+async def send_reasoning(ctx: commands.Context, reasoning: str, can_reply: bool) -> bool:
+    allowed = AllowedMentions(everyone=False, roles=False, users=[ctx.message.author])
+
+    if len(reasoning) >= 4096:
+        for i in range(0, len(reasoning), 4096):
+            ctx.send(embed=Embed(title=f"{ctx.bot.user.display_name}'s Thoughts", description = f"||{reasoning[i:i + 4096]}||"), allowed_mentions=allowed)
+    elif can_reply and await should_reply(ctx):
+        await ctx.message.reply(embed=Embed(title=f"{ctx.bot.user.display_name}'s Thoughts", description = reasoning), mention_author=False, allowed_mentions=allowed)
+    elif ctx.interaction:
+        await ctx.interaction.followup.send(embed=Embed(title=f"{ctx.bot.user.display_name}'s Thoughts", description = reasoning), allowed_mentions=allowed)
+    else:
+        await ctx.send(embed=Embed(title=f"{ctx.bot.user.display_name}'s Thoughts", description = reasoning), allowed_mentions=allowed)
     return True
 
 async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_list: MessagesList) -> bool:
     pipeline = LLMPipeline(cog, ctx, messages=messages_list)
     response, reasoning = await pipeline.run()
-    logger.info(f"resp={response} reason={reasoning}")
     if not response:
         return False
     
     cleaned_reasoning = None
-  #  if reasoning:
- #      cleaned_response, cleaned_reasoning = await asyncio.gather(remove_patterns_from_response(ctx, cog.config, response),
-  #                                       remove_patterns_from_response(ctx, cog.config, reasoning),
-   #                                      return_exceptions=True)
-   # else:
-    cleaned_response = await remove_patterns_from_response(ctx, cog.config, response)
+    if reasoning:
+        cleaned_response, cleaned_reasoning = await asyncio.gather(remove_patterns_from_response(ctx, cog.config, response),
+                                         remove_patterns_from_response(ctx, cog.config, reasoning),
+                                         return_exceptions=True)
+    else:
+        cleaned_response = await remove_patterns_from_response(ctx, cog.config, response)
 
+    logger.info(f"clean resp={cleaned_response} reason={cleaned_reasoning}")
     if not cleaned_response:
         return False
     
-  #  if cleaned_reasoning:
-  #      response_outcome, reasoning_outcome = await asyncio.gather(send_response(ctx, cog.config, cleaned_response),
-  #                                                          send_response(ctx, cog.config, cleaned_reasoning, target_channel = ctx.guild.get_channel(1370556550334386226)),
-   #                                                          return_exceptions=True)
-   #     success = response_outcome
-   # else:
-    return await send_response(ctx, cleaned_response, messages_list.can_reply)
+    if cleaned_reasoning:
+        await send_reasoning(ctx, cleaned_reasoning, messages_list.can_reply)
+        return await send_response(ctx, cleaned_response, messages_list.can_reply)
+    else:
+        return await send_response(ctx, cleaned_response, messages_list.can_reply)

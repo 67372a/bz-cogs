@@ -159,6 +159,8 @@ class LLMPipeline:
 
                 await self._process_and_add_tool_results(response_tool_calls)
                 # Continue loop to get LLM response based on tool results
+                
+                has_processed_tool_calls = True
             else:
                 logger.info(f"LLM returned final response in iteration {i + 1}.")
                 break  # No tool calls, this is the final response
