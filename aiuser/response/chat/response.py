@@ -89,25 +89,25 @@ async def send_response(ctx: commands.Context, response: str, can_reply: bool, t
 async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_list: MessagesList) -> bool:
     pipeline = LLMPipeline(cog, ctx, messages=messages_list)
     response, reasoning = await pipeline.run()
+    logger.info(f"resp={response} reason={reasoning}")
     if not response:
         return False
     
     cleaned_reasoning = None
-    if reasoning:
-       cleaned_response, cleaned_reasoning = await asyncio.gather(remove_patterns_from_response(ctx, cog.config, response),
-                                         remove_patterns_from_response(ctx, cog.config, reasoning),
-                                         return_exceptions=True)
-    else:
-        cleaned_response = await remove_patterns_from_response(ctx, cog.config, response)
+  #  if reasoning:
+ #      cleaned_response, cleaned_reasoning = await asyncio.gather(remove_patterns_from_response(ctx, cog.config, response),
+  #                                       remove_patterns_from_response(ctx, cog.config, reasoning),
+   #                                      return_exceptions=True)
+   # else:
+    cleaned_response = await remove_patterns_from_response(ctx, cog.config, response)
 
     if not cleaned_response:
         return False
     
-    if cleaned_reasoning:
-        response_outcome, reasoning_outcome = await asyncio.gather(send_response(ctx, cog.config, cleaned_response),
-                                                             send_response(ctx, cog.config, cleaned_reasoning, target_channel = ctx.guild.get_channel(1370556550334386226)),
-                                                             return_exceptions=True)
-        success = response_outcome
-    else:
-        success = await send_response(ctx, cleaned_response, messages_list.can_reply)
-    return success
+  #  if cleaned_reasoning:
+  #      response_outcome, reasoning_outcome = await asyncio.gather(send_response(ctx, cog.config, cleaned_response),
+  #                                                          send_response(ctx, cog.config, cleaned_reasoning, target_channel = ctx.guild.get_channel(1370556550334386226)),
+   #                                                          return_exceptions=True)
+   #     success = response_outcome
+   # else:
+    return await send_response(ctx, cleaned_response, messages_list.can_reply)
