@@ -15,7 +15,7 @@ from aiuser.utils.utilities import to_thread
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
-NEWLINE_COLLAPSE_REGEX = re.compile(r'\n{2,}')
+NEWLINE_COLLAPSE_REGEX = re.compile(r'(?:[ \t]*(?:\r\n|\r|\n)){2,}')
 
 # Use to_thread to compile & apply a regex pattern
 @to_thread(timeout=REGEX_RUN_TIMEOUT)
@@ -25,8 +25,23 @@ def compile_and_apply(pattern_str: str, text: str) -> str:
 
 import re
 
-def collapse_multiple_newlines(text):
-  """Collapses sequences of two or more newlines into a single newline."""
+def collapse_lines(text):
+  """
+  Collapses sequences of two or more blank lines (or just newlines)
+  into a single standard newline.
+  Handles LF, CRLF, and CR line endings.
+  A "blank line" here means zero or more spaces/tabs followed by a newline sequence.
+  """
+  # Pattern explanation:
+  # (?:               # Start of a non-capturing group for a "blank line unit"
+  #   [ \t]*          # Match zero or more spaces or tabs (horizontal whitespace)
+  #   (?:\r\n|\r|\n)  # Match any kind of newline: CRLF (Windows), CR (old Mac), or LF (Unix/modern Mac)
+  #                    # The order \r\n before \r is important to match CRLF correctly.
+  # )                  # End of the non-capturing group for a "blank line unit"
+  # {2,}               # Match 2 or more occurrences of the preceding "blank line unit"
+  # r'(?:[ \t]*(?:\r\n|\r|\n)){2,}'
+
+  # Replace the matched sequence of multiple blank lines with a single standard newline '\n'
   return re.sub(NEWLINE_COLLAPSE_REGEX, '\n', text)
 
 async def remove_patterns_from_response(ctx: commands.Context, config: Config, response: str) -> str:
@@ -122,7 +137,7 @@ async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_l
         return False
     
     if cleaned_reasoning:
-        # Collapse multiple newlines for more compact embed
-        cleaned_reasoning = collapse_multiple_newlines(cleaned_reasoning)
+        # Collapse blank  newlines for more compact embed
+        cleaned_reasoning = collapse_lines(cleaned_reasoning)
         await send_reasoning(ctx, cleaned_reasoning, messages_list.can_reply)
     return await send_response(ctx, cleaned_response, messages_list.can_reply)
