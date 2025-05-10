@@ -15,11 +15,19 @@ from aiuser.utils.utilities import to_thread
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
+NEWLINE_COLLAPSE_REGEX = re.compile(r'\n{2,}')
+
 # Use to_thread to compile & apply a regex pattern
 @to_thread(timeout=REGEX_RUN_TIMEOUT)
 def compile_and_apply(pattern_str: str, text: str) -> str:
     pattern = re.compile(pattern_str)
     return pattern.sub('', text).strip(' \n')
+
+import re
+
+def collapse_multiple_newlines(text):
+  """Collapses sequences of two or more newlines into a single newline."""
+  return re.sub(NEWLINE_COLLAPSE_REGEX, '\n', text)
 
 async def remove_patterns_from_response(ctx: commands.Context, config: Config, response: str) -> str:
     # Get patterns from config and replace "{botname}".
@@ -89,11 +97,11 @@ async def send_reasoning(ctx: commands.Context, reasoning: str, can_reply: bool)
         for i in range(0, len(reasoning), 4096):
             ctx.send(embed=Embed(title=f"{ctx.bot.user.display_name}'s Thoughts", description = f"||{reasoning[i:i + 4096]}||"), allowed_mentions=allowed)
     elif can_reply and await should_reply(ctx):
-        await ctx.message.reply(embed=Embed(title=f"{ctx.bot.user.display_name}'s Thoughts", description = reasoning), mention_author=False, allowed_mentions=allowed)
+        await ctx.message.reply(embed=Embed(title=f"{ctx.bot.user.display_name}'s Thoughts", description = f"||{reasoning}||"), mention_author=False, allowed_mentions=allowed)
     elif ctx.interaction:
-        await ctx.interaction.followup.send(embed=Embed(title=f"{ctx.bot.user.display_name}'s Thoughts", description = reasoning), allowed_mentions=allowed)
+        await ctx.interaction.followup.send(embed=Embed(title=f"{ctx.bot.user.display_name}'s Thoughts", description = f"||{reasoning}||"), allowed_mentions=allowed)
     else:
-        await ctx.send(embed=Embed(title=f"{ctx.bot.user.display_name}'s Thoughts", description = reasoning), allowed_mentions=allowed)
+        await ctx.send(embed=Embed(title=f"{ctx.bot.user.display_name}'s Thoughts", description = f"||{reasoning}||"), allowed_mentions=allowed)
     return True
 
 async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_list: MessagesList) -> bool:
@@ -110,12 +118,11 @@ async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_l
     else:
         cleaned_response = await remove_patterns_from_response(ctx, cog.config, response)
 
-    logger.info(f"clean resp={cleaned_response} reason={cleaned_reasoning}")
     if not cleaned_response:
         return False
     
     if cleaned_reasoning:
+        # Collapse multiple newlines for more compact embed
+        cleaned_reasoning = collapse_multiple_newlines(cleaned_reasoning)
         await send_reasoning(ctx, cleaned_reasoning, messages_list.can_reply)
-        return await send_response(ctx, cleaned_response, messages_list.can_reply)
-    else:
-        return await send_response(ctx, cleaned_response, messages_list.can_reply)
+    return await send_response(ctx, cleaned_response, messages_list.can_reply)
