@@ -36,6 +36,7 @@ class LLMPipeline:
         self.enabled_tools: List[ToolCall] = []
         self.available_tools_schemas: List[ToolCallSchema] = []
         self.completion: Optional[str] = None # Stores the *final* text completion
+        self.reasoning: Optional[str] = None # Stores the *final* text reasoning
 
     async def get_custom_parameters(self) -> Dict[str, Any]:
         custom_parameters = await self.config.guild(self.ctx.guild).parameters()
@@ -111,31 +112,40 @@ class LLMPipeline:
 
         message = response.choices[0].message
         llm_content = message.content  # This can be None
+        llm_reasoning = message.reasoning # This can be None
         llm_tool_calls = message.tool_calls or []
 
-        return llm_content, llm_tool_calls
+        return llm_content, llm_reasoning, llm_tool_calls
 
     async def create_completion(self) -> Optional[str]:
         custom_kwargs = await self.get_custom_parameters()
         await self.setup_tools()
 
         current_llm_text_response: Optional[str] = None
+        current_llm_text_reasoning: Optional[str] = None
 
+
+        has_processed_tool_calls = False
         for i in range(MAX_TOOL_CALL_ITERATIONS):
             iteration_kwargs = custom_kwargs.copy()
             if self.available_tools_schemas:
                 iteration_kwargs["tools"] = [
                     asdict(schema) for schema in self.available_tools_schemas
                 ]
-                # "tool_choice": "auto" is typically default when tools are provided
+                # Prevent back to back function calls from LLM
+                if has_processed_tool_calls:
+                    iteration_kwargs["tools"] = "none"
+                else:
+                    iteration_kwargs["tools"] = "auto"
             else:
                 iteration_kwargs.pop("tools", None)
                 iteration_kwargs.pop("tool_choice", None)
 
-            response_text, response_tool_calls = await self.call_client(
+            response_text, reasoning_text, response_tool_calls = await self.call_client(
                 iteration_kwargs
             )
             current_llm_text_response = response_text
+            current_llm_text_reasoning = reasoning_text
 
             if response_tool_calls:
                 logger.info(
@@ -158,6 +168,7 @@ class LLMPipeline:
                 f"Returning the last text content received from LLM, if any."
             )
 
+        self.reasoning = current_llm_text_reasoning
         self.completion = current_llm_text_response
         if self.completion:
             log_preview = f'{self.completion[:200]}{"..." if len(self.completion) > 200 else ""}'
@@ -168,7 +179,7 @@ class LLMPipeline:
             logger.info(
                 f"Final LLM response for guild {self.ctx.guild.name} (model {self.model}) is empty/None."
             )
-        return self.completion
+        return self.completion, self.reasoning
 
     async def _process_and_add_tool_results(
         self, tool_calls: List[ChatCompletionMessageToolCall]

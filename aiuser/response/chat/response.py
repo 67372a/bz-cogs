@@ -68,7 +68,7 @@ async def should_reply(ctx: commands.Context) -> bool:
             return True
     return False
 
-async def send_response(ctx: commands.Context, response: str, can_reply: bool) -> bool:
+async def send_response(ctx: commands.Context, response: str, can_reply: bool, target_channel) -> bool:
     allowed = AllowedMentions(everyone=False, roles=False, users=[ctx.message.author])
     if len(response) >= 2000:
         for i in range(0, len(response), 2000):
@@ -83,12 +83,26 @@ async def send_response(ctx: commands.Context, response: str, can_reply: bool) -
 
 async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_list: MessagesList) -> bool:
     pipeline = LLMPipeline(cog, ctx, messages=messages_list)
-    response = await pipeline.run()
+    response, reasoning = await pipeline.run()
     if not response:
         return False
+    
+    cleaned_reasoning = None
+    if reasoning:
+       cleaned_response, cleaned_reasoning = asyncio.gather(remove_patterns_from_response(ctx, cog.config, response),
+                                         remove_patterns_from_response(ctx, cog.config, reasoning),
+                                         return_exceptions=True)
+    else:
+        cleaned_response = await remove_patterns_from_response(ctx, cog.config, response)
 
-    cleaned_response = await remove_patterns_from_response(ctx, cog.config, response)
     if not cleaned_response:
         return False
-
-    return await send_response(ctx, cleaned_response, messages_list.can_reply)
+    
+    if cleaned_reasoning:
+        response_outcome, reasoning_outcome = asyncio.gather(send_response(ctx, cog.config, cleaned_response),
+                                                             send_response(ctx, cog.config, cleaned_reasoning, target_channel = ctx.guild.get_channel(1370556550334386226)),
+                                                             return_exceptions=True)
+        success = response_outcome
+    else:
+        success = await send_response(ctx, cleaned_response, messages_list.can_reply)
+    return success
