@@ -11,13 +11,16 @@ from aiuser.messages_list.converter.helpers import (format_embed_text_content,
                                                     format_sticker_content,
                                                     format_text_content,
                                                     format_generic_document,
-                                                    format_supported_document)
+                                                    format_binary_document,
+                                                    format_text_document)
 from aiuser.messages_list.converter.image.caption import transcribe_image
 from aiuser.messages_list.entry import MessageEntry
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
-SUPPORTED_DOCUMENT_CONTENT_TYPES = ["application/pdf","text/plain"]
+SUPPORTED_BINARY_DOCUMENT_CONTENT_TYPES = ["application/pdf"]
+
+SUPPORTED_TEXT_DOCUMENT_CONTENT_TYPES = ["text/", "application/xml", "application/yaml", "application/json", "application/xhtml"]
 
 
 class MessageConverter():
@@ -61,14 +64,27 @@ class MessageConverter():
                 content = format_generic_image(message)
                 await self.add_entry(content, res, role)
 
-        elif any(message.attachments[0].content_type.startswith(content_type) for content_type in SUPPORTED_DOCUMENT_CONTENT_TYPES):
+        elif any(message.attachments[0].content_type.startswith(content_type) for content_type in SUPPORTED_TEXT_DOCUMENT_CONTENT_TYPES):
             if (((self.init_msg.id == message.id) or (self.init_msg.reference and self.init_msg.reference.message_id == message.id)) 
                 and not self.ctx.interaction and await self.config.guild(message.guild).scan_images() and 
                 (message.attachments[0].size <= await self.config.guild(message.guild).max_image_size())):
-                logger.info(f"Supported document. type=[{message.attachments[0].content_type}] filename=[{message.attachments[0].filename}]")
-                content = await format_supported_document(message) or format_generic_document(message)
+                logger.info(f"Supported text document. type=[{message.attachments[0].content_type}] filename=[{message.attachments[0].filename}]")
+                content = await format_text_document(message) or format_generic_document(message)
                 
-                logger.info(f"Supported document content '{content}'.")
+                await self.add_entry(content, res, role)
+                if isinstance(content, list):
+                    return
+            else:
+                content = format_generic_document(message)
+                await self.add_entry(content, res, role)
+
+        elif any(message.attachments[0].content_type.startswith(content_type) for content_type in SUPPORTED_BINARY_DOCUMENT_CONTENT_TYPES):
+            if (((self.init_msg.id == message.id) or (self.init_msg.reference and self.init_msg.reference.message_id == message.id)) 
+                and not self.ctx.interaction and await self.config.guild(message.guild).scan_images() and 
+                (message.attachments[0].size <= await self.config.guild(message.guild).max_image_size())):
+                logger.info(f"Supported binary document. type=[{message.attachments[0].content_type}] filename=[{message.attachments[0].filename}]")
+                content = await format_binary_document(message) or format_generic_document(message)
+                
                 await self.add_entry(content, res, role)
                 if isinstance(content, list):
                     return

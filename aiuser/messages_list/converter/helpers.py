@@ -1,5 +1,5 @@
 import logging
-from io import BytesIO
+from io import BytesIO, TextIOWrapper
 import base64
 
 from discord import Message, MessageType
@@ -40,7 +40,7 @@ def format_generic_document(message: Message):
         return f'[Document: "{message.attachments[0].filename}"]'
     return f'User "{message.author.display_name}" sent: [Document: "{message.attachments[0].filename}"]'
 
-async def format_supported_document(message: Message):
+async def format_binary_document(message: Message):
     attachment = message.attachments[0]
 
     content = []
@@ -67,6 +67,34 @@ async def format_supported_document(message: Message):
                 "filename": attachment.filename,
                 "file_data": file_data
             }
+        })
+    return content
+
+async def format_text_document(message: Message):
+    attachment = message.attachments[0]
+
+    content = []
+    if message.content != "":
+        content.append({"type": "text", "text": format_text_content(message)})
+
+    with TextIOWrapper(BytesIO(), encoding='utf-8') as buffer: # Use BytesIO as a context manager
+        await attachment.save(buffer)
+        logger.info(f"Attachment '{attachment.filename}' saved to buffer.")
+
+        buffer.seek(0)  # Reset buffer pointer to the beginning for reading
+        text_data = buffer.read()
+
+    mime_type = get_mime_type(attachment.content_type)
+
+    if (len(text_data) > 0):
+        text_data = mention_to_text(text_data)
+
+    document_content = f'User "{message.author.display_name}" sent: [Document: "{message.attachments[0].filename}" Type: "{mime_type}"\n<DOCUMENT_START>{text_data}<DOCUMENT_END>]'
+
+    content.append(
+        {
+            "type": "text", 
+            "text": document_content
         })
     return content
 

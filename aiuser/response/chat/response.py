@@ -2,6 +2,7 @@ import asyncio
 import logging
 import random
 import re
+import math
 from datetime import datetime, timezone
 
 from discord import AllowedMentions, Embed
@@ -15,7 +16,7 @@ from aiuser.utils.utilities import to_thread
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
-NEWLINE_COLLAPSE_REGEX = re.compile(r'(?:[ \t]*(?:\r\n|\r|\n)){2,}')
+MULTI_NEWLINE_REGEX = re.compile(r'(?:[ \t]*(?:\r\n|\r|\n)){2,}')
 
 # Use to_thread to compile & apply a regex pattern
 @to_thread(timeout=REGEX_RUN_TIMEOUT)
@@ -25,7 +26,7 @@ def compile_and_apply(pattern_str: str, text: str) -> str:
 
 import re
 
-def collapse_lines(text):
+def collapse_lines(text, replacement: str = r'\n'):
   """
   Collapses sequences of two or more blank lines (or just newlines)
   into a single standard newline.
@@ -42,7 +43,7 @@ def collapse_lines(text):
   # r'(?:[ \t]*(?:\r\n|\r|\n)){2,}'
 
   # Replace the matched sequence of multiple blank lines with a single standard newline '\n'
-  return re.sub(NEWLINE_COLLAPSE_REGEX, '\n', text)
+  return re.sub(MULTI_NEWLINE_REGEX, replacement, text)
 
 async def remove_patterns_from_response(ctx: commands.Context, config: Config, response: str) -> str:
     # Get patterns from config and replace "{botname}".
@@ -94,23 +95,31 @@ async def should_reply(ctx: commands.Context) -> bool:
 async def send_response(ctx: commands.Context, response: str, can_reply: bool) -> bool:
     allowed = AllowedMentions(everyone=False, roles=False, users=[ctx.message.author])
 
-    if len(response) >= 2000:
-        for i in range(0, len(response), 2000):
-            ctx.send(response[i:i + 2000], allowed_mentions=allowed)
+    if len(response) > 4096:
+        total_embed_count = math.ceil(len(response) / 4096)
+
+        for i in range(0, len(response), 4096):
+            embed = Embed(title=f"{ctx.bot.user.display_name}'s Response", description = response[i:i + 4096])
+            embed.set_footer(f"{(i + 4096) / 4096} of {total_embed_count}")
+            ctx.send(embed=embed, allowed_mentions=allowed)
     elif can_reply and await should_reply(ctx):
-        await ctx.message.reply(response, mention_author=False, allowed_mentions=allowed)
+        await ctx.message.reply(embed=Embed(title=f"{ctx.bot.user.display_name}'s Response", description = response), mention_author=False, allowed_mentions=allowed)
     elif ctx.interaction:
-        await ctx.interaction.followup.send(response, allowed_mentions=allowed)
+        await ctx.interaction.followup.send(embed=Embed(title=f"{ctx.bot.user.display_name}'s Response", description = response), allowed_mentions=allowed)
     else:
-        await ctx.send(response, allowed_mentions=allowed)
+        await ctx.send(embed=Embed(title=f"{ctx.bot.user.display_name}'s Response", description = response), allowed_mentions=allowed)
     return True
 
 async def send_reasoning(ctx: commands.Context, reasoning: str, can_reply: bool) -> bool:
     allowed = AllowedMentions(everyone=False, roles=False, users=[ctx.message.author])
 
-    if len(reasoning) >= 4096:
+    if len(reasoning) > 4096:
+        total_embed_count = math.ceil(len(reasoning) / 4096)
+
         for i in range(0, len(reasoning), 4096):
-            ctx.send(embed=Embed(title=f"{ctx.bot.user.display_name}'s Thoughts", description = f"||{reasoning[i:i + 4096]}||"), allowed_mentions=allowed)
+            embed = Embed(title=f"{ctx.bot.user.display_name}'s Thoughts", description = f"||{reasoning[i:i + 4096]}||")
+            embed.set_footer(f"{(i + 4096) / 4096} of {total_embed_count}")
+            ctx.send(embed=embed, allowed_mentions=allowed)
     elif can_reply and await should_reply(ctx):
         await ctx.message.reply(embed=Embed(title=f"{ctx.bot.user.display_name}'s Thoughts", description = f"||{reasoning}||"), mention_author=False, allowed_mentions=allowed)
     elif ctx.interaction:
@@ -137,7 +146,10 @@ async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_l
         return False
     
     if cleaned_reasoning:
-        # Collapse blank  newlines for more compact embed
-        cleaned_reasoning = collapse_lines(cleaned_reasoning)
+        # Collapse multiple newlines and blank lines for more compact embed
+        cleaned_reasoning = collapse_lines(cleaned_reasoning, replacement=r'\n')
         await send_reasoning(ctx, cleaned_reasoning, messages_list.can_reply)
+
+    # Collapse multiple newlines and blank lines for more compact embed
+    cleaned_response = collapse_lines(cleaned_response, replacement=r'\n\n')
     return await send_response(ctx, cleaned_response, messages_list.can_reply)

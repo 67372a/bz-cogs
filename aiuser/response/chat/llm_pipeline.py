@@ -21,8 +21,7 @@ from aiuser.utils.utilities import get_enabled_tools
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
-MAX_TOOL_CALL_ITERATIONS = 5  # Maximum iterations for tool call sequences
-
+MAX_TOOL_CALL_ITERATIONS = 3  # Maximum iterations for tool call sequences
 
 class LLMPipeline:
     def __init__(self, cog: MixinMeta, ctx: commands.Context, messages: MessagesList):
