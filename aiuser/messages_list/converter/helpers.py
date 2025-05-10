@@ -86,9 +86,6 @@ async def format_text_document(message: Message):
 
     mime_type = get_mime_type(attachment.content_type)
 
-    if (len(text_data) > 0):
-        text_data = mention_to_text(text_data)
-
     document_content = f'User "{message.author.display_name}" sent: [Document: "{message.attachments[0].filename}" Type: "{mime_type}"\n<DOCUMENT_START>{text_data}<DOCUMENT_END>]'
 
     content.append(
