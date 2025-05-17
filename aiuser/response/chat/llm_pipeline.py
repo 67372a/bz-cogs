@@ -119,12 +119,12 @@ class LLMPipeline:
 
         return llm_content, llm_reasoning, llm_tool_calls
 
-    async def create_completion(self) -> Tuple[str|None, str|None]:
+    async def create_completion(self) -> Optional[str]:
         custom_kwargs = await self.get_custom_parameters()
         await self.setup_tools()
 
-        current_llm_text_response: str|None = None
-        current_llm_text_reasoning: str|None = None
+        current_llm_text_response: Optional[str] = None
+        current_llm_text_reasoning: Optional[str] = None
 
 
         has_processed_tool_calls = False
