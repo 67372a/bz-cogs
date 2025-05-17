@@ -136,7 +136,7 @@ class MessagesList:
 
         return True
 
-    async def add_msg(self, message: Message, index: int = None, force: bool = False):
+    async def add_msg(self, message: Message, index: int|None = None, force: bool = False):
         if not await self.check_if_add(message, force):
             return
 
@@ -167,21 +167,21 @@ class MessagesList:
         if message.reference and isinstance(message.reference.resolved, discord.Message) and message.author.id != self.bot.user.id:
             await self.add_msg(message.reference.resolved, index=0)
 
-    async def add_system(self, content: str, index: int = None):
+    async def add_system(self, content: str, index: int = int|None):
         if self.tokens > self.token_limit:
             return
         entry = MessageEntry("system", content)
         self.messages.insert(index or 0, entry)
         await self._add_tokens(content)
 
-    async def add_assistant(self, content: str = "", index: int = None, tool_calls: list = []):
+    async def add_assistant(self, content: str = "", index: int = int|None, tool_calls: list = []):
         if self.tokens > self.token_limit:
             return
         entry = MessageEntry("assistant", content, tool_calls=tool_calls)
         self.messages.insert(index or 0, entry)
         await self._add_tokens(content)
 
-    async def add_tool_result(self, content: str,  tool_call_id: int, index: int = None):
+    async def add_tool_result(self, content: str,  tool_call_id: int, index: int = int|None):
         if self.tokens > self.token_limit:
             return
         entry = MessageEntry("tool", content, tool_call_id=tool_call_id)

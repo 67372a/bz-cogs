@@ -39,8 +39,11 @@ DEFAULT_REMOVE_PATTERNS = [
     r'^You respond as "?{authorname}"?:',
     r'^[<({{\[]{authorname}[>)}}\]]',  # [name], {name}, <name>, (name)
     r'^{authorname}:',
-    r'\n*\[Image[^\]]+\]'
+    r'\n*\[Image[^\]]+\]',
+    r'^User "({authorname}|{botname})" sent: \[(Embed|Sticker|Link to Youtube video) with (name|title) "[\s\S]*?" and description "[\s\S]*?"( from channel "[\s\S]*?)?\]',
+    r'^User "({authorname}|{botname})" sent: \[(Image|Document)(:| saying) "?[\s\S]*?"?( Type: "[\s\S]*?"\n<DOCUMENT_START>[\s\S]*?<DOCUMENT_END>)\]'
 ]
+
 DEFAULT_IMAGE_REQUEST_TRIGGER_WORDS = [
     "image", "images", "picture", "pictures", "photo", "photos", "photograph", "photographs"]
 DEFAULT_IMAGE_REQUEST_TRIGGER_SECOND_PERSON_WORDS = ["yourself", "you"]

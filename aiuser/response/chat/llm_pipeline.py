@@ -76,13 +76,8 @@ class LLMPipeline:
 
     async def call_client(
         self, kwargs: Dict[str, Any]
-    ) -> Tuple[Optional[str], List[ChatCompletionMessageToolCall]]:
+    ) -> Tuple[Optional[str], Optional[str], List[ChatCompletionMessageToolCall]]:
         current_messages_json = self.msg_list.get_json()
-
-        logger.info(
-            f"Sending request to LLM (model: {self.model}) with {len(current_messages_json)} messages. Kwarg keys: {list(kwargs.keys())}"
-        )
-
 
         plugins = [
             {
@@ -93,11 +88,19 @@ class LLMPipeline:
             }
         ]
 
+        if 'extra_body' in kwargs:
+            kwargs['extra_body'].update({"plugins": plugins})
+        else:
+            kwargs['extra_body'] = {"plugins": plugins}
+
+        logger.info(
+            f"Sending request to LLM (model: {self.model}) with {len(current_messages_json)} messages. Kwarg keys: {list(kwargs.keys())}"
+        )
+
         response: ChatCompletion = (
             await self.openai_client.chat.completions.create(
                 model=self.model, 
                 messages=current_messages_json, 
-                extra_body={"plugins": plugins},
                 **kwargs
             )
         )
@@ -116,12 +119,12 @@ class LLMPipeline:
 
         return llm_content, llm_reasoning, llm_tool_calls
 
-    async def create_completion(self) -> Optional[str]:
+    async def create_completion(self) -> Tuple[str|None, str|None]:
         custom_kwargs = await self.get_custom_parameters()
         await self.setup_tools()
 
-        current_llm_text_response: Optional[str] = None
-        current_llm_text_reasoning: Optional[str] = None
+        current_llm_text_response: str|None = None
+        current_llm_text_reasoning: str|None = None
 
 
         has_processed_tool_calls = False
@@ -239,7 +242,7 @@ class LLMPipeline:
         )
         return f"Error: Tool '{tool_name}' is not available or not recognized."
 
-    async def run(self) -> Optional[str]:
+    async def run(self) -> Tuple[str|None, str|None]:
         try:
             return await self.create_completion()
         except httpx.ReadTimeout:
@@ -257,4 +260,4 @@ class LLMPipeline:
         except Exception:
             logger.exception(f"An unexpected error occurred during LLM processing for model {self.model} in guild {self.ctx.guild.name}")
             await self.ctx.react_quietly("⚠️", message="`aiuser` request failed due to an unexpected error")
-        return None
+        return None, None
