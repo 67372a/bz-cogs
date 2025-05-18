@@ -29,19 +29,12 @@ Convert the below message to a Stable Diffusion Art Prompt.  The prompt should h
 DEFAULT_REMOVE_PATTERNS = [
     r'<think>[\s\S]*?<\/think>',  # for thinking LLMs
     r'^As an AI language model,?',
-    r'^(User )?"?{botname}"? (said|says|respond(ed|s)|replie[ds])( to [^":]+)?:?',
-    r'^As "?{botname}"?, (I|you)( might| would| could)? (respond|reply|say)( with)?( something like)?:?',
-    r'^You respond as "?{botname}"?:',
-    r'^[<({{\[]{botname}[>)}}\]]',  # [name], {name}, <name>, (name)
-    r'^{botname}:',
-    r'^(User )?"?{authorname}"? (said|says|respond(ed|s)|replie[ds])( to [^":]+)?:?',
-    r'^As "?{authorname}"?, (I|you)( might| would| could)? (respond|reply|say)( with)?( something like)?:?',
-    r'^You respond as "?{authorname}"?:',
-    r'^[<({{\[]{authorname}[>)}}\]]',  # [name], {name}, <name>, (name)
-    r'^{authorname}:',
-    r'\n*\[Image[^\]]+\]',
-    r'^User "({authorname}|{botname})" sent: \[(Embed|Sticker|Link to Youtube video) with (name|title) "[\s\S]*?" and description "[\s\S]*?"( from channel "[\s\S]*?)?\]',
-    r'^User "({authorname}|{botname})" sent: \[(Image|Document)(:| saying) "?[\s\S]*?"?( Type: "[\s\S]*?"\n<DOCUMENT_START>[\s\S]*?<DOCUMENT_END>)\]'
+    r'^(User )?"?({botname}|{authorname})"? (said|says|respond(ed|s)|replie[ds]|sent)( to [^":]+)?:?',
+    r'^As "?({botname}|{authorname})"?, (I|you)( might| would| could)? (respond|reply|say|sent)( with)?( something like)?:?',
+    r'^You respond as "?{botname}|{authorname}"?:',
+    r'^[<({{\[]({botname}|{authorname})[>)}}\]]',  # [name], {name}, <name>, (name)
+    r'\[(Embed|Sticker|Link to Youtube video) with (name|title) "[\s\S]*?" and description "[\s\S]*?"( from channel "[\s\S]*?)?\]',
+    r'\[(Image|Document)(:| saying) "?[\s\S]*?"?( Type: "[\s\S]*?"\n<DOCUMENT_START>[\s\S]*?<DOCUMENT_END>)\]'
 ]
 
 DEFAULT_IMAGE_REQUEST_TRIGGER_WORDS = [

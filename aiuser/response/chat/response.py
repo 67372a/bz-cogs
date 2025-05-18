@@ -16,7 +16,7 @@ from aiuser.utils.utilities import to_thread
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
-MULTI_NEWLINE_REGEX = re.compile(r'(?:[ \t]*(?:\r\n|\r|\n)){2,}')
+MULTI_NEWLINE_REGEX = re.compile(r'(?:([ \t]|<br>)*(?:\r\n|\r|\n)){2,}')
 
 # Use to_thread to compile & apply a regex pattern
 @to_thread(timeout=REGEX_RUN_TIMEOUT)
@@ -148,8 +148,10 @@ async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_l
     if cleaned_reasoning:
         # Collapse multiple newlines and blank lines for more compact embed
         cleaned_reasoning = collapse_lines(cleaned_reasoning, replacement=r'\n')
+        cleaned_reasoning = cleaned_reasoning.replace(r'`',r'\`')
         await send_reasoning(ctx, cleaned_reasoning, messages_list.can_reply)
 
     # Collapse multiple newlines and blank lines for more compact embed
     cleaned_response = collapse_lines(cleaned_response, replacement=r'\n\n')
+    cleaned_response = cleaned_response.replace(r'`',r'\`')
     return await send_response(ctx, cleaned_response, messages_list.can_reply)
