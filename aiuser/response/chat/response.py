@@ -18,7 +18,7 @@ logger = logging.getLogger("red.bz_cogs.aiuser")
 
 MULTI_NEWLINE_REGEX = re.compile(r'(?:([ \t]|<br>|\\n)*(?:\r\n|\r|\n)){2,}')
 
-EMOJI_PATTERN = re.compile(r"(?<![<a]):([a-zA-Z0-9_]+?):(?![0-9]{17,20}>)")
+EMOJI_PATTERN = re.compile(r":([a-zA-Z0-9_]+?):")
 
 # Use to_thread to compile & apply a regex pattern
 @to_thread(timeout=REGEX_RUN_TIMEOUT)
@@ -189,16 +189,6 @@ def resolve_emojis_for_discord(ctx: commands.Context, text_content: str) -> str:
         emoji_name = match.group(1)
         # Only replace if it's a known custom emoji shortcode
         return emoji_map.get(emoji_name, match.group(0)) # Return original if not in map
-
-    #r"(?<![<a]):([a-zA-Z0-9_]+?):(?![0-9]{17,20}>)"
-    # This pattern means:
-    # (?<![<a])  -- Negative lookbehind: the char before the first ':' is not '<' or 'a'
-    #               (this helps avoid matching inside <:emoji:id> or <a:emoji:id>)
-    # :           -- Matches the first literal colon
-    # ([a-zA-Z0-9_]+?) -- Captures the emoji name (non-greedy)
-    # :           -- Matches the second literal colon
-    # (?![0-9]{17,20}>) -- Negative lookahead: what follows is NOT 17-20 digits and then '>'
-    #                   (this helps avoid matching :emoji:id> as a shortcode if `emoji` was the name)
 
     resolved_text = re.sub(EMOJI_PATTERN, replacer, text_content)
     return resolved_text
