@@ -181,6 +181,8 @@ def resolve_emojis_for_discord(ctx: commands.Context, text_content: str) -> str:
 
     emoji_map = {emoji.name: str(emoji) for emoji in available_emojis}
 
+    print(str(emoji_map))
+
     def replacer(match):
         emoji_name = match.group(1)
         # Only replace if it's a known custom emoji shortcode
