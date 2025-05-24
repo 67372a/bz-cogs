@@ -174,16 +174,16 @@ def resolve_emojis_for_discord(ctx: commands.Context, text_content: str) -> str:
         The string with emoji shortcodes replaced.
     """
 
-    available_emojis = ctx.guild.emojis
+    available_emojis = ctx.message.guild.emojis
 
-    print(str(available_emojis))
+    print(f"available_emojis={str(available_emojis)}")
 
     if not available_emojis:
         return text_content
 
     emoji_map = {emoji.name: str(emoji) for emoji in available_emojis}
 
-    print(str(emoji_map))
+    print(f"emoji_map={str(emoji_map)}")
 
     def replacer(match):
         emoji_name = match.group(1)
