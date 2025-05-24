@@ -176,8 +176,6 @@ def resolve_emojis_for_discord(ctx: commands.Context, text_content: str) -> str:
 
     available_emojis = ctx.message.guild.emojis
 
-    logger.info(f"available_emojis={str(available_emojis)}")
-
     if not available_emojis:
         return text_content
 
