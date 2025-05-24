@@ -181,7 +181,7 @@ def resolve_emojis_for_discord(ctx: commands.Context, text_content: str) -> str:
     if not available_emojis:
         return text_content
 
-    emoji_map = {emoji.name: str(emoji) for emoji in available_emojis}
+    emoji_map = {emoji.name.lower(): str(emoji) for emoji in available_emojis}
 
     logger.info(f"emoji_map={str(emoji_map)}")
 
