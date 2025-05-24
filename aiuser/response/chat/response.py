@@ -5,7 +5,7 @@ import re
 import math
 from datetime import datetime, timezone
 
-from discord import AllowedMentions, Embed
+from discord import AllowedMentions, Embed, Emoji
 from redbot.core import Config, commands
 
 from aiuser.config.constants import REGEX_RUN_TIMEOUT
@@ -16,7 +16,9 @@ from aiuser.utils.utilities import to_thread
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
-MULTI_NEWLINE_REGEX = re.compile(r'(?:([ \t]|<br>)*(?:\r\n|\r|\n)){2,}')
+MULTI_NEWLINE_REGEX = re.compile(r'(?:([ \t]|<br>|\\n)*(?:\r\n|\r|\n)){2,}')
+
+EMOJI_PATTERN = re.compile(r"(?<![<a]):([a-zA-Z0-9_]+?):(?![0-9]{17,20}>)")
 
 # Use to_thread to compile & apply a regex pattern
 @to_thread(timeout=REGEX_RUN_TIMEOUT)
@@ -149,9 +151,50 @@ async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_l
         # Collapse multiple newlines and blank lines for more compact embed
         cleaned_reasoning = collapse_lines(cleaned_reasoning, replacement=r'\n')
         cleaned_reasoning = cleaned_reasoning.replace(r'`',r'\`')
+        cleaned_reasoning = resolve_emojis_for_discord(ctx, cleaned_reasoning)
         await send_reasoning(ctx, cleaned_reasoning, messages_list.can_reply)
 
     # Collapse multiple newlines and blank lines for more compact embed
     cleaned_response = collapse_lines(cleaned_response, replacement=r'\n\n')
     cleaned_response = cleaned_response.replace(r'`',r'\`')
+    cleaned_response = resolve_emojis_for_discord(ctx, cleaned_response)
     return await send_response(ctx, cleaned_response, messages_list.can_reply)
+
+# --- Emoji Resolver Function (Refined) ---
+def resolve_emojis_for_discord(ctx: commands.Context, text_content: str) -> str:
+    """
+    Resolves :emoji_name: shortcodes in a string to their full Discord format,
+    leaving already correctly formatted <:...:id> emojis untouched.
+
+    Args:
+        text_content: The string potentially containing emoji shortcodes.
+        available_emojis: A list of discord.Emoji objects (e.g., from bot.emojis or guild.emojis).
+
+    Returns:
+        The string with emoji shortcodes replaced.
+    """
+
+    available_emojis = ctx.guild.emojis
+
+    if not available_emojis:
+        return text_content
+
+    emoji_map = {emoji.name: str(emoji) for emoji in available_emojis}
+
+    def replacer(match):
+        emoji_name = match.group(1)
+        # Only replace if it's a known custom emoji shortcode
+        return emoji_map.get(emoji_name, match.group(0)) # Return original if not in map
+
+    #r"(?<![<a]):([a-zA-Z0-9_]+?):(?![0-9]{17,20}>)"
+    # This pattern means:
+    # (?<![<a])  -- Negative lookbehind: the char before the first ':' is not '<' or 'a'
+    #               (this helps avoid matching inside <:emoji:id> or <a:emoji:id>)
+    # :           -- Matches the first literal colon
+    # ([a-zA-Z0-9_]+?) -- Captures the emoji name (non-greedy)
+    # :           -- Matches the second literal colon
+    # (?![0-9]{17,20}>) -- Negative lookahead: what follows is NOT 17-20 digits and then '>'
+    #                   (this helps avoid matching :emoji:id> as a shortcode if `emoji` was the name)
+
+    resolved_text = re.sub(EMOJI_PATTERN, replacer, text_content)
+    return resolved_text
