@@ -57,7 +57,7 @@ async def format_variables(ctx: commands.Context, text: str):
     else:
         channeltopic = ctx.message.channel.topic
 
-    serveremojis = [str(e) for e in ctx.message.guild.emojis]
+    serveremojis = [str(e.name.lower()) for e in ctx.message.guild.emojis]
     random.shuffle(serveremojis)
     serveremojis = ' '.join(serveremojis)
 
