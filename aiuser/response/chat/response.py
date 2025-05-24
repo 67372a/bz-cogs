@@ -176,14 +176,14 @@ def resolve_emojis_for_discord(ctx: commands.Context, text_content: str) -> str:
 
     available_emojis = ctx.message.guild.emojis
 
-    print(f"available_emojis={str(available_emojis)}")
+    logger.info(f"available_emojis={str(available_emojis)}")
 
     if not available_emojis:
         return text_content
 
     emoji_map = {emoji.name: str(emoji) for emoji in available_emojis}
 
-    print(f"emoji_map={str(emoji_map)}")
+    logger.info(f"emoji_map={str(emoji_map)}")
 
     def replacer(match):
         emoji_name = match.group(1)
