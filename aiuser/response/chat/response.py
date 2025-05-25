@@ -16,9 +16,9 @@ from aiuser.utils.utilities import to_thread
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
-MULTI_NEWLINE_REGEX = re.compile(r'(?:([ \t]|<br>|\\n)*(?:\r\n|\r|\n)){2,}')
+MULTI_NEWLINE_PATTERN = re.compile(r'(?:([ \t]|<br>|\\n)*(?:\r\n|\r|\n)){2,}')
 
-EMOJI_PATTERN = re.compile(r":([a-zA-Z0-9_]+?):")
+EMOJI_PATTERN = re.compile(r"(?:<a?)?:([a-zA-Z0-9_]+?):(?:\d*>)?")
 
 # Use to_thread to compile & apply a regex pattern
 @to_thread(timeout=REGEX_RUN_TIMEOUT)
@@ -45,7 +45,7 @@ def collapse_lines(text, replacement: str = r'\n'):
   # r'(?:[ \t]*(?:\r\n|\r|\n)){2,}'
 
   # Replace the matched sequence of multiple blank lines with a single standard newline '\n'
-  return re.sub(MULTI_NEWLINE_REGEX, replacement, text)
+  return re.sub(MULTI_NEWLINE_PATTERN, replacement, text)
 
 async def remove_patterns_from_response(ctx: commands.Context, config: Config, response: str) -> str:
     # Get patterns from config and replace "{botname}".
