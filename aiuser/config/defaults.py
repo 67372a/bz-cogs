@@ -27,14 +27,14 @@ Here is a sample output: "Beautiful woman, contemplative and reflective, sitting
 Convert the below message to a Stable Diffusion Art Prompt.  The prompt should have no second person references, no line breaks, no delimiters, and be kept as concise as possible while still conveying a full scene.
 """
 DEFAULT_REMOVE_PATTERNS = [
-    r'<think>[\s\S]*?<\/think>',  # for thinking LLMs
+    r'\W*\[(?:Embed|Sticker|Link to Youtube video) with (?:name|title) "[^"]*?" and description(?: |=|:)*?"?[\s\S]*?"?(?: from channel "[\s\S]*?)?\]\W*',
+    r'\W*\[(?:Image|Document)(?::| saying) "?[\s\S]*?"?(?: Type: "[\s\S]*?"\n<DOCUMENT_START>[\s\S]*?<DOCUMENT_END>)\]\W*'
+    r'\W*<think>[\s\S]*?<\/think>\W*',  # for thinking LLMs
     r'^As an AI language model,?',
-    r'^(User )?"?({botname}|{authorname})"? (said|says|respond(ed|s)|replie[ds]|sent)( to [^":]+)?:?',
-    r'^As "?({botname}|{authorname})"?, (I|you)( might| would| could)? (respond|reply|say|sent)( with)?( something like)?:?',
-    r'^You respond as "?{botname}|{authorname}"?:',
-    r'^[<({{\[]({botname}|{authorname})[>)}}\]]',  # [name], {name}, <name>, (name)
-    r'\[(Embed|Sticker|Link to Youtube video) with (name|title) "[\s\S]*?" and description "[\s\S]*?"( from channel "[\s\S]*?)?\]',
-    r'\[(Image|Document)(:| saying) "?[\s\S]*?"?( Type: "[\s\S]*?"\n<DOCUMENT_START>[\s\S]*?<DOCUMENT_END>)\]'
+    r'^(?:User )?"?(?:{botname}|{authorname})"? (?:said|says|respond(ed|s)|replie[ds]|sent)( to [^":]+)?:?',
+    r'^As "?(?:{botname}|{authorname})"?, (?:I|you)(?: might| would| could)? (?:respond|reply|say|sent)( with)?(?: something like)?:?',
+    r'^You respond as "?(?:{botname}|{authorname})"?:',
+    r'^[<({{\[](?:{botname}|{authorname})[>)}}\]]',  # [name], {name}, <name>, (name)
 ]
 
 DEFAULT_IMAGE_REQUEST_TRIGGER_WORDS = [
