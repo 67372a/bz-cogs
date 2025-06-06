@@ -102,7 +102,7 @@ async def send_response(ctx: commands.Context, response: str, can_reply: bool) -
 
         for i in range(0, len(response), 4096):
             embed = Embed(title=f"{ctx.bot.user.display_name}'s Response", description = response[i:i + 4096])
-            embed.set_footer(f"{(i + 4096) / 4096} of {total_embed_count}")
+            embed.set_footer(text=f"{(i + 4096) / 4096} of {total_embed_count}")
             ctx.send(embed=embed, allowed_mentions=allowed)
     elif can_reply and await should_reply(ctx):
         await ctx.message.reply(embed=Embed(title=f"{ctx.bot.user.display_name}'s Response", description = response), mention_author=False, allowed_mentions=allowed)
@@ -120,7 +120,7 @@ async def send_reasoning(ctx: commands.Context, reasoning: str, can_reply: bool)
 
         for i in range(0, len(reasoning), 4096):
             embed = Embed(title=f"{ctx.bot.user.display_name}'s Thoughts", description = f"||{reasoning[i:i + 4096]}||")
-            embed.set_footer(f"{(i + 4096) / 4096} of {total_embed_count}")
+            embed.set_footer(text=f"{(i + 4096) / 4096} of {total_embed_count}")
             ctx.send(embed=embed, allowed_mentions=allowed)
     elif can_reply and await should_reply(ctx):
         await ctx.message.reply(embed=Embed(title=f"{ctx.bot.user.display_name}'s Thoughts", description = f"||{reasoning}||"), mention_author=False, allowed_mentions=allowed)

@@ -3,6 +3,7 @@ import logging
 import random
 from datetime import datetime, timedelta
 from typing import List
+import re
 
 import discord
 import tiktoken
@@ -21,6 +22,7 @@ from aiuser.utils.utilities import format_variables
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
 OPTIN_EMBED_TITLE = ":information_source: AI User Opt-In / Opt-Out"
+THOUGHTS_EMBED_TITLE_REGEX = re.compile(r'^.*\'s Thoughts$')
 
 
 async def create_messages_list(
@@ -242,6 +244,9 @@ class MessagesList:
             if self.tokens > self.token_limit:
                 return logger.debug(f"{self.tokens} tokens used - nearing limit, stopping context creation for message {self.init_message.id}")
             if (past_messages[i].author.id == self.bot.user.id) and (past_messages[i].embeds and past_messages[i].embeds[0].title == OPTIN_EMBED_TITLE):
+                continue
+            # Ignore reasoning
+            if (past_messages[i].author.id == self.bot.user.id) and (past_messages[i].embeds and THOUGHTS_EMBED_TITLE_REGEX.search(past_messages[i].embeds[0].title)):
                 continue
             if await self._is_valid_time_gap(past_messages[i], past_messages[i + 1], max_seconds_gap):
                 await self.add_msg(past_messages[i])
