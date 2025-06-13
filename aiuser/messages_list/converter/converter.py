@@ -1,11 +1,12 @@
 import logging
+import re
 
 from discord import Message
 from redbot.core import commands
 
 from aiuser.types.abc import MixinMeta
 from aiuser.utils.utilities import contains_youtube_link, is_embed_valid
-from aiuser.messages_list.converter.embed.formatter import format_embed_content
+from aiuser.messages_list.converter.embed.formatter import format_embed_content, format_bot_embed_content
 from aiuser.messages_list.converter.helpers import (format_embed_text_content,
                                                     format_generic_image,
                                                     format_sticker_content,
@@ -22,6 +23,7 @@ SUPPORTED_BINARY_DOCUMENT_CONTENT_TYPES = ["application/pdf"]
 
 SUPPORTED_TEXT_DOCUMENT_CONTENT_TYPES = ["text/", "application/xml", "application/yaml", "application/json", "application/xhtml"]
 
+RESPONSE_EMBED_TITLE_REGEX = re.compile(r'^.*\'s Response$')
 
 class MessageConverter():
     def __init__(self, cog: MixinMeta, ctx: commands.Context):
@@ -41,7 +43,9 @@ class MessageConverter():
         elif message.stickers:
             content = await format_sticker_content(message)
             await self.add_entry(content, res, role)
-        elif (len(message.embeds) > 0 and is_embed_valid(message)) or contains_youtube_link(message.content):
+        elif (len(message.embeds) > 0 and is_embed_valid(message)):
+            await self.handle_embed(message, res, role)
+        elif contains_youtube_link(message.content):
             await self.handle_embed(message, res, role)
         else:
             content = format_text_content(message)
@@ -102,7 +106,11 @@ class MessageConverter():
         await self.add_entry(content, res, role)
 
     async def handle_embed(self, message: Message, res, role):
-        content = await format_embed_content(self.cog, message)
+        if self.bot_id and RESPONSE_EMBED_TITLE_REGEX.search(message.embeds[0].title):
+            content = await format_bot_embed_content(self.cog, message)
+        else:
+            content = await format_embed_content(self.cog, message)
+            
         if not content:
             content = format_text_content(message)
             await self.add_entry(content, res, role)
