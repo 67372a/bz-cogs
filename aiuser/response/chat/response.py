@@ -115,12 +115,12 @@ async def send_response(ctx: commands.Context, response: str, can_reply: bool) -
 async def send_reasoning(ctx: commands.Context, reasoning: str, can_reply: bool) -> bool:
     allowed = AllowedMentions(everyone=False, roles=False, users=[ctx.message.author])
 
-    if len(reasoning) > 4096:
-        total_embed_count = math.ceil(len(reasoning) / 4096)
+    if len(reasoning) > 4092:
+        total_embed_count = math.ceil(len(reasoning) / 4092)
 
-        for i in range(0, len(reasoning), 4096):
-            embed = Embed(title=f"{ctx.bot.user.display_name}'s Thoughts", description = f"||{reasoning[i:i + 4096]}||")
-            embed.set_footer(text=f"{int((i + 4096)) / 4096} of {total_embed_count}")
+        for i in range(0, len(reasoning), 4092):
+            embed = Embed(title=f"{ctx.bot.user.display_name}'s Thoughts", description = f"||{reasoning[i:i + 4092]}||")
+            embed.set_footer(text=f"{int((i + 4092)) / 4092} of {total_embed_count}")
             await ctx.send(embed=embed, allowed_mentions=allowed)
     elif can_reply and await should_reply(ctx):
         await ctx.message.reply(embed=Embed(title=f"{ctx.bot.user.display_name}'s Thoughts", description = f"||{reasoning}||"), mention_author=False, allowed_mentions=allowed)
@@ -180,8 +180,6 @@ def resolve_emojis_for_discord(ctx: commands.Context, text_content: str) -> str:
         return text_content
 
     emoji_map = {emoji.name.lower(): str(emoji) for emoji in available_emojis}
-
-    logger.info(f"emoji_map={str(emoji_map)}")
 
     def replacer(match):
         emoji_name = match.group(1)
