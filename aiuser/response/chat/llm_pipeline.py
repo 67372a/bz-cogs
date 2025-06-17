@@ -74,6 +74,9 @@ class LLMPipeline:
             tool.schema for tool in self.enabled_tools
         ]
 
+        logger.info(f"enabled_tools={self.enabled_tools}")
+        logger.info(f"available_tools_schemas={self.available_tools_schemas}")
+
     async def call_client(
         self, kwargs: Dict[str, Any]
     ) -> Tuple[Optional[str], Optional[str], List[ChatCompletionMessageToolCall]]:
