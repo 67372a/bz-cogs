@@ -11,13 +11,13 @@ logger = logging.getLogger("red.bz_cogs.aiuser")
 
 def format_text_content(message: Message):
     if message.type == MessageType.new_member:
-        return f'User "{message.author.display_name}" has joined the server. Their Discord ID is {message.author.id}'
+        return f'User "{message.author.name}" with display name "{message.author.display_name}" has joined the server. Their Discord ID is {message.author.id}'
     if not message.content or message.content == "" or message.content.isspace():
         return None
     content = mention_to_text(message)
     if message.author.id == message.guild.me.id:
         return f'{content}'
-    return f'User "{message.author.display_name}" said: {content}'
+    return f'User "{message.author.name}" with display name "{message.author.display_name}" said: {content}'
 
 
 def format_embed_text_content(message: Message):
@@ -27,18 +27,18 @@ def format_embed_text_content(message: Message):
         return None
     if message.author.id == message.guild.me.id:
         return f'{content}'
-    return f'User "{message.author.display_name}" said: {content}'
+    return f'User "{message.author.name}" with display name "{message.author.display_name}" said: {content}'
 
 
 def format_generic_image(message: Message):
     if message.author.id == message.guild.me.id:
         return f'[Image: "{message.attachments[0].filename}"]'
-    return f'User "{message.author.display_name}" sent: [Image: "{message.attachments[0].filename}"]'
+    return f'User "{message.author.name}" with display name "{message.author.display_name}" sent: [Image: "{message.attachments[0].filename}"]'
 
 def format_generic_document(message: Message):
     if message.author.id == message.guild.me.id:
         return f'[Document: "{message.attachments[0].filename}"]'
-    return f'User "{message.author.display_name}" sent: [Document: "{message.attachments[0].filename}"]'
+    return f'User "{message.author.name}" with display name "{message.author.display_name}" sent: [Document: "{message.attachments[0].filename}"]'
 
 async def format_binary_document(message: Message):
     attachment = message.attachments[0]
@@ -86,7 +86,7 @@ async def format_text_document(message: Message):
 
     mime_type = get_mime_type(attachment.content_type)
 
-    document_content = f'User "{message.author.display_name}" sent: [Document: "{message.attachments[0].filename}" Type: "{mime_type}"\n<DOCUMENT_START>{text_data}<DOCUMENT_END>]'
+    document_content = f'User "{message.author.name}" with display name "{message.author.display_name}" sent: [Document: "{message.attachments[0].filename}" Type: "{mime_type}"\n<DOCUMENT_START>{text_data}<DOCUMENT_END>]'
 
     content.append(
         {
@@ -100,10 +100,10 @@ async def format_sticker_content(message: Message):
         sticker = await message.stickers[0].fetch()
         description = sticker.description or ""
         description_text = f' and description "{description}"' if description else ""
-        return f'User "{message.author.display_name}" sent: [Sticker with name "{sticker.name}"{description_text}]'
+        return f'User "{message.author.name}" with display name "{message.author.display_name}" sent: [Sticker with name "{sticker.name}"{description_text}]'
     except Exception:
         sticker_name = message.stickers[0].name
-        return f'User "{message.author.display_name}" sent: [Sticker with name "{sticker_name}"]'
+        return f'User "{message.author.name}" with display name "{message.author.display_name}" sent: [Sticker with name "{sticker_name}"]'
 
 
 def mention_to_text(message: Message) -> str:

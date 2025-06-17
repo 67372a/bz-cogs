@@ -139,3 +139,21 @@ class FunctionCallingSettings(MixinMeta):
         tool_names = [WolframAlphaFunctionCall.function_name]
 
         await self.toggle_function_helper(ctx, tool_names, "Wolfram Alpha")
+
+    @functions.command(name="timeoutuser")
+    async def toggle_discord_user_timeout_function(self, ctx: commands.Context):
+        """ Enable/disable the functionality for the LLM to timeout users."""
+        from aiuser.functions.user_timeout.tool_call import TimeoutUserToolCall
+
+        tool_names = [TimeoutUserToolCall.function_name]
+
+        await self.toggle_function_helper(ctx, tool_names, "Timeout User")
+
+    @functions.command(name="changeusernickname")
+    async def toggle_discord_user_change_nickname_function(self, ctx: commands.Context):
+        """ Enable/disable the functionality for the LLM to change user nicknames."""
+        from aiuser.functions.user_change_nickname.tool_call import ChangeUserNicknameToolCall
+
+        tool_names = [ChangeUserNicknameToolCall.function_name]
+
+        await self.toggle_function_helper(ctx, tool_names, "Change User Nickname")

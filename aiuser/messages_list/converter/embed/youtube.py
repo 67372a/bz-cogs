@@ -14,7 +14,7 @@ YOUTUBE_API_URL = "https://www.googleapis.com/youtube/v3/videos?part=snippet&id=
 
 async def format_youtube_embed(api_key: str, message: Message):
     video_id = await get_video_id(message.content)
-    author = message.author.display_name
+    author = message.author
 
     if not video_id:
         return None
@@ -25,7 +25,7 @@ async def format_youtube_embed(api_key: str, message: Message):
         logger.error(f"Failed request to Youtube API", exc_info=True)
         return None
 
-    return (f'User "{author}" sent: [Link to Youtube video with title "{video_title}" and description "{description}" from channel "{channel_title}"]')
+    return (f'User "{author.name}" with display name "{author.display_name}" sent: [Link to Youtube video with title "{video_title}" and description "{description}" from channel "{channel_title}"]')
 
 
 async def get_video_id(url):

@@ -15,13 +15,13 @@ logger = logging.getLogger("red.bz_cogs.aiuser")
 async def process_image_locally(cog: MixinMeta, message: Message, image: Image.Image):
     path = cog_data_path(cog)
     scanned_text = await extract_text(image)
-    author = message.author.nick or message.author.name
+    author = message.author
 
     if scanned_text and len(scanned_text.split()) > 10:
-        content = f'User "{author}" sent: [Image saying "{scanned_text}"]'
+        content = f'User "{author.name}" with display name "{author.display_name}" sent: [Image saying "{scanned_text}"]'
     else:
         caption = await caption_image(image, path)
-        content = f'User "{author}" sent: [Image: {caption}]'
+        content = f'User "{author.name}" with display name "{author.display_name}" sent: [Image: {caption}]'
     return content
 
 

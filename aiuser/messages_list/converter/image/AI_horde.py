@@ -41,7 +41,7 @@ async def process_image_ai_horde(cog: MixinMeta, message: Message, image: Image)
     if not caption:
         return None
 
-    content = f'User "{message.author.display_name}" sent: [Image: {caption}]'
+    content = f'User "{message.author.name}" with display name "{message.author.display_name}" sent: [Image: {caption}]'
     return content
 
 

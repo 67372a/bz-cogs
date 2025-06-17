@@ -21,7 +21,7 @@ from redbot.core.utils.views import SimpleMenu
 logger = logging.getLogger("red.bz_cogs.aiemote")
 
 EMOJIS_PER_PAGE = 5 # Keep it small for clarity in the select menu
-DEFAULT_LLM_MODEL = "google/gemini-2.5-flash-preview"
+DEFAULT_LLM_MODEL = "google/gemini-2.5-flash"
 DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 class AIEmote(commands.Cog):

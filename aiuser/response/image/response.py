@@ -54,7 +54,7 @@ async def create_image_response(cog: MixinMeta, ctx: commands.Context, image_gen
 async def create_image_caption(config: Config, message: discord.Message, openai_client: AsyncOpenAI) -> Optional[str]:
     """Create a caption for the image based on the message content"""
     subject = await config.guild(message.guild).image_requests_subject()
-    botname = message.guild.me.nick or message.guild.me.display_name
+    botname = message.guild.me.name or message.guild.me.name
     request = message.content
 
     # Replace mentions with display names
