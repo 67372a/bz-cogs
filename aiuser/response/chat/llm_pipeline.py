@@ -113,7 +113,7 @@ class LLMPipeline:
                 f"LLM usage: P{response.usage.prompt_tokens} C{response.usage.completion_tokens} T{response.usage.total_tokens}. Finish: {response.choices[0].finish_reason}"
             )
         else:
-            logger.info(f"LLM Finish reason: {response.choices[0].finish_reason}")
+            logger.info(f"LLM response: {response}")
 
         message = response.choices[0].message
         llm_content = message.content  # This can be None
