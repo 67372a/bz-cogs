@@ -41,10 +41,12 @@ class TimeoutUserToolCall(ToolCall):
             return "Error: I do not have the `Moderate Members` permission."
         
         # Use a non-blocking method to search members
-        user_id = await to_thread(_search_members, guild, username.strip().lower()).id
+        user = await to_thread(_search_members, guild, username.strip().lower())
 
-        if user_id is None:
+        if user is None:
             return "Error: Could not resolve user ID from username provided."
+        else:
+            user_id = user.id
         
         member = guild.get_member(user_id)
         if not member:
