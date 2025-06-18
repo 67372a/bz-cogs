@@ -32,7 +32,7 @@ DEFAULT_REMOVE_PATTERNS = [
     r'\W*\[(?:Image|Document)(?::| saying) "?[\s\S]*?"?(?: Type: "[\s\S]*?"\n<DOCUMENT_START>[\s\S]*?<DOCUMENT_END>)\]\W*',
     r'\W*<(?:think|reason)(?:ing)?>[\s\S]*?<\/(?:think|reason)(?:ing)?>\W*',  # for thinking LLMs
     r'^As an AI language model,?',
-    r'^(?:User )?"?(?:{botname}|{authorname})"?(?: with display name "(?:{botdisplayname}|{authordisplayname})") (?:said|says|respond(ed|s)|replie[ds]|sent)( to [^":]+)?:?',
+    r'^(?:User )?"?(?:{botname}|{authorname})"?(?: with display name "?(?:{botdisplayname}|{authordisplayname})"?)? (?:said|says|respond(ed|s)|replie[ds]|sent)?( to [^":]+)?:?',
     r'^As "?(?:{botname}|{authorname})"?, (?:I|you)(?: might| would| could)? (?:respond|reply|say|sent)( with)?(?: something like)?:?',
     r'^You respond as "?(?:{botname}|{authorname})"?:',
     r'^[<({{\[](?:{botname}|{authorname})[>)}}\]]',  # [name], {name}, <name>, (name)

@@ -53,26 +53,27 @@ async def remove_patterns_from_response(ctx: commands.Context, config: Config, r
     botname = ctx.message.guild.me.name or ctx.bot.user.name
     botdisplayname = ctx.message.guild.me.display_name or ctx.bot.user.display_name
 
+    bot_expanded_patterns = []
     for pattern in patterns:
-        pattern.replace(r'{botname}', botname)
-        pattern.replace(r'{botdisplayname}', botdisplayname)
+        bot_expanded_patterns.append(pattern.replace(r'{botname}', botname).replace(r'{botdisplayname}', botdisplayname))
 
     # Expand patterns that have "{authorname}" based on recent authors.
     authors = {
         msg.author async for msg in ctx.channel.history(limit=20)
         if msg.author != ctx.guild.me
     }
-    expanded_patterns = []
-    for pattern in patterns:
+
+    final_expanded_patterns = []
+    for pattern in bot_expanded_patterns:
         if '{authorname}' in pattern or '{authordisplayname}' in pattern:
             for author in authors:
-                expanded_patterns.append(pattern.replace(r'{authorname}', author.name).replace(r'{authordisplayname}', author.display_name))
+                final_expanded_patterns.append(pattern.replace(r'{authorname}', author.name).replace(r'{authordisplayname}', author.display_name))
         else:
-            expanded_patterns.append(pattern)
+            final_expanded_patterns.append(pattern)
 
     # Apply each pattern sequentially.
     cleaned = response.strip(' \n')
-    for pattern in expanded_patterns:
+    for pattern in final_expanded_patterns:
         try:
             cleaned = await compile_and_apply(pattern, cleaned)
         except asyncio.TimeoutError:
