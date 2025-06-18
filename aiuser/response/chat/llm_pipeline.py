@@ -116,8 +116,8 @@ class LLMPipeline:
             logger.info(f"LLM response: {response}")
 
         message = response.choices[0].message
-        llm_content = getattr(message.content, None)  # This can be None
-        llm_reasoning = getattr(message.reasoning, None) # This can be None
+        llm_content = getattr(message,"content", None)  # This can be None
+        llm_reasoning = getattr(message,"reasoning", None) # This can be None
         llm_tool_calls = message.tool_calls or []
 
         return llm_content, llm_reasoning, llm_tool_calls
