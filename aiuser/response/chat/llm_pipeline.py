@@ -139,9 +139,9 @@ class LLMPipeline:
                 ]
                 # Prevent back to back function calls from LLM
                 if has_processed_tool_calls:
-                    iteration_kwargs["tools"] = "none"
+                    iteration_kwargs["tool_choice"] = "none"
                 else:
-                    iteration_kwargs["tools"] = "auto"
+                    iteration_kwargs["tool_choice"] = "auto"
             else:
                 iteration_kwargs.pop("tools", None)
                 iteration_kwargs.pop("tool_choice", None)
