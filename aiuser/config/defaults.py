@@ -27,16 +27,13 @@ Here is a sample output: "Beautiful woman, contemplative and reflective, sitting
 Convert the below message to a Stable Diffusion Art Prompt.  The prompt should have no second person references, no line breaks, no delimiters, and be kept as concise as possible while still conveying a full scene.
 """
 DEFAULT_REMOVE_PATTERNS = [
-    r'\W*\[Embed with (?:name|title) "[^"]*?" and description(?: |=|:)*?"?[\s\S]*?"?\W*',
-    r'\W*\[(?:Sticker|Link to Youtube video) with (?:name|title) "[^"]*?" and description(?: |=|:)*?"?[\s\S]*?"?(?: from channel "[\s\S]*?)?\]\W*',
-    r'\W*\[(?:Image|Document)(?::| saying) "?[\s\S]*?"?(?: Type: "[\s\S]*?"\n<DOCUMENT_START>[\s\S]*?<DOCUMENT_END>)\]\W*',
-    r'\W*<(?:think|reason)(?:ing)?>[\s\S]*?<\/(?:think|reason)(?:ing)?>\W*',  # for thinking LLMs
-    r'^As an AI language model,?',
-    r'^(?:User )?"?(?:{botname}|{authorname})"?(?: with display name "?(?:{botdisplayname}|{authordisplayname})"?)? (?:said|says|respond(ed|s)|replie[ds]|sent)?( to [^":]+)?:?',
-    r'^As "?(?:{botname}|{authorname})"?, (?:I|you)(?: might| would| could)? (?:respond|reply|say|sent)( with)?(?: something like)?:?',
-    r'^You respond as "?(?:{botname}|{authorname})"?:',
-    r'^[<({{\[](?:{botname}|{authorname})[>)}}\]]',  # [name], {name}, <name>, (name)
-    r'\]+$',
+    r'\s*\[Embed with (?:name|title) "[^"]*?" and description(?: |=|:)*?"?[\s\S]*?"?\s*',
+    r'\s*\[(?:Sticker|Link to Youtube video) with (?:name|title) "[^"]*?" and description(?: |=|:)*?"?[\s\S]*?"?(?: from channel "[\s\S]*?)?\]\s*',
+    r'\s*\[(?:Image|Document)(?::| saying) "?[\s\S]*?"?(?: Type: "[\s\S]*?"\n<DOCUMENT_START>[\s\S]*?<DOCUMENT_END>)\]\s*',
+    r'\s*<(?:think|reason)(?:ing)?>[\s\S]*?<\/(?:think|reason)(?:ing)?>\s*',  # for thinking LLMs
+    r'^(?:User )?"?(?:{botname}|{authorname})"?(?: with display name "?(?:{botdisplayname}|{authordisplayname})"?)?(?: (?:said|says|respond(?:ed|s)|replie[ds]|sent)?)?(?: to [^":]*)?:?\s*',
+    r'^[<({{\[](?:{botname}|{authorname}|{botdisplayname}|{authordisplayname})[>)}}\]]\s*',  # [name], {name}, <name>, (name)
+    r'\]$',
     r' with display name "(?:{botdisplayname}|{authordisplayname})"',
 ]
 
