@@ -66,10 +66,7 @@ async def remove_patterns_from_response(ctx: commands.Context, config: Config, r
     for pattern in patterns:
         if '{authorname}' in pattern or '{authordisplayname}' in pattern:
             for author in authors:
-                if '{authorname}' in pattern:
-                    expanded_patterns.append(pattern.replace(r'{authorname}', author.name))
-                if '{authordisplayname}' in pattern:
-                    expanded_patterns.append(pattern.replace(r'{authordisplayname}', author.display_name))
+                expanded_patterns.append(pattern.replace(r'{authorname}', author.name).replace(r'{authordisplayname}', author.display_name))
         else:
             expanded_patterns.append(pattern)
 
