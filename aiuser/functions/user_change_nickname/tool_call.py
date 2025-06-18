@@ -41,7 +41,7 @@ class ChangeUserNicknameToolCall(ToolCall):
             return "Error: I do not have the `Manage Nicknames` permission."
         
         # Use a non-blocking method to search members
-        user_id = await to_thread(_search_members, guild, username.strip().lower())
+        user_id = await to_thread(_search_members, guild, username.strip().lower()).id
 
         if user_id is None:
             return "Error: Could not resolve user ID from username provided."
@@ -74,5 +74,6 @@ def _search_members(guild: discord.Guild, query: str):
         if (
             query == member.name.strip().lower()
         ):
+            logger.info(f"member found={member}")
             return member
     return None
