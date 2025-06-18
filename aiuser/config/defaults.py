@@ -29,24 +29,24 @@ Convert the below message to a Stable Diffusion Art Prompt.  The prompt should h
 DEFAULT_REMOVE_PATTERNS = [
     r'^*\[Embed with (?:name|title) "[^"]*?" and description(?: |=|:)*?"?[\s\S]*?"?\W*',
     r'\W*\[(?:Sticker|Link to Youtube video) with (?:name|title) "[^"]*?" and description(?: |=|:)*?"?[\s\S]*?"?(?: from channel "[\s\S]*?)?\]\W*',
-    r'\W*\[(?:Image|Document)(?::| saying) "?[\s\S]*?"?(?: Type: "[\s\S]*?"\n<DOCUMENT_START>[\s\S]*?<DOCUMENT_END>)\]\W*'
-    r'\W*<think>[\s\S]*?<\/think>\W*',  # for thinking LLMs
+    r'\W*\[(?:Image|Document)(?::| saying) "?[\s\S]*?"?(?: Type: "[\s\S]*?"\n<DOCUMENT_START>[\s\S]*?<DOCUMENT_END>)\]\W*',
+    r'\W*<(?:think|reason)(?:ing)?>[\s\S]*?<\/(?:think|reason)(?:ing)?>\W*',  # for thinking LLMs
     r'^As an AI language model,?',
-    r'^(?:User )?"?(?:{botname}|{authorname})"?(?: with display name "{[^"]*}") (?:said|says|respond(ed|s)|replie[ds]|sent)( to [^":]+)?:?',
+    r'^(?:User )?"?(?:{botname}|{authorname})"?(?: with display name "(?:{botdisplayname}|{authordisplayname})") (?:said|says|respond(ed|s)|replie[ds]|sent)( to [^":]+)?:?',
     r'^As "?(?:{botname}|{authorname})"?, (?:I|you)(?: might| would| could)? (?:respond|reply|say|sent)( with)?(?: something like)?:?',
     r'^You respond as "?(?:{botname}|{authorname})"?:',
     r'^[<({{\[](?:{botname}|{authorname})[>)}}\]]',  # [name], {name}, <name>, (name)
     r'\]+$',
-    r' with display name "{[^"]*?}"',
+    r' with display name "(?:{botdisplayname}|{authordisplayname})"',
 ]
 
 DEFAULT_IMAGE_REQUEST_TRIGGER_WORDS = [
     "image", "images", "picture", "pictures", "photo", "photos", "photograph", "photographs"]
 DEFAULT_IMAGE_REQUEST_TRIGGER_SECOND_PERSON_WORDS = ["yourself", "you"]
-DEFAULT_REPLY_PERCENT = 0.5
+DEFAULT_REPLY_PERCENT = 0.01
 DEFAULT_MIN_MESSAGE_LENGTH = 2
 DEFAULT_IMAGE_UPLOAD_LIMIT = 10 * (1024 * 1024)  # 10 MB
-DEFAULT_LLM_MODEL = "gpt-4o-mini"
+DEFAULT_LLM_MODEL = "google/gemini-2.5-flash"
 
 DEFAULT_GLOBAL = {
             "custom_openai_endpoint": None,
@@ -63,7 +63,7 @@ DEFAULT_GUILD = {
     "optin_by_default": False,
     "optin_disable_embed": False,
     "reply_percent": DEFAULT_REPLY_PERCENT,
-    "messages_backread": 10,
+    "messages_backread": 20,
     "messages_backread_seconds": 60 * 120,
     "messages_min_length": DEFAULT_MIN_MESSAGE_LENGTH,
     "reply_to_mentions_replies": True,
@@ -82,7 +82,7 @@ DEFAULT_GUILD = {
     "parameters": None,
     "weights": None,
     "random_messages_enabled": False,
-    "random_messages_percent": 0.012,
+    "random_messages_percent": 0.01,
     "random_messages_prompts": DEFAULT_RANDOM_PROMPTS,
     "presets": json.dumps(DEFAULT_PRESETS),
     "image_requests": False,

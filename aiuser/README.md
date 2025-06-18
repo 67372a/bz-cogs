@@ -139,9 +139,11 @@ Admins also manage topics here:
 
 Prompts and topics can include certain dynamic variables by including one of the following strings:
 
-- `{botname}` - the bot's current nickname or username
+- `{botname}` - the bot's current username
+- `{botdisplayname}` - the bot's current display name
 - `{botowner}` - the bot owner's username
 - `{authorname}` - the author of the message the bot is activated on
+- `{authordisplayname}` - the display name of the author of the message the bot is activated on
 - `{authortoprole}` - the author's highest role
 - `{authormention}` - the author's mention in string format
 - `{serveremojis}` - all of the server emojis, in a string format (eg. `<:emoji:12345> <:emoji2:78912>`)
@@ -154,7 +156,7 @@ Prompts and topics can include certain dynamic variables by including one of the
 - `{randomnumber}` - a random number between 0 - 100
 
 
-Remove list regex patterns only support `{authorname}` (will use authors of last 10 messages) and `{botname}` placeholders.
+Remove list regex patterns only support `{authorname}` and `{authordisplayname}` (will use authors of last 20 messages) and `{botname}` and `{botdisplayname}` placeholders.
 
 ---
 

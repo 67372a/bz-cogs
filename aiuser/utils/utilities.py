@@ -38,9 +38,11 @@ async def format_variables(ctx: commands.Context, text: str):
     Insert supported variables into string if they are present
     """
     botname = ctx.message.guild.me.name or ctx.bot.user.name
+    botdisplayname = ctx.message.guild.me.display_name or ctx.bot.user.display_name
     app_info = await ctx.bot.application_info()
     botowner = app_info.owner.name
     authorname = ctx.message.author.name
+    authordisplayname = ctx.message.author.display_name
     authortoprole = ctx.message.author.top_role.name
     authormention = ctx.message.author.mention
 
@@ -64,8 +66,10 @@ async def format_variables(ctx: commands.Context, text: str):
     try:
         res = text.format(
             botname=botname,
+            botdisplayname=botdisplayname,
             botowner=botowner,
             authorname=authorname,
+            authordisplayname=authordisplayname,
             authortoprole=authortoprole,
             authormention=authormention,
             servername=servername,
