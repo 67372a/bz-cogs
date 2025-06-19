@@ -94,7 +94,7 @@ async def should_reply(ctx: commands.Context) -> bool:
     return False
 
 async def send_response(ctx: commands.Context, response: str, can_reply: bool, mentionable_users) -> bool:
-    allowed = AllowedMentions(everyone=False, roles=False, users=[ctx.message.author].extend(mentionable_users))
+    allowed = AllowedMentions(everyone=False, roles=False, users=[ctx.message.author])
 
     if len(response) > 4096:
         total_embed_count = math.ceil(len(response) / 4096)
@@ -112,7 +112,7 @@ async def send_response(ctx: commands.Context, response: str, can_reply: bool, m
     return True
 
 async def send_reasoning(ctx: commands.Context, reasoning: str, can_reply: bool, mentionable_users) -> bool:
-    allowed = AllowedMentions(everyone=False, roles=False, users=[ctx.message.author].extend(mentionable_users))
+    allowed = AllowedMentions(everyone=False, roles=False, users=[ctx.message.author])
 
     if len(reasoning) > 4092:
         total_embed_count = math.ceil(len(reasoning) / 4092)
