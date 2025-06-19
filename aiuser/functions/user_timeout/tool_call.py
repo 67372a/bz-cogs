@@ -61,9 +61,6 @@ class TimeoutUserToolCall(ToolCall):
         duration = datetime.timedelta(seconds=3)
         try:
             await member.timeout(duration, reason=reason)
-            logger.info(
-                f"Timed out {member.name} (ID: {user_id}) for 3 seconds in {guild.name}. Reason: {reason}"
-            )
             return f"Successfully timed out {member.mention} for 3 seconds."
         except discord.HTTPException as e:
             logger.exception(f"Failed to time out user {user_id} in {guild.name}")
@@ -75,6 +72,5 @@ def _search_members(guild: discord.Guild, query: str):
         if (
             query == member.name.strip().lower()
         ):
-            logger.info(f"member found={member}")
             return member
     return None

@@ -49,7 +49,6 @@ async def format_binary_document(message: Message):
 
     with BytesIO() as buffer: # Use BytesIO as a context manager
         await attachment.save(buffer)
-        logger.info(f"Attachment '{attachment.filename}' saved to buffer.")
 
         buffer.seek(0)  # Reset buffer pointer to the beginning for reading
         binary_data = buffer.read()
@@ -79,7 +78,6 @@ async def format_text_document(message: Message):
 
     with BytesIO() as buffer: # Use BytesIO as a context manager
         await attachment.save(buffer)
-        logger.info(f"Attachment '{attachment.filename}' saved to buffer.")
 
         buffer.seek(0)  # Reset buffer pointer to the beginning for reading
         text_data = TextIOWrapper(buffer, encoding='utf-8').read()

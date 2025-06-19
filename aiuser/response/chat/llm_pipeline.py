@@ -2,6 +2,7 @@ import json
 import logging
 from dataclasses import asdict
 from typing import Any, Dict, List, Optional, Tuple
+import hashlib
 
 import httpx
 import openai
@@ -74,9 +75,6 @@ class LLMPipeline:
             tool.schema for tool in self.enabled_tools
         ]
 
-        logger.info(f"enabled_tools={self.enabled_tools}")
-        logger.info(f"available_tools_schemas={self.available_tools_schemas}")
-
     async def call_client(
         self, kwargs: Dict[str, Any]
     ) -> Tuple[Optional[str], Optional[str], List[ChatCompletionMessageToolCall]]:
@@ -95,6 +93,12 @@ class LLMPipeline:
             kwargs['extra_body'].update({"plugins": plugins})
         else:
             kwargs['extra_body'] = {"plugins": plugins}
+
+        user = f"{self.bot.name}-{self.ctx.channel.id}"
+
+        m = hashlib.sha256()
+        m.update(user.encode('utf-8'))
+        kwargs['extra_body'].update({"user": m.hexdigest()})
 
         logger.info(
             f"Sending request to LLM (model: {self.model}) with {len(current_messages_json)} messages. Kwarg keys: {list(kwargs.keys())}"

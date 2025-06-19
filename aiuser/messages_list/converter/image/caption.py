@@ -109,8 +109,6 @@ def scale_image(cv_image: np.ndarray, max_pixel_count: int) -> np.ndarray:
     new_width = int(original_width * scale_ratio)
     new_height = int(original_height * scale_ratio)
 
-    logger.info(f"Scaling image from {original_width}x{original_height} to {new_width}x{new_height}")
-
     # Resize using INTER_AREA for high-quality shrinking
     scaled_image = cv2.resize(
         cv_image, (new_width, new_height), interpolation=cv2.INTER_AREA

@@ -62,9 +62,6 @@ class ChangeUserNicknameToolCall(ToolCall):
             old_name = member.display_name
             await member.edit(nick=nickname or None)
             new_name = nickname or member.name
-            logger.info(
-                f"Changed nickname for {member.name} (ID: {user_id}) from '{old_name}' to '{new_name}' in {guild.name}"
-            )
             return f"Successfully changed nickname for {old_name} to `{new_name}`."
         except discord.HTTPException as e:
             logger.exception(f"Failed to change nickname for user {user_id} in {guild.name}")
@@ -76,6 +73,5 @@ def _search_members(guild: discord.Guild, query: str):
         if (
             query == member.name.strip().lower()
         ):
-            logger.info(f"member found={member}")
             return member
     return None
