@@ -84,7 +84,7 @@ async def check_channel_settings(cog: MixinMeta, ctx: commands.Context) -> Tuple
 
 async def check_user_status(cog: MixinMeta, ctx: commands.Context) -> Tuple[bool, str]:
     """Validate user permissions and opt-in status"""
-    if ctx.author.bot:
+    if ctx.author == ctx.guild.me:
         return False, "Author is bot"
 
     if not await cog.bot.allowed_by_whitelist_blacklist(ctx.author):

@@ -18,7 +18,7 @@ logger = logging.getLogger("red.bz_cogs.aiuser")
 
 MULTI_NEWLINE_PATTERN = re.compile(r'(?:([ \t]|<br>|\\n)*(?:\r\n|\r|\n)){2,}')
 
-EMOJI_PATTERN = re.compile(r"(?:<a?)?:([a-zA-Z0-9_]+?):(?:\d*>)?")
+EMOJI_PATTERN = re.compile(r"(?:<a?)?:([A-Za-z0-9_]{2,32}):(?:[0-9]+>)?")
 
 # Use to_thread to compile & apply a regex pattern
 @to_thread(timeout=REGEX_RUN_TIMEOUT)
@@ -47,7 +47,7 @@ def collapse_lines(text, replacement: str = r'\n'):
   # Replace the matched sequence of multiple blank lines with a single standard newline '\n'
   return re.sub(MULTI_NEWLINE_PATTERN, replacement, text)
 
-async def remove_patterns_from_response(ctx: commands.Context, config: Config, response: str) -> str:
+async def remove_patterns_from_response(ctx: commands.Context, config: Config, response: str, recent_authors) -> str:
     # Get patterns from config and replace "{botname}".
     patterns = await config.guild(ctx.guild).removelist_regexes()
     botname = ctx.message.guild.me.name or ctx.bot.user.name
@@ -57,16 +57,10 @@ async def remove_patterns_from_response(ctx: commands.Context, config: Config, r
     for pattern in patterns:
         bot_expanded_patterns.append(pattern.replace(r'{botname}', botname).replace(r'{botdisplayname}', botdisplayname))
 
-    # Expand patterns that have "{authorname}" based on recent authors.
-    authors = {
-        msg.author async for msg in ctx.channel.history(limit=20)
-        if msg.author != ctx.guild.me
-    }
-
     final_expanded_patterns = []
     for pattern in bot_expanded_patterns:
         if '{authorname}' in pattern or '{authordisplayname}' in pattern:
-            for author in authors:
+            for author in recent_authors:
                 final_expanded_patterns.append(pattern.replace(r'{authorname}', author.name).replace(r'{authordisplayname}', author.display_name))
         else:
             final_expanded_patterns.append(pattern)
@@ -99,8 +93,8 @@ async def should_reply(ctx: commands.Context) -> bool:
             return True
     return False
 
-async def send_response(ctx: commands.Context, response: str, can_reply: bool) -> bool:
-    allowed = AllowedMentions(everyone=False, roles=False, users=[ctx.message.author])
+async def send_response(ctx: commands.Context, response: str, can_reply: bool, mentionable_users) -> bool:
+    allowed = AllowedMentions(everyone=False, roles=False, users=[ctx.message.author].extend(mentionable_users))
 
     if len(response) > 4096:
         total_embed_count = math.ceil(len(response) / 4096)
@@ -117,8 +111,8 @@ async def send_response(ctx: commands.Context, response: str, can_reply: bool) -
         await ctx.send(embed=Embed(title=f"{ctx.bot.user.name}'s Response", description = response), allowed_mentions=allowed)
     return True
 
-async def send_reasoning(ctx: commands.Context, reasoning: str, can_reply: bool) -> bool:
-    allowed = AllowedMentions(everyone=False, roles=False, users=[ctx.message.author])
+async def send_reasoning(ctx: commands.Context, reasoning: str, can_reply: bool, mentionable_users) -> bool:
+    allowed = AllowedMentions(everyone=False, roles=False, users=[ctx.message.author].extend(mentionable_users))
 
     if len(reasoning) > 4092:
         total_embed_count = math.ceil(len(reasoning) / 4092)
@@ -141,13 +135,18 @@ async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_l
     if not response:
         return False
     
+    recent_authors = [
+        msg.author async for msg in ctx.channel.history(limit=20)
+        if msg.author != ctx.guild.me
+    ]
+    
     cleaned_reasoning = None
     if reasoning:
-        cleaned_response, cleaned_reasoning = await asyncio.gather(remove_patterns_from_response(ctx, cog.config, response),
-                                         remove_patterns_from_response(ctx, cog.config, reasoning),
+        cleaned_response, cleaned_reasoning = await asyncio.gather(remove_patterns_from_response(ctx, cog.config, response, recent_authors),
+                                         remove_patterns_from_response(ctx, cog.config, reasoning, recent_authors),
                                          return_exceptions=True)
     else:
-        cleaned_response = await remove_patterns_from_response(ctx, cog.config, response)
+        cleaned_response = await remove_patterns_from_response(ctx, cog.config, response, recent_authors)
 
     if not cleaned_response:
         return False
@@ -155,21 +154,20 @@ async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_l
     if cleaned_reasoning:
         # Collapse multiple newlines and blank lines for more compact embed
         cleaned_reasoning = collapse_lines(cleaned_reasoning, replacement=r'\n')
-        cleaned_reasoning = cleaned_reasoning.replace(r'`',r'\`')
+        cleaned_reasoning = cleaned_reasoning.replace(r'`','\\`')
         cleaned_reasoning = resolve_emojis_for_discord(ctx, cleaned_reasoning)
-        await send_reasoning(ctx, cleaned_reasoning, messages_list.can_reply)
+        await send_reasoning(ctx, cleaned_reasoning, messages_list.can_reply, recent_authors)
 
     # Collapse multiple newlines and blank lines for more compact embed
     cleaned_response = collapse_lines(cleaned_response, replacement=r'\n\n')
-    cleaned_response = cleaned_response.replace(r'`',r'\`')
+    cleaned_response = cleaned_response.replace(r'`','\\`')
     cleaned_response = resolve_emojis_for_discord(ctx, cleaned_response)
-    return await send_response(ctx, cleaned_response, messages_list.can_reply)
+    return await send_response(ctx, cleaned_response, messages_list.can_reply, recent_authors)
 
 # --- Emoji Resolver Function (Refined) ---
 def resolve_emojis_for_discord(ctx: commands.Context, text_content: str) -> str:
     """
-    Resolves :emoji_name: shortcodes in a string to their full Discord format,
-    leaving already correctly formatted <:...:id> emojis untouched.
+    Resolves :emoji_name: shortcodes in a string to their full Discord format.
 
     Args:
         text_content: The string potentially containing emoji shortcodes.
