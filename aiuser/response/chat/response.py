@@ -160,7 +160,7 @@ async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_l
 
     # Collapse multiple newlines and blank lines for more compact embed
     cleaned_response = collapse_lines(cleaned_response, replacement=r'\n\n')
-    cleaned_response = cleaned_response.replace(r'`','\\`')
+    cleaned_response = cleaned_response.replace('`','\\`')
     cleaned_response = resolve_emojis_for_discord(ctx, cleaned_response)
     return await send_response(ctx, cleaned_response, messages_list.can_reply, recent_authors)
 
@@ -177,7 +177,8 @@ def resolve_emojis_for_discord(ctx: commands.Context, text_content: str) -> str:
         The string with emoji shortcodes replaced.
     """
 
-    available_emojis = ctx.message.guild.emojis
+    
+    available_emojis = ctx.guild.emojis
 
     if not available_emojis:
         return text_content
