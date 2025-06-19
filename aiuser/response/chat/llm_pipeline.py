@@ -94,7 +94,7 @@ class LLMPipeline:
         else:
             kwargs['extra_body'] = {"plugins": plugins}
 
-        user = f"{self.bot.name}-{self.ctx.channel.id}"
+        user = f"{self.ctx.me.id}-{self.ctx.channel.id}"
 
         m = hashlib.sha256()
         m.update(user.encode('utf-8'))
