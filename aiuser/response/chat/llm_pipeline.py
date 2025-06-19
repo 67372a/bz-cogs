@@ -98,7 +98,12 @@ class LLMPipeline:
 
         m = hashlib.sha256()
         m.update(user.encode('utf-8'))
-        kwargs['extra_body'].update({"user": m.hexdigest()})
+
+        user_digest = m.hexdigest()
+
+        kwargs['extra_body'].update({"user": user_digest})
+
+        kwargs['user'] = user_digest
 
         logger.info(
             f"Sending request to LLM (model: {self.model}) with {len(current_messages_json)} messages. Kwarg keys: {list(kwargs.keys())}"
