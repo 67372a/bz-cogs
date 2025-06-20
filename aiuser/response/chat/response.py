@@ -13,12 +13,19 @@ from aiuser.messages_list.messages import MessagesList
 from aiuser.response.chat.llm_pipeline import LLMPipeline
 from aiuser.types.abc import MixinMeta
 from aiuser.utils.utilities import to_thread
+from cachetools import TTLCache
+
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
 MULTI_NEWLINE_PATTERN = re.compile(r'(?:([ \t]|<br>|\\n)*(?:\r\n|\r|\n)){2,}')
 
 EMOJI_PATTERN = re.compile(r"(?:<a?)?:([A-Za-z0-9_]{2,32}):(?:[0-9]+>)?")
+
+# Cache for guild emojis with a ten minute TTL
+EMOJI_CACHE_TTL = 600
+# Cache structure: {guild_id: {emoji_name_lowercase: str(emoji_object)}}
+emoji_cache = TTLCache(maxsize=100, ttl=EMOJI_CACHE_TTL)
 
 # Use to_thread to compile & apply a regex pattern
 @to_thread(timeout=REGEX_RUN_TIMEOUT)
@@ -155,40 +162,57 @@ async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_l
         # Collapse multiple newlines and blank lines for more compact embed
         cleaned_reasoning = collapse_lines(cleaned_reasoning, replacement=r'\n')
         cleaned_reasoning = cleaned_reasoning.replace(r'`','\\`')
-        cleaned_reasoning = resolve_emojis_for_discord(ctx, cleaned_reasoning)
+        cleaned_reasoning = await resolve_emojis_for_discord(ctx, cleaned_reasoning)
         await send_reasoning(ctx, cleaned_reasoning, messages_list.can_reply, recent_authors)
 
     # Collapse multiple newlines and blank lines for more compact embed
     cleaned_response = collapse_lines(cleaned_response, replacement=r'\n\n')
     cleaned_response = cleaned_response.replace('`','\\`')
-    cleaned_response = resolve_emojis_for_discord(ctx, cleaned_response)
+    cleaned_response = await resolve_emojis_for_discord(ctx, cleaned_response)
     return await send_response(ctx, cleaned_response, messages_list.can_reply, recent_authors)
 
-# --- Emoji Resolver Function (Refined) ---
-def resolve_emojis_for_discord(ctx: commands.Context, text_content: str) -> str:
+async def get_guild_emoji_map(ctx: commands.Context) -> dict[str, str]:
     """
-    Resolves :emoji_name: shortcodes in a string to their full Discord format.
+    Retrieves a mapping of lowercase emoji names to their string representation for a guild.
+    Results are cached to avoid repeated API calls and reliably fetched to ensure completeness.
+    """
+    guild_id = ctx.guild.id
+    if guild_id in emoji_cache:
+        return emoji_cache[guild_id]
+
+    logger.info(f"Emoji cache miss. Fetching emojis for guild {guild_id}")
+    try:
+        # Reliably fetch all emojis from the guild to ensure the cache is complete
+        guild_emojis = await ctx.guild.fetch_emojis()
+        emoji_map = {emoji.name.lower(): str(emoji) for emoji in guild_emojis}
+        emoji_cache[guild_id] = emoji_map
+        return emoji_map
+    except Exception:
+        logger.warning(f"Failed to fetch emojis for guild {guild_id}. Using potentially incomplete data from guild.emojis.", exc_info=True)
+        # Fallback to the potentially incomplete internal cache if fetch fails
+        return {emoji.name.lower(): str(emoji) for emoji in ctx.guild.emojis}
+
+
+async def resolve_emojis_for_discord(ctx: commands.Context, text_content: str) -> str:
+    """
+    Resolves :emoji_name: shortcodes in a string to their full Discord format using a cache.
 
     Args:
+        ctx: The command context, used to identify the guild.
         text_content: The string potentially containing emoji shortcodes.
-        available_emojis: A list of discord.Emoji objects (e.g., from bot.emojis or guild.emojis).
 
     Returns:
         The string with emoji shortcodes replaced.
     """
+    emoji_map = await get_guild_emoji_map(ctx)
 
-    
-    available_emojis = ctx.guild.emojis
-
-    if not available_emojis:
+    if not emoji_map:
         return text_content
 
-    emoji_map = {emoji.name.lower(): str(emoji) for emoji in available_emojis}
-
     def replacer(match):
-        emoji_name = match.group(1)
-        # Only replace if it's a known custom emoji shortcode
-        return emoji_map.get(emoji_name, match.group(0)) # Return original if not in map
+        # Match is case-insensitive by lowercasing, aligning with the keys in our map
+        emoji_name = match.group(1).lower()
+        # Return the full emoji string if found, otherwise return the original text (e.g., :thinking:)
+        return emoji_map.get(emoji_name, match.group(0))
 
-    resolved_text = re.sub(EMOJI_PATTERN, replacer, text_content)
-    return resolved_text
+    return EMOJI_PATTERN.sub(replacer, text_content)
