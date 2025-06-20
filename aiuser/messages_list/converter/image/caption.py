@@ -60,8 +60,6 @@ async def process_image(cog: MixinMeta, message: Message, cv_image: np.ndarray, 
             return None
     elif mode == ScanImageMode.LLM:
         content = []
-        if message.content != "":
-            content.append({"type": "text", "text": format_text_content(message)})
 
         # 1. Define the WebP quality. 1-100. Higher is better quality and larger size.
         #    85-95 is a great range for a good balance. 90 is a solid default.
@@ -83,6 +81,9 @@ async def process_image(cog: MixinMeta, message: Message, cv_image: np.ndarray, 
             {"type": "image_url", "image_url": {
              "url": f"data:image/webp;base64,{base64_image}"}
              })
+        
+        if message.content != "":
+            content.append({"type": "text", "text": format_text_content(message)})
         return content
     else:
         return None

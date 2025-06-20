@@ -50,8 +50,6 @@ async def format_binary_document(message: Message):
     attachment = message.attachments[0]
 
     content = []
-    if message.content != "":
-        content.append({"type": "text", "text": format_text_content(message)})
 
     with BytesIO() as buffer: # Use BytesIO as a context manager
         await attachment.save(buffer)
@@ -73,6 +71,10 @@ async def format_binary_document(message: Message):
                 "file_data": file_data
             }
         })
+    
+    if message.content != "":
+        content.append({"type": "text", "text": format_text_content(message)})
+        
     return content
 
 async def format_text_document(message: Message):

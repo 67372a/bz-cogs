@@ -23,6 +23,9 @@ SUPPORTED_BINARY_DOCUMENT_CONTENT_TYPES = ["application/pdf"]
 
 SUPPORTED_TEXT_DOCUMENT_CONTENT_TYPES = ["text/", "application/xml", "application/yaml", "application/json", "application/xhtml"]
 
+SUPPORTED_VIDEO_CONTENT_TYPES = ["video/x-flv","video/quicktime","video/mpeg","video/mpegs","video/mpg","video/mp4","video/webm","video/wmv","video/gpp"]
+
+SUPPORTED_AUDIO_CONTENT_TYPES = ["audio/x-aac","audio/flac","audio/mp3","audio/m4a","audio/mpeg","audio/mpga","audio/mp4","audio/opus","audio/pcm","audio/wav","audio/webm"]
 RESPONSE_EMBED_TITLE_REGEX = re.compile(r'^.*\'s Response$')
 
 class MessageConverter():
