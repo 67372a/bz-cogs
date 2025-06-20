@@ -15,7 +15,7 @@ async def format_embed_content(cog: MixinMeta, message: Message):
     elif (URL_PATTERN.search(message.content) and ScrapeToolCall.function_name in await cog.config.guild(message.guild).function_calling_functions()):
         return None
     else:
-        return f'User "{message.author.name}" with display name "{message.author.display_name}" sent: [Embed with title "{message.embeds[0].title}" and description "{message.embeds[0].description}"]'
+        return f'[MESSAGE_ID={message.id} TIMESTAMP={message.created_at.isoformat()} USER_ID={message.author.id} USERNAME="{message.author.name}" NICKNAME="{message.author.name}"] sent embed with title "{message.embeds[0].title}" and description "{message.embeds[0].description}"]'
     
 async def format_bot_embed_content(cog: MixinMeta, message: Message):
-        return f'User "{message.author.name}" with display name "{message.author.display_name}" said: {message.embeds[0].description}'
+        return f'[MESSAGE_ID={message.id} TIMESTAMP={message.created_at.isoformat()} USER_ID={message.author.id} USERNAME="{message.author.name}" NICKNAME="{message.author.name}"] said "{message.embeds[0].description}"'

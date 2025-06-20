@@ -27,14 +27,7 @@ Here is a sample output: "Beautiful woman, contemplative and reflective, sitting
 Convert the below message to a Stable Diffusion Art Prompt.  The prompt should have no second person references, no line breaks, no delimiters, and be kept as concise as possible while still conveying a full scene.
 """
 DEFAULT_REMOVE_PATTERNS = [
-    r'\s*\[Embed with (?:name|title) "[^"]*?" and description(?: |=|:)*?"?[\s\S]*?"?\s*',
-    r'\s*\[(?:Sticker|Link to Youtube video) with (?:name|title) "[^"]*?" and description(?: |=|:)*?"?[\s\S]*?"?(?: from channel "[\s\S]*?)?\]\s*',
-    r'\s*\[(?:Image|Document)(?::| saying) "?[\s\S]*?"?(?: Type: "[\s\S]*?"\n<DOCUMENT_START>[\s\S]*?<DOCUMENT_END>)\]\s*',
-    r'\s*<(?:think|reason)(?:ing)?>[\s\S]*?<\/(?:think|reason)(?:ing)?>\s*',  # for thinking LLMs
-    r'^(?:User )?"?(?:{botname}|{authorname})"?(?: with display name "?(?:{botdisplayname}|{authordisplayname})"?)?(?: (?:said|says|respond(?:ed|s)|replie[ds]|sent)?)?(?: to [^":]*)?:?\s*',
-    r'^[<({{\[](?:{botname}|{authorname}|{botdisplayname}|{authordisplayname})[>)}}\]]\s*',  # [name], {name}, <name>, (name)
-    r'\]$',
-    r' with display name "(?:{botdisplayname}|{authordisplayname})"',
+    r'^\[MESSAGE_ID=\d{1,64} TIMESTAMP=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z USER_ID=\d{1,64} USERNAME="[a-z0-9_\.]{2,32}" NICKNAME="[^\t\n\r]{1,32}"\] (said|sent) \""',
 ]
 
 DEFAULT_IMAGE_REQUEST_TRIGGER_WORDS = [

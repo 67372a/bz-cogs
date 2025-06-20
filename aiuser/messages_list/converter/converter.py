@@ -99,7 +99,10 @@ class MessageConverter():
             await self.add_entry(self.message_cache[message.id], res, role)
         else:
             logger.info(f"Unsupported attachment content Type. type={message.attachments[0].content_type} filename={message.attachments[0].filename}")
-            content = f'User "{message.author.name}" with display name "{message.author.display_name}" sent: [Attachment: "{message.attachments[0].filename}"]'
+
+            title = f', title "{message.attachments[0].title}"' if message.attachments[0].title else ""
+            description = f', description "{message.attachments[0].description}"' if message.attachments[0].description else ""
+            content = f'[MESSAGE_ID={message.id} TIMESTAMP={message.created_at.isoformat()} USER_ID={message.author.id} USERNAME="{message.author.name}" NICKNAME="{message.author.name}"] sent an attachment with filename "{message.attachments[0].filename}"{title}{description}'
             await self.add_entry(content, res, role)
 
         content = format_text_content(message)
