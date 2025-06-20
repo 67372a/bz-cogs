@@ -6,6 +6,7 @@ import random
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Coroutine
+from cachetools import TTLCache
 
 import discord
 from discord import Message
@@ -17,6 +18,10 @@ from aiuser.functions.tool_call import ToolCall
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
+# Cache for guild emojis with a ten minute TTL
+EMOJI_CACHE_TTL = 600
+# Cache structure: {guild_id: {emoji_name_lowercase: str(emoji_object)}}
+emoji_cache = TTLCache(maxsize=100, ttl=EMOJI_CACHE_TTL)
 
 def to_thread(timeout=300):
     def decorator(func: Callable) -> Coroutine:
@@ -32,6 +37,26 @@ def to_thread(timeout=300):
 
     return decorator
 
+async def get_guild_emoji_map(ctx: commands.Context) -> dict[str, str]:
+    """
+    Retrieves a mapping of lowercase emoji names to their string representation for a guild.
+    Results are cached to avoid repeated API calls and reliably fetched to ensure completeness.
+    """
+    guild_id = ctx.guild.id
+    if guild_id in emoji_cache:
+        return emoji_cache[guild_id]
+
+    logger.info(f"Emoji cache miss. Fetching emojis for guild {guild_id}")
+    try:
+        # Reliably fetch all emojis from the guild to ensure the cache is complete
+        guild_emojis = await ctx.guild.fetch_emojis()
+        emoji_map = {emoji.name.lower(): str(emoji) for emoji in guild_emojis}
+        emoji_cache[guild_id] = emoji_map
+        return emoji_map
+    except Exception:
+        logger.warning(f"Failed to fetch emojis for guild {guild_id}. Using potentially incomplete data from guild.emojis.", exc_info=True)
+        # Fallback to the potentially incomplete internal cache if fetch fails
+        return {emoji.name.lower(): str(emoji) for emoji in ctx.guild.emojis}
 
 async def format_variables(ctx: commands.Context, text: str):
     """
@@ -59,7 +84,7 @@ async def format_variables(ctx: commands.Context, text: str):
     else:
         channeltopic = ctx.message.channel.topic
 
-    serveremojis = [f":{e.name.lower()}:" for e in ctx.message.guild.emojis]
+    serveremojis = [f":{e.name.lower()}:" for e in await get_guild_emoji_map(ctx)]
     random.shuffle(serveremojis)
     serveremojis = ' '.join(serveremojis)
 
