@@ -35,7 +35,10 @@ DEFAULT_IMAGE_REQUEST_TRIGGER_WORDS = [
 DEFAULT_IMAGE_REQUEST_TRIGGER_SECOND_PERSON_WORDS = ["yourself", "you"]
 DEFAULT_REPLY_PERCENT = 0.01
 DEFAULT_MIN_MESSAGE_LENGTH = 2
-DEFAULT_IMAGE_UPLOAD_LIMIT = 10 * (1024 * 1024)  # 10 MB
+DEFAULT_IMAGE_UPLOAD_LIMIT = 25 * (1024 * 1024)  # 25 MB
+DEFAULT_VIDEO_UPLOAD_LIMIT = 10 * (1024 * 1024)  # 10 MB
+DEFAULT_DOCUMENT_UPLOAD_LIMIT = 10 * (1024 * 1024)  # 10 MB
+DEFAULT_AUDIO_UPLOAD_LIMIT = 10 * (1024 * 1024)  # 10 MB
 DEFAULT_LLM_MODEL = "google/gemini-2.5-flash"
 
 DEFAULT_GLOBAL = {
@@ -61,6 +64,9 @@ DEFAULT_GUILD = {
     "scan_images_mode": ScanImageMode.AI_HORDE.value,
     "scan_images_model": DEFAULT_LLM_MODEL,
     "max_image_size": DEFAULT_IMAGE_UPLOAD_LIMIT,
+    "max_video_size": DEFAULT_VIDEO_UPLOAD_LIMIT,
+    "max_document_size": DEFAULT_DOCUMENT_UPLOAD_LIMIT,
+    "max_audio_size": DEFAULT_VIDEO_UPLOAD_LIMIT,
     "model": DEFAULT_LLM_MODEL,
     "custom_text_prompt": None,
     "channels_whitelist": [],
