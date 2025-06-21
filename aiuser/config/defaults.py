@@ -27,7 +27,8 @@ Here is a sample output: "Beautiful woman, contemplative and reflective, sitting
 Convert the below message to a Stable Diffusion Art Prompt.  The prompt should have no second person references, no line breaks, no delimiters, and be kept as concise as possible while still conveying a full scene.
 """
 DEFAULT_REMOVE_PATTERNS = [
-    r'^\[MESSAGE_ID=\d{1,64} TIMESTAMP=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z USER_ID=\d{1,64} USERNAME="[a-z0-9_\.]{2,32}" NICKNAME="[^\t\n\r]{1,32}"\] (said|sent) \""',
+    r'^\[MESSAGE_ID=\d{2,32} TIMESTAMP=\d{4}\-\d{2}\-\d{2}T\d{2}:\d{2}:\d{2}[\Z\.](?:\d{3,6}\+\d{2}:\d{2})? USER_ID=\d{2,32} USERNAME="[a-zA-Z0-9_\.]{2,32}" NICKNAME="[^\t\n\r]{1,32}"\] (said|sent) "',
+    r'"$',
 ]
 
 DEFAULT_IMAGE_REQUEST_TRIGGER_WORDS = [
