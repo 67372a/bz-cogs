@@ -85,7 +85,8 @@ async def format_variables(ctx: commands.Context, text: str):
     else:
         channeltopic = ctx.message.channel.topic
 
-    serveremojis = [f":{e}:" for e in await get_guild_emoji_map(ctx)].join(serveremojis)
+    serveremojis = [f":{e}:" for e in await get_guild_emoji_map(ctx)]
+    serveremojis = ' '.join(serveremojis)
 
     try:
         res = text.format(
