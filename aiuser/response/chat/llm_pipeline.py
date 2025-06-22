@@ -21,8 +21,6 @@ from aiuser.utils.utilities import get_enabled_tools
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
-MAX_TOOL_CALL_ITERATIONS = 3  # Maximum iterations for tool call sequences
-
 class LLMPipeline:
     def __init__(self, cog: MixinMeta, ctx: commands.Context, messages: MessagesList):
         self.ctx: commands.Context = ctx
@@ -137,13 +135,20 @@ class LLMPipeline:
         current_llm_text_response: Optional[str] = None
         current_llm_text_reasoning: Optional[str] = None
 
+        current_messages_json = self.msg_list.get_json()
+
+        logger.info(f"start current_messages_json={current_messages_json}")
+
         kwargs1 = custom_kwargs.copy()
 
         if self.available_tools_schemas:
             kwargs1["tools"] = [
                 asdict(schema) for schema in self.available_tools_schemas
             ]
+            if 'extra_body' in kwargs1:
+                kwargs1['extra_body'].update({"tool_choice": "auto"})
             kwargs1["tool_choice"] = "auto"
+            
 
         response_text, reasoning_text, response_tool_calls = await self.call_client(
             kwargs1
@@ -164,6 +169,8 @@ class LLMPipeline:
             kwargs2["tools"] = [
                 asdict(schema) for schema in self.available_tools_schemas
             ]
+            if 'extra_body' in kwargs1:
+                kwargs2['extra_body'].update({"tool_choice": "none"})
             kwargs2["tool_choice"] = "none"
 
             response_text, reasoning_text, _ = await self.call_client(
@@ -189,6 +196,9 @@ class LLMPipeline:
             logger.info(
                 f"Final LLM response for guild {self.ctx.guild.name} (model {self.model}) is empty/None."
             )
+
+        end_messages_json = self.msg_list.get_json()
+        logger.info(f"end current_messages_json={end_messages_json}")
         return self.completion, self.reasoning
 
     async def _process_and_add_tool_results(
