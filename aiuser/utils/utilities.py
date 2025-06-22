@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Coroutine
 from cachetools import TTLCache
+import re
 
 import discord
 from discord import Message
@@ -17,6 +18,12 @@ from aiuser.config.constants import OPENROUTER_URL, YOUTUBE_URL_PATTERN
 from aiuser.functions.tool_call import ToolCall
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
+
+EMOJI_PATTERN = re.compile(r"(?:<a?)?:([A-Za-z0-9_]{2,32}):(?:[0-9]+>)?")
+
+BACKTICK_PATTERN = re.compile(r'(\\*)`')
+
+MULTI_NEWLINE_PATTERN = re.compile(r'(?:([ \t]|<br>|\\n)*(?:\r\n|\r|\n)){2,}')
 
 # Cache for guild emojis with a ten minute TTL
 EMOJI_CACHE_TTL = 600
@@ -151,3 +158,77 @@ async def get_enabled_tools(config: Config, ctx: commands.Context) -> list:
     return [tool_classes[name](config=config, ctx=ctx)
             for name in enabled_tools
             if name in tool_classes]
+
+async def resolve_emojis_for_discord(ctx: commands.Context, text_content: str) -> str:
+    """
+    Resolves :emoji_name: shortcodes in a string to their full Discord format using a cache.
+
+    Args:
+        ctx: The command context, used to identify the guild.
+        text_content: The string potentially containing emoji shortcodes.
+
+    Returns:
+        The string with emoji shortcodes replaced.
+    """
+    emoji_map = await get_guild_emoji_map(ctx)
+
+    if not emoji_map:
+        return text_content
+
+    def replacer(match):
+        # Match is case-insensitive by lowercasing, aligning with the keys in our map
+        emoji_name = match.group(1)
+        if emoji_name:
+            emoji_name = emoji_name.lower()
+
+        # Return the full emoji string if found, otherwise return the original text (e.g., :thinking:)
+        return emoji_map.get(emoji_name, match.group(0))
+
+    return EMOJI_PATTERN.sub(replacer, text_content)
+
+def escape_unescaped_backticks(text: str) -> str:
+    """
+    Escapes backticks in a string, but only if they are not already escaped.
+
+    This handles cases with multiple preceding backslashes correctly.
+    - `backtick` -> `\`backtick`
+    - `\`backtick` -> `\`backtick` (no change)
+    - `\\`backtick` -> `\\\`backtick` (the backtick was not escaped)
+    - `\\\`backtick` -> `\\\`backtick` (no change)
+    """
+    # This function is called for every match of the regex.
+    def replacer(match):
+        # The first group captures all the backslashes before the backtick.
+        backslashes = match.group(1)
+        
+        # If the number of backslashes is even, the backtick is not escaped.
+        # So, we add an escape slash.
+        if len(backslashes) % 2 == 0:
+            return backslashes + r'\`'
+        # If the number is odd, the backtick is already escaped.
+        # So, we return the original match.
+        else:
+            return match.group(0)
+
+    # The regex finds any number of backslashes (group 1) followed by a backtick.
+    # The 'r' prefix is important for raw strings.
+    return BACKTICK_PATTERN.sub(r'(\\*)`', replacer, text)
+
+def collapse_lines(text, replacement: str = r'\n'):
+  """
+  Collapses sequences of two or more blank lines (or just newlines)
+  into a single standard newline.
+  Handles LF, CRLF, and CR line endings.
+  A "blank line" here means zero or more spaces/tabs followed by a newline sequence.
+  """
+  # Pattern explanation:
+  # (?:               # Start of a non-capturing group for a "blank line unit"
+  #   [ \t]*          # Match zero or more spaces or tabs (horizontal whitespace)
+  #   (?:\r\n|\r|\n)  # Match any kind of newline: CRLF (Windows), CR (old Mac), or LF (Unix/modern Mac)
+  #                    # The order \r\n before \r is important to match CRLF correctly.
+  # )                  # End of the non-capturing group for a "blank line unit"
+  # {2,}               # Match 2 or more occurrences of the preceding "blank line unit"
+  # r'(?:[ \t]*(?:\r\n|\r|\n)){2,}'
+
+  # Replace the matched sequence of multiple blank lines with a single standard newline '\n'
+  return re.sub(MULTI_NEWLINE_PATTERN, replacement, text)

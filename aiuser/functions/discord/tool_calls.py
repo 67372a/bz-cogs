@@ -141,15 +141,15 @@ class PinMessageToolCall(ToolCall):
 sendTtsMessageToolCallSchema = ToolCallSchema(
     function=Function(
         name="send_tts_message",
-        description="Sends a text-to-speech (TTS) message to the current channel, which will be read aloud to users. Should be used very selectively for comedic effect.",
+        description="Makes the response message you send a text to speech (TTS) message. Use sparingly.",
         parameters=Parameters(
             properties={
-                "text": {
+                "reason": {
                     "type": "string",
-                    "description": "The text to be sent as a TTS message.",
+                    "description": "The reason for applying text to speech (TTS) to the message.",
                 },
             },
-            required=["text"],
+            required=["reason"],
         ),
     )
 )
@@ -162,18 +162,9 @@ class SendTtsMessageToolCall(ToolCall):
     async def _handle(self, arguments: dict):
         guild = self.ctx.guild
         channel = self.ctx.channel
-        text = arguments["text"]
-
-        if not text:
-            return "Error: Cannot send an empty TTS message."
 
         if not channel.permissions_for(guild.me).send_tts_messages:
             return "Error: I do not have the `Send TTS Messages` permission."
 
-        try:
-            await channel.send(text, tts=True)
-            return "Successfully sent TTS message."
-        except discord.HTTPException as e:
-            logger.exception(f"Failed to send TTS message in {guild.name}")
-            return f"An unexpected error occurred: {e}"
+        return "TTS will be applied to your response message."
         
