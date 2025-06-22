@@ -183,10 +183,10 @@ class MessagesList:
         self.messages.insert(index or 0, entry)
         await self._add_tokens(content)
 
-    async def add_tool_result(self, content: str,  tool_call_id: int, index: int = None):
+    async def add_tool_result(self, content: str,  tool_call_id: int, name: str = None, index: int = None):
         if self.tokens > self.token_limit:
             return
-        entry = MessageEntry("tool", content, tool_call_id=tool_call_id)
+        entry = MessageEntry("tool", content, tool_call_id=tool_call_id, name = name)
         self.messages.insert(index or 0, entry)
         await self._add_tokens(content)
 

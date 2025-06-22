@@ -14,13 +14,9 @@ class ToolCall:
         self.ctx = ctx
         self.bot: Red = ctx.bot
 
-    def run(self, arguments: dict, available_tools: list):
-        self.remove_tool_from_available(available_tools)
+    def run(self, arguments: dict):
         return self._handle(arguments)
 
     def _handle(arguments: dict):
         raise NotImplementedError
 
-    def remove_tool_from_available(self, available_tools: list):
-        if self.schema in available_tools:
-            available_tools.remove(self.schema)

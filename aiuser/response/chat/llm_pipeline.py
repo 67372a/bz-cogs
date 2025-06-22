@@ -137,53 +137,49 @@ class LLMPipeline:
         current_llm_text_response: Optional[str] = None
         current_llm_text_reasoning: Optional[str] = None
 
+        kwargs1 = custom_kwargs.copy()
 
-        has_processed_tool_calls = False
-        for i in range(MAX_TOOL_CALL_ITERATIONS):
-            iteration_kwargs = custom_kwargs.copy()
-            if self.available_tools_schemas:
-                iteration_kwargs["tools"] = [
-                    asdict(schema) for schema in self.available_tools_schemas
-                ]
-                # Prevent back to back function calls from LLM
-                if has_processed_tool_calls:
-                    iteration_kwargs["tool_choice"] = "none"
-                else:
-                    iteration_kwargs["tool_choice"] = "auto"
-            else:
-                iteration_kwargs.pop("tools", None)
-                iteration_kwargs.pop("tool_choice", None)
+        if self.available_tools_schemas:
+            kwargs1["tools"] = [
+                asdict(schema) for schema in self.available_tools_schemas
+            ]
+            kwargs1["tool_choice"] = "auto"
 
-            response_text, reasoning_text, response_tool_calls = await self.call_client(
-                iteration_kwargs
+        response_text, reasoning_text, response_tool_calls = await self.call_client(
+            kwargs1
+        )
+
+        current_llm_text_response = response_text
+        current_llm_text_reasoning = reasoning_text
+
+        await self.msg_list.add_assistant(
+            content=current_llm_text_response, tool_calls=response_tool_calls
+        )
+
+        if response_tool_calls:
+            await self._process_and_add_tool_results(response_tool_calls)
+
+            kwargs2 = custom_kwargs.copy()
+
+            kwargs2["tools"] = [
+                asdict(schema) for schema in self.available_tools_schemas
+            ]
+            kwargs2["tool_choice"] = "none"
+
+            response_text, reasoning_text, _ = await self.call_client(
+                kwargs2
             )
+
             current_llm_text_response = response_text
             current_llm_text_reasoning = reasoning_text
 
-            await self.msg_list.add_assistant(
-                content=current_llm_text_response, tool_calls=response_tool_calls
-            )
-
-            if response_tool_calls:
-                logger.info(
-                    f"LLM returned {len(response_tool_calls)} tool call(s) in iteration {i + 1}."
-                )
-
-                await self._process_and_add_tool_results(response_tool_calls)
-                # Continue loop to get LLM response based on tool results
-                
-                has_processed_tool_calls = True
-            else:
-                logger.info(f"LLM returned final response in iteration {i + 1}.")
-                break  # No tool calls, this is the final response
-        else:
-            logger.warning(
-                f"Reached max tool iterations ({MAX_TOOL_CALL_ITERATIONS}) for guild {self.ctx.guild.name}. "
-                f"Returning the last text content received from LLM, if any."
-            )
+        await self.msg_list.add_assistant(
+            content=current_llm_text_response
+        )
 
         self.reasoning = current_llm_text_reasoning
         self.completion = current_llm_text_response
+
         if self.completion:
             log_preview = f'{self.completion[:200]}{"..." if len(self.completion) > 200 else ""}'
             logger.info(
@@ -213,13 +209,13 @@ class LLMPipeline:
                 )
                 tool_result_content = f"Error: Invalid JSON arguments provided for tool '{tool_function_name}'."
                 await self.msg_list.add_tool_result(
-                    tool_call_id=tool_call_id, content=tool_result_content
+                    name=tool_function_name, tool_call_id=tool_call_id, content=tool_result_content
                 )
                 continue
 
             tool_result_content = await self.run_tool(tool_function_name, arguments)
             await self.msg_list.add_tool_result(
-                tool_call_id=tool_call_id, content=tool_result_content
+                name=tool_function_name, tool_call_id=tool_call_id, content=tool_result_content
             )
 
     async def run_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:

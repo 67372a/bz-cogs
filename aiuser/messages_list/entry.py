@@ -6,5 +6,6 @@ from typing import Literal, Union
 class MessageEntry:
     role: Literal['user', 'assistant', 'system', 'tool']
     content: Union[str, list]
+    name: str = None
     tool_calls: list = field(default_factory=list)
     tool_call_id: int = None
