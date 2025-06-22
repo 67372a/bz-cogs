@@ -129,9 +129,8 @@ class LLMPipeline:
         custom_kwargs = await self.get_custom_parameters()
         await self.setup_tools()
 
-        # This will hold the last known text from the LLM in case of a timeout
-        last_known_response: Optional[str] = None
-        last_known_reasoning: Optional[str] = None
+        current_llm_text_response: Optional[str] = None
+        current_llm_text_reasoning: Optional[str] = None
 
         for i in range(MAX_TOOL_ITERATIONS):
             iteration_kwargs = custom_kwargs.copy()
@@ -151,38 +150,31 @@ class LLMPipeline:
             response_text, reasoning_text, response_tool_calls = await self.call_client(
                 iteration_kwargs
             )
+            if response_text is not None:
+                current_llm_text_response = response_text
+            if reasoning_text is not None:
+                current_llm_text_reasoning = reasoning_text
 
-            # --- THE CORRECT FIX ---
-            # Unconditionally add the assistant's turn to the message history.
-            # This is the most crucial change. The message list now accurately reflects the entire conversation.
-            await self.msg_list.add_assistant(
-                content=response_text, tool_calls=response_tool_calls
-            )
-
-            # Store the latest response text in case we time out.
-            last_known_response = response_text
-            last_known_reasoning = reasoning_text
-
-            if not response_tool_calls:
-                # The LLM has provided a final answer. We're done.
-                logger.info(f"LLM returned final text response in iteration {i + 1}.")
-                self.completion = response_text
-                self.reasoning = reasoning_text
-                break
-            else:
-                # The LLM wants to call tools. Process them and continue the loop.
+            if response_tool_calls:
                 logger.info(
                     f"LLM returned {len(response_tool_calls)} tool call(s) in iteration {i + 1}."
                 )
+                await self.msg_list.add_assistant(
+                    content=response_text, tool_calls=response_tool_calls
+                )
+
                 await self._process_tool_calls_parallel(response_tool_calls)
+            else:
+                logger.info(f"LLM returned final response in iteration {i + 1}. No more tool calls.")
+                break
         else:
-            # This 'else' block belongs to the 'for' loop. It executes if the loop finishes without a 'break'.
             logger.warning(
-                f"Reached max tool iterations ({MAX_TOOL_ITERATIONS}). "
-                f"Returning the last known text content from the final iteration."
+                f"Reached max tool iterations ({MAX_TOOL_ITERATIONS}) for guild {self.ctx.guild.name}. "
+                f"Returning the last text content received from LLM, if any."
             )
-            self.completion = last_known_response
-            self.reasoning = last_known_reasoning
+
+        self.completion = current_llm_text_response
+        self.reasoning = current_llm_text_reasoning
 
         if self.completion:
             log_preview = f'{self.completion[:250]}{"..." if len(self.completion) > 250 else ""}'
@@ -193,7 +185,6 @@ class LLMPipeline:
             logger.info(
                 f"Final LLM response for guild {self.ctx.guild.name} (model {self.model}) is empty/None."
             )
-            
         return self.completion, self.reasoning
 
     async def _process_tool_calls_parallel(
