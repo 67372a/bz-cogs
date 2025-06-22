@@ -25,12 +25,7 @@ from redbot.core import Config, commands
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
-# --- REFACTOR ---
-# Renamed for clarity: this is the max number of back-and-forth sequences with the LLM for tool calls.
 MAX_TOOL_ITERATIONS = 3
-# --- REFACTOR ---
-# New constant to limit how many tools can run at the same time.
-# This prevents overwhelming local resources or hitting third-party API rate limits.
 MAX_CONCURRENT_TOOL_CALLS = 5
 
 
@@ -137,17 +132,12 @@ class LLMPipeline:
         current_llm_text_response: Optional[str] = None
         current_llm_text_reasoning: Optional[str] = None
 
-        # --- REFACTOR ---
-        # The main loop now clearly controls the number of sequential tool-calling steps.
         for i in range(MAX_TOOL_ITERATIONS):
             iteration_kwargs = custom_kwargs.copy()
             if self.available_tools_schemas:
                 iteration_kwargs["tools"] = [
                     asdict(schema) for schema in self.available_tools_schemas
                 ]
-                # --- REFACTOR ---
-                # Simplified logic: On the last iteration, force the model to respond with text.
-                # This prevents the LLM from ending on a tool call that we won't process.
                 if i == MAX_TOOL_ITERATIONS - 1:
                     iteration_kwargs["tool_choice"] = "none"
                     logger.info("Max tool iterations reached. Forcing text response from LLM.")
@@ -160,7 +150,6 @@ class LLMPipeline:
             response_text, reasoning_text, response_tool_calls = await self.call_client(
                 iteration_kwargs
             )
-            # Persist the latest text/reasoning from the model in this turn
             if response_text is not None:
                 current_llm_text_response = response_text
             if reasoning_text is not None:
@@ -170,22 +159,15 @@ class LLMPipeline:
                 logger.info(
                     f"LLM returned {len(response_tool_calls)} tool call(s) in iteration {i + 1}."
                 )
-                # Add assistant's response (which can include text *and* tool calls) to history.
-                # This is crucial for models that might return a thought or text like
-                # "OK, I need to check the weather and the news." alongside the tool call requests.
                 await self.msg_list.add_assistant(
                     content=response_text, tool_calls=response_tool_calls
                 )
 
-                # --- REFACTOR ---
-                # This now calls the new parallel processing method
                 await self._process_tool_calls_parallel(response_tool_calls)
-                # Continue loop to get LLM response based on the consolidated tool results
             else:
                 logger.info(f"LLM returned final response in iteration {i + 1}. No more tool calls.")
-                break  # No tool calls, this is the final response
+                break
         else:
-            # This 'else' block runs if the for loop completes without a 'break'.
             logger.warning(
                 f"Reached max tool iterations ({MAX_TOOL_ITERATIONS}) for guild {self.ctx.guild.name}. "
                 f"Returning the last text content received from LLM, if any."
@@ -205,19 +187,12 @@ class LLMPipeline:
             )
         return self.completion, self.reasoning
 
-    # --- REFACTOR ---
-    # This is the new method for parallel execution.
-    # The old _process_and_add_tool_results has been replaced.
     async def _process_tool_calls_parallel(
         self, tool_calls: List[ChatCompletionMessageToolCall]
     ):
-        """
-        Processes a list of tool calls in parallel, with a semaphore to limit concurrency.
-        """
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_TOOL_CALLS)
 
         async def run_tool_with_semaphore(tool_call: ChatCompletionMessageToolCall) -> Tuple[str, str]:
-            """ Helper to run a single tool call guarded by the semaphore. """
             async with semaphore:
                 tool_function_name = tool_call.function.name
                 tool_call_id = tool_call.id
@@ -232,17 +207,13 @@ class LLMPipeline:
                     )
                     result_content = f"Error: Invalid JSON arguments provided for tool '{tool_function_name}'."
                     return tool_call_id, result_content
-                
+
                 result_content = await self.run_tool(tool_function_name, arguments)
                 return tool_call_id, result_content
 
-        # Create a task for each tool call
         tasks = [run_tool_with_semaphore(tc) for tc in tool_calls]
-        # Run tasks concurrently and gather all results
         tool_results = await asyncio.gather(*tasks)
 
-        # Now, add all the collected results to the message list.
-        # This consolidation ensures all tool outputs are in the history before the next LLM call.
         for tool_call_id, result_content in tool_results:
             await self.msg_list.add_tool_result(
                 tool_call_id=tool_call_id, content=result_content
@@ -254,8 +225,15 @@ class LLMPipeline:
                 logger.info(
                     f'Executing tool: "{tool_name}" in guild {self.ctx.guild.name} with args: {arguments}'
                 )
+                # FIX: Restore the mechanism to pass context to the tool functions
+                arguments_for_tool = arguments.copy()
+                arguments_for_tool["request"] = self
+
                 try:
-                    tool_output = await tool_obj.run(arguments, self.available_tools_schemas)
+                    # FIX: Pass the correct dictionary with the added context
+                    tool_output = await tool_obj.run(
+                        arguments_for_tool, self.available_tools_schemas
+                    )
                     if tool_output is None:
                         logger.warning(
                             f"Tool '{tool_name}' executed but returned None. Interpreting as success with no textual output."
