@@ -180,9 +180,9 @@ class LLMPipeline:
             current_llm_text_response = response_text
             current_llm_text_reasoning = reasoning_text
 
-        await self.msg_list.add_assistant(
-            content=current_llm_text_response
-        )
+            await self.msg_list.add_assistant(
+                content=current_llm_text_response
+            )
 
         self.reasoning = current_llm_text_reasoning
         self.completion = current_llm_text_response
