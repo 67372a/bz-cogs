@@ -212,7 +212,7 @@ def escape_unescaped_backticks(text: str) -> str:
 
     # The regex finds any number of backslashes (group 1) followed by a backtick.
     # The 'r' prefix is important for raw strings.
-    return BACKTICK_PATTERN.sub(r'(\\*)`', replacer, text)
+    return BACKTICK_PATTERN.sub(replacer, text)
 
 def collapse_lines(text, replacement: str = r'\n'):
   """
