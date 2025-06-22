@@ -14,7 +14,7 @@ logger = logging.getLogger("red.bz_cogs.aiuser")
 reactToMessageToolCallSchema = ToolCallSchema(
     function=Function(
         name="react_to_message",
-        description="Reacts to a recent message with a specified emoji.",
+        description="Reacts to a recent message with a specified emoji. Reaction emoji are used to indicate how one feels about a message.",
         parameters=Parameters(
             properties={
                 "message_id": {
@@ -81,7 +81,7 @@ class ReactToMessageToolCall(ToolCall):
 pinMessageToolCallSchema = ToolCallSchema(
     function=Function(
         name="pin_message",
-        description="Pins a recent message in the current channel.",
+        description="Pins a recent message in the current channel. Pinned messages are accessible via dedicated menu by users. The purpose of pinning is to track important messages, importance can be informational or due to what users might find entertaining.",
         parameters=Parameters(
             properties={
                 "message_id": {
@@ -141,7 +141,7 @@ class PinMessageToolCall(ToolCall):
 sendTtsMessageToolCallSchema = ToolCallSchema(
     function=Function(
         name="send_tts_message",
-        description="Sends a text-to-speech (TTS) message to the current channel, which will be read aloud to users.",
+        description="Sends a text-to-speech (TTS) message to the current channel, which will be read aloud to users. Should be used very selectively for comedic effect.",
         parameters=Parameters(
             properties={
                 "text": {
