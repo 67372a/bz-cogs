@@ -158,7 +158,7 @@ class LLMPipeline:
         current_llm_text_reasoning = reasoning_text
 
         await self.msg_list.add_assistant(
-            content=current_llm_text_response, tool_calls=response_tool_calls, index=len(self.msg_list)
+            content=current_llm_text_response, tool_calls=response_tool_calls, index=len(self.msg_list) + 1
         )
 
         if response_tool_calls:
@@ -181,7 +181,7 @@ class LLMPipeline:
             current_llm_text_reasoning = reasoning_text
 
             await self.msg_list.add_assistant(
-                content=current_llm_text_response, index=len(self.msg_list)
+                content=current_llm_text_response, index=len(self.msg_list) + 1
             )
 
         self.reasoning = current_llm_text_reasoning
@@ -219,13 +219,13 @@ class LLMPipeline:
                 )
                 tool_result_content = f"Error: Invalid JSON arguments provided for tool '{tool_function_name}'."
                 await self.msg_list.add_tool_result(
-                    name=tool_function_name, tool_call_id=tool_call_id, content=tool_result_content, index=len(self.msg_list)
+                    name=tool_function_name, tool_call_id=tool_call_id, content=tool_result_content, index=len(self.msg_list) + 1
                 )
                 continue
 
             tool_result_content = await self.run_tool(tool_function_name, arguments)
             await self.msg_list.add_tool_result(
-                name=tool_function_name, tool_call_id=tool_call_id, content=tool_result_content, index=len(self.msg_list)
+                name=tool_function_name, tool_call_id=tool_call_id, content=tool_result_content, index=len(self.msg_list) + 1
             )
 
     async def run_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
