@@ -50,7 +50,8 @@ async def get_guild_emoji_map(ctx: commands.Context) -> dict[str, str]:
     try:
         # Reliably fetch all emojis from the guild to ensure the cache is complete
         guild_emojis = await ctx.guild.fetch_emojis()
-        emoji_map = {emoji.name.lower(): str(emoji) for emoji in guild_emojis}
+        sorted_emojis = sorted(guild_emojis, key=lambda e: e.name.lower())
+        emoji_map = {emoji.name.lower(): str(emoji) for emoji in sorted_emojis}
         emoji_cache[guild_id] = emoji_map
         return emoji_map
     except Exception:
@@ -84,9 +85,7 @@ async def format_variables(ctx: commands.Context, text: str):
     else:
         channeltopic = ctx.message.channel.topic
 
-    serveremojis = [f":{e}:" for e in await get_guild_emoji_map(ctx)]
-    random.shuffle(serveremojis)
-    serveremojis = ' '.join(serveremojis)
+    serveremojis = [f":{e}:" for e in await get_guild_emoji_map(ctx)].join(serveremojis)
 
     try:
         res = text.format(

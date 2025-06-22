@@ -22,6 +22,8 @@ MULTI_NEWLINE_PATTERN = re.compile(r'(?:([ \t]|<br>|\\n)*(?:\r\n|\r|\n)){2,}')
 
 EMOJI_PATTERN = re.compile(r"(?:<a?)?:([A-Za-z0-9_]{2,32}):(?:[0-9]+>)?")
 
+BACKTICK_PATTERN = re.compile(r'(\\*)`')
+
 # Use to_thread to compile & apply a regex pattern
 @to_thread(timeout=REGEX_RUN_TIMEOUT)
 def compile_and_apply(pattern_str: str, text: str) -> str:
@@ -192,3 +194,31 @@ async def resolve_emojis_for_discord(ctx: commands.Context, text_content: str) -
         return emoji_map.get(emoji_name, match.group(0))
 
     return EMOJI_PATTERN.sub(replacer, text_content)
+
+def escape_unescaped_backticks(text: str) -> str:
+    """
+    Escapes backticks in a string, but only if they are not already escaped.
+
+    This handles cases with multiple preceding backslashes correctly.
+    - `backtick` -> `\`backtick`
+    - `\`backtick` -> `\`backtick` (no change)
+    - `\\`backtick` -> `\\\`backtick` (the backtick was not escaped)
+    - `\\\`backtick` -> `\\\`backtick` (no change)
+    """
+    # This function is called for every match of the regex.
+    def replacer(match):
+        # The first group captures all the backslashes before the backtick.
+        backslashes = match.group(1)
+        
+        # If the number of backslashes is even, the backtick is not escaped.
+        # So, we add an escape slash.
+        if len(backslashes) % 2 == 0:
+            return backslashes + r'\`'
+        # If the number is odd, the backtick is already escaped.
+        # So, we return the original match.
+        else:
+            return match.group(0)
+
+    # The regex finds any number of backslashes (group 1) followed by a backtick.
+    # The 'r' prefix is important for raw strings.
+    return BACKTICK_PATTERN.sub(r'(\\*)`', replacer, text)
