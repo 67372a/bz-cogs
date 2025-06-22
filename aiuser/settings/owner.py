@@ -14,7 +14,11 @@ from aiuser.config.defaults import DEFAULT_LLM_MODEL
 from aiuser.core.openai_utils import setup_openai_client
 from aiuser.settings.utilities import get_tokens, truncate_prompt
 from aiuser.types.abc import MixinMeta
-from aiuser.utils.utilities import is_using_openrouter_endpoint
+from aiuser.types.enums import ScanImageMode
+from aiuser.utils.utilities import (
+    is_using_openai_endpoint,
+    is_using_openrouter_endpoint,
+)
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
@@ -60,59 +64,112 @@ class OwnerSettings(MixinMeta):
 
     @aiuserowner.command()
     async def endpoint(self, ctx: commands.Context, url: Optional[str]):
-        """Sets the OpenAI endpoint to a custom one (must be OpenAI API compatible)
+        """Sets the OpenAI endpoint to a custom url (must be OpenAI API compatible)
 
-        Reset to official OpenAI endpoint with `[p]aiuseradmin endpoint clear`
+        **Arguments:**
+        - `url`: The url to set the endpoint to.
+        OR
+        - `openai`, `openrouter`, `ollama`: Shortcuts for the default endpoints. (localhost for ollama)
         """
 
         if url == "openrouter":
             url = "https://openrouter.ai/api/v1/"
-
-        if not url or url in ["clear", "reset", "openai"]:
-            await self.config.custom_openai_endpoint.set(None)
+        elif url == "ollama":
+            url = "http://localhost:11434/v1/"
+        elif url in ["clear", "reset", "openai"]:
             url = None
-        else:
-            await self.config.custom_openai_endpoint.set(url)
+
+        previous_url = await self.config.custom_openai_endpoint()
+        
+        # Save current models before switching
+        if previous_url:
+            history = await self.config.endpoint_model_history()
+            history[previous_url] = {}
+            for guild_id in await self.config.all_guilds():
+                guild_config = self.config.guild_from_id(guild_id)
+                history[previous_url][str(guild_id)] = {
+                    "chat_model": await guild_config.model(),
+                    "image_model": await guild_config.scan_images_model()
+                }
+            await self.config.endpoint_model_history.set(history)
+        
+        await self.config.custom_openai_endpoint.set(url)
+
+        await ctx.message.add_reaction("🔄")
 
         self.openai_client = await setup_openai_client(self.bot, self.config)
 
+        # test the endpoint works if not rollback
+        try:
+            models =await self.openai_client.models.list()
+        except Exception:
+            await self.config.custom_openai_endpoint.set(previous_url)
+            return await ctx.send(":warning: Invalid endpoint. Please check logs for more information.")
+        finally:
+            await ctx.message.remove_reaction("🔄", ctx.me)
+
+        # Check if we have saved models for this endpoint
+        history = await self.config.endpoint_model_history()
+        saved_models = history.get(url or "default", {})
+        
         chat_model = DEFAULT_LLM_MODEL
         image_model = DEFAULT_LLM_MODEL
 
         if (is_using_openrouter_endpoint(self.openai_client)):
-            chat_model = "openai/gpt-4o-mini"
-            image_model = "openai/gpt-4o-mini"
+            chat_model = f"openai/{DEFAULT_LLM_MODEL}"
+            image_model = f"openai/{DEFAULT_LLM_MODEL}"
+        elif (not is_using_openai_endpoint(self.openai_client)):
+            chat_model = models.data[0].id
+            image_model = models.data[0].id
 
         embed = discord.Embed(
             title="Bot Custom OpenAI endpoint", color=await ctx.embed_color()
         )
-        embed.add_field(
-            name="🔄 Reset",
-            value=f"Per-server models have been set to use `{chat_model}` for chat \n and `{image_model}` for LLM image scan mode.",
-            inline=False,
-        )
-
+        
+        restored_count = 0
         guilds_with_parameters = []
         for guild_id in await self.config.all_guilds():
-            await self.config.guild_from_id(guild_id).model.set(chat_model)
-            await self.config.guild_from_id(guild_id).scan_images_model.set(image_model)
-            if await self.config.guild_from_id(guild_id).parameters():
+            guild_config = self.config.guild_from_id(guild_id)
+            
+            # Restore saved models if available, otherwise use defaults
+            if str(guild_id) in saved_models:
+                await guild_config.model.set(saved_models[str(guild_id)]["chat_model"])
+                await guild_config.scan_images_model.set(saved_models[str(guild_id)]["image_model"])
+                restored_count += 1
+            else:
+                await guild_config.model.set(chat_model)
+                await guild_config.scan_images_model.set(image_model)
+            
+            if await guild_config.parameters():
                 guilds_with_parameters.append(str(self.bot.get_guild(guild_id).name))
+
+        if restored_count > 0:
+            total_guilds = len(await self.config.all_guilds())
+            value = f"Restored previously set models on this endpoint for {restored_count} servers."
+            if restored_count < total_guilds:
+                value += f"\nA further {total_guilds - restored_count} servers were set to `{chat_model}` for chat, and \n`{image_model}` for scanning images if set to `{ScanImageMode.LLM.value}` mode."
+            embed.add_field(
+                name="🔄 Restored",
+                value=value,
+                inline=False,
+            )
+        else:
+            embed.add_field(
+                name="🔄 Reset",
+                value=f"All per-server models have been set to use `{chat_model}` for chat \n and `{image_model}` for scanning images if set to `{ScanImageMode.LLM.value}` mode.",
+                inline=False,
+            )
 
         if guilds_with_parameters:
             embed.add_field(
                 name=":warning: Caution",
-                value=f"Custom parameters have been set in the following guilds: `{', '.join(guilds_with_parameters)}`\nThey may not work with the new endpoint!",
+                value=f"Custom parameters have been set in the following servers: `{', '.join(guilds_with_parameters)}`\nThey may not work with the new endpoint!",
                 inline=False,
             )
 
         if url:
             embed.description = f"Endpoint set to {url}."
-            embed.add_field(
-                name="❗ Third Party Models",
-                value="Third party models may have undesirable results with this cog, compared to OpenAI's LLMs.",
-                inline=False,
-            )
+            embed.set_footer(text="❗ Third party models may have undesirable results with this cog.")
         else:
             embed.description = "Endpoint reset back to offical OpenAI endpoint."
 
@@ -130,7 +187,7 @@ class OwnerSettings(MixinMeta):
 
         embed = discord.Embed(
             title="The request timeout is now:",
-            description=f"{seconds} seconds",
+            description=f"`{seconds}` seconds",
             color=await ctx.embed_color(),
         )
         return await ctx.send(embed=embed)

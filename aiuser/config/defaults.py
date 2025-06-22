@@ -51,6 +51,7 @@ DEFAULT_GLOBAL = {
             "max_random_prompt_length": 200,
             "max_prompt_length": 200,
             "custom_text_prompt": None,
+            "endpoint_model_history": {},
 }
 
 DEFAULT_GUILD = {
@@ -62,7 +63,7 @@ DEFAULT_GUILD = {
     "messages_min_length": DEFAULT_MIN_MESSAGE_LENGTH,
     "reply_to_mentions_replies": True,
     "scan_images": False,
-    "scan_images_mode": ScanImageMode.AI_HORDE.value,
+    "scan_images_mode": ScanImageMode.LLM.value,
     "scan_images_model": DEFAULT_LLM_MODEL,
     "max_image_size": DEFAULT_IMAGE_UPLOAD_LIMIT,
     "max_video_size": DEFAULT_VIDEO_UPLOAD_LIMIT,
@@ -96,7 +97,9 @@ DEFAULT_GUILD = {
     "function_calling_default_location": [49.24966, -123.11934],
     "conversation_reply_percent": 0,
     "conversation_reply_time": 20,
+    "grok_trigger": False,
     "custom_model_tokens_limit": None,
+    "always_reply_on_words": [],
 }
 
 DEFAULT_CHANNEL = {
