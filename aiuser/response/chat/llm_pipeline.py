@@ -1,6 +1,3 @@
-# llm_pipeline.py
-
-import asyncio
 import json
 import logging
 from dataclasses import asdict
@@ -10,6 +7,7 @@ import hashlib
 import httpx
 import openai
 from openai.types.chat import ChatCompletion, ChatCompletionMessageToolCall
+from redbot.core import Config, commands
 
 from aiuser.config.models import (
     UNSUPPORTED_LOGIT_BIAS_MODELS,
@@ -20,14 +18,10 @@ from aiuser.functions.types import ToolCallSchema
 from aiuser.messages_list.messages import MessagesList
 from aiuser.types.abc import MixinMeta
 from aiuser.utils.utilities import get_enabled_tools
-from redbot.core import Config, commands
-
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
-MAX_TOOL_ITERATIONS = 3
-MAX_CONCURRENT_TOOL_CALLS = 5
-
+MAX_TOOL_CALL_ITERATIONS = 3  # Maximum iterations for tool call sequences
 
 class LLMPipeline:
     def __init__(self, cog: MixinMeta, ctx: commands.Context, messages: MessagesList):
@@ -36,12 +30,12 @@ class LLMPipeline:
         self.bot = cog.bot
         self.msg_list: MessagesList = messages
         self.model: str = messages.model
-        self.can_reply: bool = messages.can_reply
+        self.can_reply: bool = messages.can_reply # Retained if used elsewhere
         self.openai_client = cog.openai_client
         self.enabled_tools: List[ToolCall] = []
         self.available_tools_schemas: List[ToolCallSchema] = []
-        self.completion: Optional[str] = None
-        self.reasoning: Optional[str] = None
+        self.completion: Optional[str] = None # Stores the *final* text completion
+        self.reasoning: Optional[str] = None # Stores the *final* text reasoning
 
     async def get_custom_parameters(self) -> Dict[str, Any]:
         custom_parameters = await self.config.guild(self.ctx.guild).parameters()
@@ -49,10 +43,10 @@ class LLMPipeline:
 
         if "logit_bias" not in kwargs:
             weights = await self.config.guild(self.ctx.guild).weights()
-            if weights:
+            if weights: # Only process if weights string is not empty
                 try:
                     logit_bias_values = json.loads(weights)
-                    if logit_bias_values:
+                    if logit_bias_values:  # Ensure the parsed dict is not empty
                         kwargs["logit_bias"] = logit_bias_values
                 except json.JSONDecodeError:
                     logger.error(
@@ -86,7 +80,12 @@ class LLMPipeline:
         current_messages_json = self.msg_list.get_json()
 
         plugins = [
-            {"id": "file-parser", "pdf": {"engine": "native"}}
+            {
+                "id": "file-parser",
+                "pdf": {
+                    "engine": "native"
+                }
+            }
         ]
 
         if 'extra_body' in kwargs:
@@ -95,20 +94,26 @@ class LLMPipeline:
             kwargs['extra_body'] = {"plugins": plugins}
 
         user = f"{self.ctx.me.id}-{self.ctx.channel.id}"
+
         m = hashlib.sha256()
         m.update(user.encode('utf-8'))
+
         user_digest = m.hexdigest()
+
         kwargs['extra_body'].update({"user": user_digest})
+
         kwargs['user'] = user_digest
 
         logger.info(
             f"Sending request to LLM (model: {self.model}) with {len(current_messages_json)} messages. Kwarg keys: {list(kwargs.keys())}"
         )
 
-        response: ChatCompletion = await self.openai_client.chat.completions.create(
-            model=self.model,
-            messages=current_messages_json,
-            **kwargs
+        response: ChatCompletion = (
+            await self.openai_client.chat.completions.create(
+                model=self.model, 
+                messages=current_messages_json, 
+                **kwargs
+            )
         )
 
         if response.usage:
@@ -119,28 +124,30 @@ class LLMPipeline:
             logger.info(f"LLM response: {response}")
 
         message = response.choices[0].message
-        llm_content = getattr(message, "content", None)
-        llm_reasoning = getattr(message, "reasoning", None)
+        llm_content = getattr(message,"content", None)  # This can be None
+        llm_reasoning = getattr(message,"reasoning", None) # This can be None
         llm_tool_calls = message.tool_calls or []
 
         return llm_content, llm_reasoning, llm_tool_calls
 
-    async def create_completion(self) -> Tuple[Optional[str], Optional[str]]:
+    async def create_completion(self) -> Optional[str]:
         custom_kwargs = await self.get_custom_parameters()
         await self.setup_tools()
 
         current_llm_text_response: Optional[str] = None
         current_llm_text_reasoning: Optional[str] = None
 
-        for i in range(MAX_TOOL_ITERATIONS):
+
+        has_processed_tool_calls = False
+        for i in range(MAX_TOOL_CALL_ITERATIONS):
             iteration_kwargs = custom_kwargs.copy()
             if self.available_tools_schemas:
                 iteration_kwargs["tools"] = [
                     asdict(schema) for schema in self.available_tools_schemas
                 ]
-                if i == MAX_TOOL_ITERATIONS - 1:
+                # Prevent back to back function calls from LLM
+                if has_processed_tool_calls:
                     iteration_kwargs["tool_choice"] = "none"
-                    logger.info("Max tool iterations reached. Forcing text response from LLM.")
                 else:
                     iteration_kwargs["tool_choice"] = "auto"
             else:
@@ -150,34 +157,35 @@ class LLMPipeline:
             response_text, reasoning_text, response_tool_calls = await self.call_client(
                 iteration_kwargs
             )
-            if response_text is not None:
-                current_llm_text_response = response_text
-            if reasoning_text is not None:
-                current_llm_text_reasoning = reasoning_text
+            current_llm_text_response = response_text
+            current_llm_text_reasoning = reasoning_text
+
+            await self.msg_list.add_assistant(
+                content=current_llm_text_response, tool_calls=response_tool_calls
+            )
 
             if response_tool_calls:
                 logger.info(
                     f"LLM returned {len(response_tool_calls)} tool call(s) in iteration {i + 1}."
                 )
-                await self.msg_list.add_assistant(
-                    content=response_text, tool_calls=response_tool_calls
-                )
 
-                await self._process_tool_calls_parallel(response_tool_calls)
+                await self._process_and_add_tool_results(response_tool_calls)
+                # Continue loop to get LLM response based on tool results
+                
+                has_processed_tool_calls = True
             else:
-                logger.info(f"LLM returned final response in iteration {i + 1}. No more tool calls.")
-                break
+                logger.info(f"LLM returned final response in iteration {i + 1}.")
+                break  # No tool calls, this is the final response
         else:
             logger.warning(
-                f"Reached max tool iterations ({MAX_TOOL_ITERATIONS}) for guild {self.ctx.guild.name}. "
+                f"Reached max tool iterations ({MAX_TOOL_CALL_ITERATIONS}) for guild {self.ctx.guild.name}. "
                 f"Returning the last text content received from LLM, if any."
             )
 
-        self.completion = current_llm_text_response
         self.reasoning = current_llm_text_reasoning
-
+        self.completion = current_llm_text_response
         if self.completion:
-            log_preview = f'{self.completion[:250]}{"..." if len(self.completion) > 250 else ""}'
+            log_preview = f'{self.completion[:200]}{"..." if len(self.completion) > 200 else ""}'
             logger.info(
                 f'Final LLM response for guild {self.ctx.guild.name} (model {self.model}): "{log_preview}"'
             )
@@ -187,36 +195,31 @@ class LLMPipeline:
             )
         return self.completion, self.reasoning
 
-    async def _process_tool_calls_parallel(
+    async def _process_and_add_tool_results(
         self, tool_calls: List[ChatCompletionMessageToolCall]
     ):
-        semaphore = asyncio.Semaphore(MAX_CONCURRENT_TOOL_CALLS)
+        for tool_call in tool_calls:
+            tool_function_name = tool_call.function.name
+            tool_call_id = tool_call.id
+            logger.info(
+                f"Processing tool call ID {tool_call_id} for function '{tool_function_name}'."
+            )
 
-        async def run_tool_with_semaphore(tool_call: ChatCompletionMessageToolCall) -> Tuple[str, str]:
-            async with semaphore:
-                tool_function_name = tool_call.function.name
-                tool_call_id = tool_call.id
-                logger.info(
-                    f"Processing tool call ID {tool_call_id} for function '{tool_function_name}'."
+            try:
+                arguments = json.loads(tool_call.function.arguments)
+            except json.JSONDecodeError as e:
+                logger.error(
+                    f"Failed to parse JSON arguments for tool {tool_function_name} (ID: {tool_call_id}): {tool_call.function.arguments}. Error: {e}"
                 )
-                try:
-                    arguments = json.loads(tool_call.function.arguments)
-                except json.JSONDecodeError as e:
-                    logger.error(
-                        f"Failed to parse JSON arguments for tool {tool_function_name} (ID: {tool_call_id}): {tool_call.function.arguments}. Error: {e}"
-                    )
-                    result_content = f"Error: Invalid JSON arguments provided for tool '{tool_function_name}'."
-                    return tool_call_id, result_content
+                tool_result_content = f"Error: Invalid JSON arguments provided for tool '{tool_function_name}'."
+                await self.msg_list.add_tool_result(
+                    tool_call_id=tool_call_id, content=tool_result_content
+                )
+                continue
 
-                result_content = await self.run_tool(tool_function_name, arguments)
-                return tool_call_id, result_content
-
-        tasks = [run_tool_with_semaphore(tc) for tc in tool_calls]
-        tool_results = await asyncio.gather(*tasks)
-
-        for tool_call_id, result_content in tool_results:
+            tool_result_content = await self.run_tool(tool_function_name, arguments)
             await self.msg_list.add_tool_result(
-                tool_call_id=tool_call_id, content=result_content
+                tool_call_id=tool_call_id, content=tool_result_content
             )
 
     async def run_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
@@ -225,12 +228,10 @@ class LLMPipeline:
                 logger.info(
                     f'Executing tool: "{tool_name}" in guild {self.ctx.guild.name} with args: {arguments}'
                 )
-                # FIX: Restore the mechanism to pass context to the tool functions
                 arguments_for_tool = arguments.copy()
-                arguments_for_tool["request"] = self
+                arguments_for_tool["request"] = self # Pass context if tool needs it
 
                 try:
-                    # FIX: Pass the correct dictionary with the added context
                     tool_output = await tool_obj.run(
                         arguments_for_tool, self.available_tools_schemas
                     )
@@ -251,7 +252,7 @@ class LLMPipeline:
         )
         return f"Error: Tool '{tool_name}' is not available or not recognized."
 
-    async def run(self) -> Tuple[Optional[str], Optional[str]]:
+    async def run(self) -> Tuple[str|None, str|None]:
         try:
             return await self.create_completion()
         except httpx.ReadTimeout:
@@ -263,7 +264,7 @@ class LLMPipeline:
         except openai.APIConnectionError as e:
             logger.error(f"LLM API connection error for {self.model} in guild {self.ctx.guild.name}: {e}")
             await self.ctx.react_quietly("⚠️", message="`aiuser` could not connect to LLM API")
-        except openai.APIStatusError as e:
+        except openai.APIStatusError as e: # Catches 4xx and 5xx errors from OpenAI
             logger.error(f"LLM API error for {self.model} in guild {self.ctx.guild.name} (Status {e.status_code}): {e.response.text if e.response else 'No response body'}")
             await self.ctx.react_quietly("⚠️", message=f"`aiuser` LLM API error (Status {e.status_code})")
         except Exception:
