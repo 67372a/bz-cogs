@@ -161,7 +161,7 @@ class FunctionCallingSettings(MixinMeta):
     @functions.command(name="emojireaction")
     async def toggle_discord_emoji_reaction_function(self, ctx: commands.Context):
         """ Enable/disable the functionality for the LLM to react to messages with an emoji."""
-        from aiuser.functions.discord.tool_calls import ReactToMessageToolCall
+        from aiuser.functions.discord.tool_call import ReactToMessageToolCall
 
         tool_names = [ReactToMessageToolCall.function_name]
 
@@ -170,7 +170,7 @@ class FunctionCallingSettings(MixinMeta):
     @functions.command(name="ttsmessage")
     async def toggle_discord_tts_message_function(self, ctx: commands.Context):
         """ Enable/disable the functionality for the LLM to send tts messages."""
-        from aiuser.functions.discord.tool_calls import SendTtsMessageToolCall
+        from aiuser.functions.discord.tool_call import SendTtsMessageToolCall
 
         tool_names = [SendTtsMessageToolCall.function_name]
 
@@ -179,7 +179,7 @@ class FunctionCallingSettings(MixinMeta):
     @functions.command(name="pinmessage")
     async def toggle_discord_pin_message_function(self, ctx: commands.Context):
         """ Enable/disable the functionality for the LLM to pin messages."""
-        from aiuser.functions.discord.tool_calls import PinMessageToolCall
+        from aiuser.functions.discord.tool_call import PinMessageToolCall
 
         tool_names = [PinMessageToolCall.function_name]
 
