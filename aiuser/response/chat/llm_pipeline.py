@@ -41,6 +41,7 @@ class LLMPipeline:
         self.bot = cog.bot
         self.msg_list: MessagesList = messages
         self.model: str = messages.model
+        self.can_reply: bool = messages.can_reply
         self.openai_client = cog.openai_client
         self.enabled_tools: List[ToolCall] = []
         self.available_tools_schemas: List[ToolCallSchema] = []
