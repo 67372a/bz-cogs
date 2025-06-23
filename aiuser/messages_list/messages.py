@@ -268,7 +268,8 @@ class MessagesList:
         return [
             {
                 "role": message.role,
-                "content": message.content,
+                "content": message.content if not message.tool_calls else None,
+                **({"name": message.name} if hasattr(message, 'name') and message.name else {})
                 **({"tool_calls": message.tool_calls} if message.tool_calls else {}),
                 **({"tool_call_id": message.tool_call_id} if hasattr(message, 'tool_call_id') and message.tool_call_id else {})
             }
