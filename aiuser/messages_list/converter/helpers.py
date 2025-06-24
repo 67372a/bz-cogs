@@ -11,13 +11,13 @@ logger = logging.getLogger("red.bz_cogs.aiuser")
 
 def format_text_content(message: Message):
     if message.type == MessageType.new_member:
-        return f'[MESSAGE_ID={message.id} TIMESTAMP={message.created_at.isoformat()} USER_ID={message.author.id} USERNAME="{message.author.name}" NICKNAME="{message.author.name}"] joined the server as a new member.'
+        return f'[MESSAGE_ID={message.id} TIMESTAMP={message.created_at.isoformat()} USER_ID={message.author.id} USERNAME="{message.author.name}" NICKNAME="{message.author.display_name}"] joined the server as a new member.'
     if not message.content or message.content == "" or message.content.isspace():
         return None
     content = mention_to_text(message)
     if message.author.id == message.guild.me.id:
         return f'{content}'
-    return f'[MESSAGE_ID={message.id} TIMESTAMP={message.created_at.isoformat()} USER_ID={message.author.id} USERNAME="{message.author.name}" NICKNAME="{message.author.name}"] said "{content}"'
+    return f'[MESSAGE_ID={message.id} TIMESTAMP={message.created_at.isoformat()} USER_ID={message.author.id} USERNAME="{message.author.name}" NICKNAME="{message.author.display_name}"] said "{content}"'
 
 
 def format_embed_text_content(message: Message):
@@ -27,7 +27,7 @@ def format_embed_text_content(message: Message):
         return None
     if message.author.id == message.guild.me.id:
         return f'{content}'
-    return f'[MESSAGE_ID={message.id} TIMESTAMP={message.created_at.isoformat()} USER_ID={message.author.id} USERNAME="{message.author.name}" NICKNAME="{message.author.name}"] said "{content}"'
+    return f'[MESSAGE_ID={message.id} TIMESTAMP={message.created_at.isoformat()} USER_ID={message.author.id} USERNAME="{message.author.name}" NICKNAME="{message.author.display_name}"] said "{content}"'
 
 
 def format_generic_image(message: Message):
@@ -36,7 +36,7 @@ def format_generic_image(message: Message):
 
     if message.author.id == message.guild.me.id:
         return f'An image with the filename "{message.attachments[0].filename}{title}{description}."'
-    return f'[MESSAGE_ID={message.id} TIMESTAMP={message.created_at.isoformat()} USER_ID={message.author.id} USERNAME="{message.author.name}" NICKNAME="{message.author.name}"] sent an image with the filename "{message.attachments[0].filename}"{title}{description}."'
+    return f'[MESSAGE_ID={message.id} TIMESTAMP={message.created_at.isoformat()} USER_ID={message.author.id} USERNAME="{message.author.name}" NICKNAME="{message.author.display_name}"] sent an image with the filename "{message.attachments[0].filename}"{title}{description}."'
 
 def format_generic_document(message: Message):
     title = f', title "{message.attachments[0].title}"' if message.attachments[0].title else ""
@@ -44,7 +44,7 @@ def format_generic_document(message: Message):
 
     if message.author.id == message.guild.me.id:
         return f'A document with the filename "{message.attachments[0].filename}{title}{description}."'
-    return f'[MESSAGE_ID={message.id} TIMESTAMP={message.created_at.isoformat()} USER_ID={message.author.id} USERNAME="{message.author.name}" NICKNAME="{message.author.name}"] sent a document with the filename "{message.attachments[0].filename}"{title}{description}."'
+    return f'[MESSAGE_ID={message.id} TIMESTAMP={message.created_at.isoformat()} USER_ID={message.author.id} USERNAME="{message.author.name}" NICKNAME="{message.author.display_name}"] sent a document with the filename "{message.attachments[0].filename}"{title}{description}."'
 
 async def format_binary_document(message: Message):
     attachment = message.attachments[0]
@@ -94,7 +94,7 @@ async def format_text_document(message: Message):
 
     title = f', title "{message.attachments[0].title}"' if message.attachments[0].title else ""
     description = f', description "{message.attachments[0].description}"' if message.attachments[0].description else ""
-    document_content = f'[MESSAGE_ID={message.id} TIMESTAMP={message.created_at.isoformat()} USER_ID={message.author.id} USERNAME="{message.author.name}" NICKNAME="{message.author.name}"] sent a document with the filename "{message.attachments[0].filename}{title}{description}."\n<DOCUMENT_START>{text_data}<DOCUMENT_END>'
+    document_content = f'[MESSAGE_ID={message.id} TIMESTAMP={message.created_at.isoformat()} USER_ID={message.author.id} USERNAME="{message.author.name}" NICKNAME="{message.author.display_name}"] sent a document with the filename "{message.attachments[0].filename}{title}{description}."\n<DOCUMENT_START>{text_data}<DOCUMENT_END>'
 
     content.append(
         {
@@ -108,10 +108,10 @@ async def format_sticker_content(message: Message):
         sticker = await message.stickers[0].fetch()
         description = getattr(sticker,"description","")
         description_text = f' and description "{description}"' if description else ""
-        return f'[MESSAGE_ID={message.id} TIMESTAMP={message.created_at.isoformat()} USER_ID={message.author.id} USERNAME="{message.author.name}" NICKNAME="{message.author.name}"] sent a sticker with name "{sticker.name}"{description_text}.'
+        return f'[MESSAGE_ID={message.id} TIMESTAMP={message.created_at.isoformat()} USER_ID={message.author.id} USERNAME="{message.author.name}" NICKNAME="{message.author.display_name}"] sent a sticker with name "{sticker.name}"{description_text}.'
     except Exception:
         sticker_name = message.stickers[0].name
-        return f'[MESSAGE_ID={message.id} TIMESTAMP={message.created_at.isoformat()} USER_ID={message.author.id} USERNAME="{message.author.name}" NICKNAME="{message.author.name}"] sent a sticker with name "{sticker_name}"'
+        return f'[MESSAGE_ID={message.id} TIMESTAMP={message.created_at.isoformat()} USER_ID={message.author.id} USERNAME="{message.author.name}" NICKNAME="{message.author.display_name}"] sent a sticker with name "{sticker_name}"'
 
 
 def mention_to_text(message: Message) -> str:
