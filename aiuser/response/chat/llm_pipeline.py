@@ -171,10 +171,6 @@ class LLMPipeline:
                 **kwargs
         )
 
-        logger.info(
-            f"Finish reason: {response.choices[0].finish_reason}. Native finish reason: {getattr(response.choices[0], "native_finish_reason", None) | response.choices[0].finish_reason}"
-        )
-
         if response.usage:
             logger.info(
                 f"LLM usage: P{response.usage.prompt_tokens} C{response.usage.completion_tokens} T{response.usage.total_tokens}."
@@ -207,9 +203,14 @@ class LLMPipeline:
         It retries on both exceptions and unsatisfactory content.
         """
         try:
-            return await self.openai_client.chat.completions.create(**kwargs)
+            result = await self.openai_client.chat.completions.create(**kwargs)
+
+            native_finish_reason = getattr(result.choices[0], "native_finish_reason", None) or result.choices[0].finish_reason
+            logger.info(f"Finish reason: {result.choices[0].finish_reason}. Native finish reason: {native_finish_reason}")
+            return result
         except Exception as e:
             logging.error(f"Error occured while calling LLM API: {e}")
+            raise  
 
     async def create_completion(self) -> Optional[str]:
         custom_kwargs = await self.get_custom_parameters()
