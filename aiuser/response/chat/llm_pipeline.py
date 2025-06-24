@@ -166,7 +166,7 @@ class LLMPipeline:
             f"Sending request to LLM (model: {self.model}) with {len(current_messages_json)} messages. Kwarg keys: {list(kwargs.keys())}"
         )
 
-        response: ChatCompletion = self._create_completion_with_retry(
+        response: ChatCompletion = await self._create_completion_with_retry(
                 model=self.model, 
                 messages=current_messages_json, 
                 **kwargs
