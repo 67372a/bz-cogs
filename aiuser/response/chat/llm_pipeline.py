@@ -13,7 +13,8 @@ from tenacity import (
     retry,
     stop_after_attempt,
     wait_random_exponential,
-    retry_if_exception_type
+    retry_if_exception_type, 
+    retry_if_result
 )
 
 from aiuser.config.models import (
@@ -186,16 +187,11 @@ class LLMPipeline:
     @retry(
         wait=wait_random_exponential(min=1, max=5), # Wait 1-5 seconds between retries
         stop=stop_after_attempt(4), # Stop after 4 attempts
-        
-        # Condition 1: Retry on specific transient API exceptions
         retry=retry_if_exception_type((
             openai.RateLimitError,
             openai.APIConnectionError,
             openai.InternalServerError
-        )),
-        
-        # Condition 2: Retry if the result is unsatisfactory (our custom logic)
-        retry_if_result=is_response_unsatisfactory
+        )) or retry_if_result(is_response_unsatisfactory),
     )
     async def _create_completion_with_retry(self, **kwargs) -> ChatCompletion:
         """
