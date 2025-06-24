@@ -73,7 +73,8 @@ async def setup_openai_client(
         base_url=base_url,
         timeout=timeout,
         default_headers=headers,
-        http_client=client
+        http_client=client,
+        max_retries=0 # Tenacity is used for retries
     )
 
 

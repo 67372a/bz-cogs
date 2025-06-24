@@ -9,6 +9,13 @@ import openai
 from openai.types.chat import ChatCompletion, ChatCompletionMessageToolCall
 from redbot.core import Config, commands
 
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_random_exponential,
+    retry_if_exception_type
+)
+
 from aiuser.config.models import (
     UNSUPPORTED_LOGIT_BIAS_MODELS,
     VISION_SUPPORTED_MODELS,
@@ -18,6 +25,45 @@ from aiuser.functions.types import ToolCallSchema
 from aiuser.messages_list.messages import MessagesList
 from aiuser.types.abc import MixinMeta
 from aiuser.utils.utilities import get_enabled_tools
+
+# --- Predicate function for tenacity ---
+def is_response_unsatisfactory(response: ChatCompletion) -> bool:
+    """
+    Check if the OpenAI response is unsatisfactory and should be retried.
+
+    An unsatisfactory response is one that:
+    1. Is not None and has choices.
+    2. Has a finish_reason of 'stop', 'length', or 'content_filter'.
+    3. The message content is None or empty.
+
+    Args:
+        response: The ChatCompletion object from the OpenAI API call.
+
+    Returns:
+        True if the response is unsatisfactory, False otherwise.
+    """
+    # If there's no response or no choices, it's definitely unsatisfactory.
+    if response is None or not response.choices:
+        logging.warning("Retry triggered: Response object is None or has no choices.")
+        return True
+
+    choice = response.choices[0]
+    finish_reason = choice.finish_reason
+    content = choice.message.content
+
+    # These are the reasons we might get an empty but otherwise valid response.
+    # We want to retry in these cases if the content is empty.
+    retryable_reasons = {'stop', 'length', 'content_filter'}
+    
+    if finish_reason in retryable_reasons:
+        # If content is None or just whitespace, it's unsatisfactory.
+        if not content or not content.strip():
+            logging.warning(f"Retry triggered: Empty content with finish_reason '{finish_reason}'.")
+            return True
+
+    # If the finish_reason is something else (e.g., 'tool_calls') or if content is present,
+    # the response is considered satisfactory.
+    return False
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
@@ -98,35 +144,72 @@ class LLMPipeline:
 
         user_digest = m.hexdigest()
 
+
+        kwargs['extra_body'].update(
+            {"safetySettings": 
+             [
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "BLOCK_NONE"},
+            ]})
+
         kwargs['extra_body'].update({"user": user_digest})
 
         kwargs['user'] = user_digest
+
+        kwargs['transforms'] = []
 
         logger.info(
             f"Sending request to LLM (model: {self.model}) with {len(current_messages_json)} messages. Kwarg keys: {list(kwargs.keys())}"
         )
 
-        response: ChatCompletion = (
-            await self.openai_client.chat.completions.create(
+        response: ChatCompletion = self._create_completion_with_retry(
                 model=self.model, 
                 messages=current_messages_json, 
                 **kwargs
-            )
+        )
+
+        logger.info(
+            f"Finish reason: {response.choices[0].finish_reason}. Native finish reason: {getattr(response.choices[0], "native_finish_reason", None) | response.choices[0].finish_reason}"
         )
 
         if response.usage:
             logger.info(
-                f"LLM usage: P{response.usage.prompt_tokens} C{response.usage.completion_tokens} T{response.usage.total_tokens}. Finish: {response.choices[0].finish_reason}"
+                f"LLM usage: P{response.usage.prompt_tokens} C{response.usage.completion_tokens} T{response.usage.total_tokens}."
             )
-        else:
-            logger.info(f"LLM response: {response}")
 
         message = response.choices[0].message
-        llm_content = getattr(message,"content", None)  # This can be None
-        llm_reasoning = getattr(message,"reasoning", None) # This can be None
+        llm_content = getattr(message, "content", None)  # This can be None
+        llm_reasoning = getattr(message, "reasoning", None) # This can be None
         llm_tool_calls = message.tool_calls or []
 
         return llm_content, llm_reasoning, llm_tool_calls
+
+    @retry(
+        wait=wait_random_exponential(min=1, max=5), # Wait 1-5 seconds between retries
+        stop=stop_after_attempt(4), # Stop after 4 attempts
+        
+        # Condition 1: Retry on specific transient API exceptions
+        retry=retry_if_exception_type((
+            openai.RateLimitError,
+            openai.APIConnectionError,
+            openai.InternalServerError
+        )),
+        
+        # Condition 2: Retry if the result is unsatisfactory (our custom logic)
+        retry_if_result=is_response_unsatisfactory
+    )
+    async def _create_completion_with_retry(self, **kwargs) -> ChatCompletion:
+        """
+        A wrapper around the OpenAI API call decorated for retries.
+        It retries on both exceptions and unsatisfactory content.
+        """
+        try:
+            return await self.openai_client.chat.completions.create(**kwargs)
+        except Exception as e:
+            logging.error(f"Error occured while calling LLM API: {e}")
 
     async def create_completion(self) -> Optional[str]:
         custom_kwargs = await self.get_custom_parameters()
@@ -145,8 +228,6 @@ class LLMPipeline:
             kwargs1["tools"] = [
                 asdict(schema) for schema in self.available_tools_schemas
             ]
-            if 'extra_body' in kwargs1:
-                kwargs1['extra_body'].update({"tool_choice": "auto"})
             kwargs1["tool_choice"] = "auto"
             
 
@@ -169,8 +250,6 @@ class LLMPipeline:
             kwargs2["tools"] = [
                 asdict(schema) for schema in self.available_tools_schemas
             ]
-            if 'extra_body' in kwargs1:
-                kwargs2['extra_body'].update({"tool_choice": "none"})
             kwargs2["tool_choice"] = "none"
 
             response_text, reasoning_text, _ = await self.call_client(
