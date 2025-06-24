@@ -160,8 +160,6 @@ class LLMPipeline:
 
         kwargs['user'] = user_digest
 
-        kwargs['transforms'] = []
-
         logger.info(
             f"Sending request to LLM (model: {self.model}) with {len(current_messages_json)} messages. Kwarg keys: {list(kwargs.keys())}"
         )
