@@ -213,10 +213,6 @@ class LLMPipeline:
         current_llm_text_response: Optional[str] = None
         current_llm_text_reasoning: Optional[str] = None
 
-        current_messages_json = self.msg_list.get_json()
-
-        logger.info(f"start current_messages_json={current_messages_json}")
-
         kwargs1 = custom_kwargs.copy()
 
         if self.available_tools_schemas:
@@ -271,8 +267,6 @@ class LLMPipeline:
                 f"Final LLM response for guild {self.ctx.guild.name} (model {self.model}) is empty/None."
             )
 
-        end_messages_json = self.msg_list.get_json()
-        logger.info(f"end current_messages_json={end_messages_json}")
         return self.completion, self.reasoning
 
     async def _process_and_add_tool_results(
