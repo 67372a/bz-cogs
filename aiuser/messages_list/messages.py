@@ -2,7 +2,7 @@ import json
 import logging
 import random
 from datetime import datetime, timedelta
-from typing import List
+from typing import List, Optional
 import re
 
 import discord
@@ -56,6 +56,7 @@ class MessagesList:
         self.tokens = 0
         self.model = None
         self.can_reply = True
+        self.prefill: Optional[str] = None
 
     def __len__(self):
         return len(self.messages)
@@ -71,10 +72,15 @@ class MessagesList:
         except KeyError:
             self._encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
 
-        if not prompt:  # jank
+        if not prompt:
             await self.add_msg(self.init_message)
 
         bot_prompt = prompt or await self._pick_prompt()
+        self.prefill = await self._pick_prefill()
+
+        # Account for prefill tokens without adding to history
+        if self.prefill:
+            await self._add_tokens(self.prefill)
 
         await self.add_system(await format_variables(self.ctx, bot_prompt))
 
@@ -101,10 +107,13 @@ class MessagesList:
         author = self.init_message.author
         role_prompt = None
 
-        for role in author.roles:
+        # Roles are ordered from lowest to highest, check highest first
+        for role in reversed(author.roles):
             if role.id in (await self.config.all_roles()):
-                role_prompt = await self.config.role(role).custom_text_prompt()
-                break
+                prompt = await self.config.role(role).custom_text_prompt()
+                if prompt:
+                    role_prompt = prompt
+                    break
 
         return (await self.config.member(self.init_message.author).custom_text_prompt()
                 or role_prompt
@@ -112,6 +121,30 @@ class MessagesList:
                 or await self.config.guild(self.guild).custom_text_prompt()
                 or await self.config.custom_text_prompt()
                 or DEFAULT_PROMPT)
+
+    async def _pick_prefill(self) -> Optional[str]:
+        """ Pick the most specific prefill, member -> role -> channel -> guild """
+        author = self.init_message.author
+
+        prefill = await self.config.member(author).prefill_prompt()
+        if prefill:
+            return prefill
+
+        # Roles are ordered from lowest to highest, check highest first
+        for role in reversed(author.roles):
+            role_prefill = await self.config.role(role).prefill_prompt()
+            if role_prefill:
+                return role_prefill
+
+        channel_prefill = await self.config.channel(self.init_message.channel).prefill_prompt()
+        if channel_prefill:
+            return channel_prefill
+
+        guild_prefill = await self.config.guild(self.guild).prefill_prompt()
+        if guild_prefill:
+            return guild_prefill
+
+        return None
 
     async def check_if_add(self, message: Message, force: bool = False):
         if self.tokens > self.token_limit:
@@ -265,7 +298,7 @@ class MessagesList:
         await self.init_message.channel.send(embed=embed, view=view)
 
     def get_json(self):
-        return [
+        messages_as_dict = [
             {
                 "role": message.role,
                 "content": message.content if not message.tool_calls else None,
@@ -275,6 +308,15 @@ class MessagesList:
             }
             for message in self.messages
         ]
+
+        if self.prefill:
+            prefill_message = {
+                "role": "assistant",
+                "content": self.prefill
+            }
+            messages_as_dict.append(prefill_message)
+
+        return messages_as_dict
 
     async def _add_tokens(self, content):
         if not self._encoding:

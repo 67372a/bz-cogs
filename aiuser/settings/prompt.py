@@ -281,3 +281,129 @@ class PromptSettings(MixinMeta):
             color=await ctx.embed_color())
         embed.add_field(name="Tokens", value=await get_tokens(self.config, ctx, prompt))
         return await ctx.send(embed=embed)
+
+    @prompt.group(name="prefill")
+    async def prompt_prefill(self, _):
+        """ Configure a one-off instruction to be added to a request.
+
+            This is not saved to context and is appended to the user's message.
+            Useful for temporary instructions like "respond in spanish".
+        """
+        pass
+
+    @prompt_prefill.command(name="set")
+    async def prefill_set(self, ctx: commands.Context, mention: Optional[COMPATIBLE_MENTIONS], *, prompt: Optional[str]):
+        """ Set a prefill prompt for the server (or provided channel/role/member).
+
+            If a prefill can be used, the most specific one will be used: member > role > channel > server.
+            To remove a prefill, leave the prompt argument blank.
+
+            **Arguments**
+                - `mention` *(Optional)* A specific user, role, or channel.
+                - `prompt` *(Optional)* The prefill to set. If blank, removes the current prefill.
+                - `<ATTACHMENT>` *(Optional)* A `.txt` file to use as the prefill.
+        """
+        if not prompt and ctx.message.attachments:
+            if not ctx.message.attachments[0].filename.endswith(".txt"):
+                return await ctx.send(":warning: Invalid attachment. Must be a `.txt` file.")
+            try:
+                prompt = (await ctx.message.attachments[0].read()).decode("utf-8")
+            except Exception:
+                return await ctx.send(":warning: Could not read the attached file.")
+
+        if prompt and len(prompt) > 300 and not await ctx.bot.is_owner(ctx.author):
+            return await ctx.send(f":warning: Prefill too long. Max length is 300 characters.")
+
+        mention_type = get_mention_type(mention)
+        config_attr = get_config_attribute(self.config, mention_type, ctx, mention)
+
+        if not config_attr:
+            return await ctx.send(":warning: Invalid mention type provided.")
+
+        await config_attr.prefill_prompt.set(prompt)
+
+        if not prompt:
+            return await ctx.send(f"The prefill for this {mention_type.name.lower()} has been removed.")
+
+        embed = discord.Embed(
+            title=f"The {mention_type.name.lower()} will now have the following prefill added to requests:",
+            description=f"{truncate_prompt(prompt)}",
+            color=await ctx.embed_color())
+        await ctx.send(embed=embed)
+
+    @prompt_prefill.command(name="show")
+    async def prefill_show(self, ctx: commands.Context, mention: Optional[COMPATIBLE_MENTIONS]):
+        """ Show the prefill for the server (or provided user/channel/role).
+
+            Will show the most specific prefill that applies.
+
+            **Arguments**
+                - `mention` *(Optional)* A specific user, role, or channel to check.
+        """
+        prefill = None
+        title_subject = "this server"
+        target_obj = mention or ctx.author
+
+        if isinstance(target_obj, discord.Member):
+            prefill = await self.config.member(target_obj).prefill_prompt()
+            title_subject = f"the user `{target_obj.display_name}`"
+            if not prefill:
+                for role in reversed(target_obj.roles):
+                    role_prefill = await self.config.role(role).prefill_prompt()
+                    if role_prefill:
+                        prefill = role_prefill
+                        title_subject = f"the role `{role.name}`"
+                        break
+        elif isinstance(target_obj, (discord.TextChannel, discord.Thread, discord.ForumChannel)):
+             prefill = await self.config.channel(target_obj).prefill_prompt()
+             title_subject = f"the channel {target_obj.mention}"
+        elif isinstance(target_obj, discord.Role):
+             prefill = await self.config.role(target_obj).prefill_prompt()
+             title_subject = f"the role `{target_obj.name}`"
+
+        if not prefill and not mention: # if no specific mention, fallback to channel/guild
+            prefill = await self.config.channel(ctx.channel).prefill_prompt()
+            title_subject = f"this channel"
+            if not prefill:
+                prefill = await self.config.guild(ctx.guild).prefill_prompt()
+                title_subject = "this server"
+
+        if not prefill:
+            embed = discord.Embed(
+                description=f"No prefill is set for {title_subject}.",
+                color=await ctx.embed_color())
+        else:
+            embed = discord.Embed(
+                title=f"The active prefill for {title_subject} is:",
+                description=truncate_prompt(prefill),
+                color=await ctx.embed_color())
+
+        await ctx.send(embed=embed)
+
+
+    @prompt_prefill.command(name="reset")
+    async def prefill_reset(self, ctx: commands.Context):
+        """ Reset ALL prefills in this guild (inc. channels, roles and members) """
+        embed = discord.Embed(
+            title="Are you sure?",
+            description="This will reset *ALL* prefill prompts in this guild (including per channel, per role and per member).",
+            color=await ctx.embed_color())
+        confirm = await ctx.send(embed=embed)
+        start_adding_reactions(confirm, ReactionPredicate.YES_OR_NO_EMOJIS)
+        pred = ReactionPredicate.yes_or_no(confirm, ctx.author)
+        try:
+            await ctx.bot.wait_for("reaction_add", timeout=10.0, check=pred)
+        except asyncio.TimeoutError:
+            return await confirm.edit(embed=discord.Embed(title="Cancelled.", color=await ctx.embed_color()))
+
+        if pred.result is False:
+            return await confirm.edit(embed=discord.Embed(title="Cancelled.", color=await ctx.embed_color()))
+        else:
+            await self.config.guild(ctx.guild).prefill_prompt.set(None)
+            for member in ctx.guild.members:
+                await self.config.member(member).prefill_prompt.set(None)
+            for channel in ctx.guild.channels:
+                await self.config.channel(channel).prefill_prompt.set(None)
+            for role in ctx.guild.roles:
+                await self.config.role(role).prefill_prompt.set(None)
+            return await confirm.edit(embed=discord.Embed(title="All prefills have been reset.", color=await ctx.embed_color()))
