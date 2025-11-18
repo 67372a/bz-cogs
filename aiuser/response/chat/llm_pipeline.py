@@ -174,6 +174,13 @@ class LLMPipeline:
             logger.info(
                 f"LLM usage: P{response.usage.prompt_tokens} C{response.usage.completion_tokens} T{response.usage.total_tokens}."
             )
+            logger.info(
+                f"Raw LLM usage: {response.usage}."
+            )
+
+        logger.info(
+            f"Raw LLM response: {message}."
+        )
 
         message = response.choices[0].message
         llm_content = getattr(message, "content", None)  # This can be None
