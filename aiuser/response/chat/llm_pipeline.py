@@ -179,7 +179,7 @@ class LLMPipeline:
             )
 
         logger.info(
-            f"Raw LLM response: {message}."
+            f"Raw LLM response: {response}."
         )
 
         message = response.choices[0].message
