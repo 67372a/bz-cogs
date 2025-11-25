@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from dataclasses import asdict
@@ -121,7 +122,7 @@ class LLMPipeline:
 
     async def call_client(
         self, kwargs: Dict[str, Any]
-    ) -> Tuple[Optional[str], Optional[str], List[ChatCompletionMessageToolCall]]:
+    ) -> Tuple[Optional[str], Optional[str], List[ChatCompletionMessageToolCall], Optional[Dict]]:
         current_messages_json = self.msg_list.get_json()
 
         plugins = [
@@ -187,7 +188,11 @@ class LLMPipeline:
         llm_reasoning = getattr(message, "reasoning", None) # This can be None
         llm_tool_calls = message.tool_calls or []
 
-        return llm_content, llm_reasoning, llm_tool_calls
+        llm_extra_content = getattr(message, "extra_content", None)
+        if llm_extra_content is None and getattr(message, "model_extra", None):
+             llm_extra_content = message.model_extra.get("extra_content")
+
+        return llm_content, llm_reasoning, llm_tool_calls, llm_extra_content
 
     @retry(
         wait=wait_random_exponential(min=1, max=5), # Wait 1-5 seconds between retries
@@ -227,17 +232,22 @@ class LLMPipeline:
                 asdict(schema) for schema in self.available_tools_schemas
             ]
             kwargs1["tool_choice"] = "auto"
-            
 
-        response_text, reasoning_text, response_tool_calls = await self.call_client(
-            kwargs1
+            if "gemini-3" in self.model.lower():
+                kwargs1["parallel_tool_calls"] = True
+
+        response_text, reasoning_text, response_tool_calls, response_extra_content = await self.call_client(
+             kwargs1
         )
 
         current_llm_text_response = response_text
         current_llm_text_reasoning = reasoning_text
 
         await self.msg_list.add_assistant(
-            content=current_llm_text_response, tool_calls=response_tool_calls, index=len(self.msg_list) + 1
+            content=current_llm_text_response, 
+            tool_calls=response_tool_calls, 
+            extra_content=response_extra_content,
+            index=len(self.msg_list) + 1
         )
 
         if response_tool_calls:
@@ -250,15 +260,17 @@ class LLMPipeline:
             ]
             kwargs2["tool_choice"] = "none"
 
-            response_text, reasoning_text, _ = await self.call_client(
+            response_text, reasoning_text, _, response_extra_content_final = await self.call_client(
                 kwargs2
             )
-
+ 
             current_llm_text_response = response_text
             current_llm_text_reasoning = reasoning_text
 
             await self.msg_list.add_assistant(
-                content=current_llm_text_response, index=len(self.msg_list) + 1
+                content=current_llm_text_response, 
+                extra_content=response_extra_content_final,
+                index=len(self.msg_list) + 1
             )
 
         self.reasoning = current_llm_text_reasoning
@@ -279,26 +291,27 @@ class LLMPipeline:
     async def _process_and_add_tool_results(
         self, tool_calls: List[ChatCompletionMessageToolCall]
     ):
-        for tool_call in tool_calls:
+        async def process_single_tool(tool_call):
             tool_function_name = tool_call.function.name
             tool_call_id = tool_call.id
             logger.info(
                 f"Processing tool call ID {tool_call_id} for function '{tool_function_name}'."
             )
-
             try:
                 arguments = json.loads(tool_call.function.arguments)
             except json.JSONDecodeError as e:
                 logger.error(
                     f"Failed to parse JSON arguments for tool {tool_function_name} (ID: {tool_call_id}): {tool_call.function.arguments}. Error: {e}"
                 )
-                tool_result_content = f"Error: Invalid JSON arguments provided for tool '{tool_function_name}'."
-                await self.msg_list.add_tool_result(
-                    name=tool_function_name, tool_call_id=tool_call_id, content=tool_result_content, index=len(self.msg_list) + 1
-                )
-                continue
+                return tool_call_id, tool_function_name, f"Error: Invalid JSON arguments provided for tool '{tool_function_name}'."
 
-            tool_result_content = await self.run_tool(tool_function_name, arguments)
+            result = await self.run_tool(tool_function_name, arguments)
+            return tool_call_id, tool_function_name, result
+
+        tasks = [process_single_tool(tc) for tc in tool_calls]
+        results = await asyncio.gather(*tasks)
+
+        for tool_call_id, tool_function_name, tool_result_content in results:
             await self.msg_list.add_tool_result(
                 name=tool_function_name, tool_call_id=tool_call_id, content=tool_result_content, index=len(self.msg_list) + 1
             )

@@ -9,3 +9,4 @@ class MessageEntry:
     name: str = None
     tool_calls: list = field(default_factory=list)
     tool_call_id: int = None
+    extra_content: dict = None

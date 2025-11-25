@@ -209,10 +209,10 @@ class MessagesList:
         self.messages.insert(index or 0, entry)
         await self._add_tokens(content)
 
-    async def add_assistant(self, content: str, index: int = None, tool_calls: list = []):
+    async def add_assistant(self, content: str, index: int = None, tool_calls: list = [], extra_content: dict = None):
         if self.tokens > self.token_limit:
             return
-        entry = MessageEntry("assistant", content, tool_calls=tool_calls)
+        entry = MessageEntry("assistant", content, tool_calls=tool_calls, extra_content=extra_content)
         self.messages.insert(index or 0, entry)
         await self._add_tokens(content)
 
@@ -298,16 +298,29 @@ class MessagesList:
         await self.init_message.channel.send(embed=embed, view=view)
 
     def get_json(self):
-        messages_as_dict = [
-            {
+        messages_as_dict = []
+        for message in self.messages:
+            msg_dict = {
                 "role": message.role,
-                "content": message.content if not message.tool_calls else None,
-                **({"name": message.name} if hasattr(message, 'name') and message.name else {}),
-                **({"tool_calls": message.tool_calls} if message.tool_calls else {}),
-                **({"tool_call_id": message.tool_call_id} if hasattr(message, 'tool_call_id') and message.tool_call_id else {})
+                "content": message.content,
             }
-            for message in self.messages
-        ]
+
+            if hasattr(message, 'name') and message.name:
+                msg_dict["name"] = message.name
+
+            if message.tool_calls:
+                msg_dict["tool_calls"] = [
+                    tc.model_dump() if hasattr(tc, "model_dump") else tc
+                    for tc in message.tool_calls
+                ]
+
+            if hasattr(message, 'tool_call_id') and message.tool_call_id:
+                msg_dict["tool_call_id"] = message.tool_call_id
+            
+            if hasattr(message, 'extra_content') and message.extra_content:
+                msg_dict["extra_content"] = message.extra_content
+
+            messages_as_dict.append(msg_dict)
 
         if self.prefill:
             prefill_message = {
