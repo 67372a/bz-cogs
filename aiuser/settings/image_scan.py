@@ -45,6 +45,32 @@ class ImageScanSettings(MixinMeta):
             color=await ctx.embed_color())
         return await ctx.send(embed=embed)
 
+    @imagescan.command(name="resolution", aliases=["maxpixels"])
+    async def image_resolution(self, ctx: commands.Context, resolution: float):
+        """ Set max image resolution in Megapixels (MP) for image scanning. 
+        
+        Images larger than this will be scaled down. 
+        Set to 0 to reset to defaults (16.8MP for LLM, 1MP for others).
+        """
+        if resolution == 0:
+            await self.config.guild(ctx.guild).max_image_pixels.set(None)
+            embed = discord.Embed(
+                title="Max resolution for scanning images reset to default.",
+                color=await ctx.embed_color())
+            return await ctx.send(embed=embed)
+
+        if resolution < 0.01:
+             return await ctx.send("Please set a reasonable resolution (in MP).")
+            
+        pixels = int(resolution * 1000000)
+        
+        await self.config.guild(ctx.guild).max_image_pixels.set(pixels)
+        embed = discord.Embed(
+            title="Max resolution for scanning images now set to:",
+            description=f"`{resolution:.2f}` MP ({pixels:,} pixels)",
+            color=await ctx.embed_color())
+        return await ctx.send(embed=embed)
+
     @imagescan.command(name="mode")
     async def image_mode(self, ctx: commands.Context, mode: str):  # Modify the parameter type
         """ Set method for scanning images

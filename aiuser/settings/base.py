@@ -158,6 +158,12 @@ class Settings(
             inline=True,
             value=f"`{config['max_image_size'] / 1024 / 1024:.2f}` MB",
         )
+        
+        max_pixels = config['max_image_pixels']
+        if max_pixels:
+             main_embed.add_field(name="Scan Image Resolution", value=f"`{max_pixels / 1000000:.2f}` MP", inline=True)
+        else:
+             main_embed.add_field(name="Scan Image Resolution", value=f"`Default`", inline=True)
 
         main_embed.add_field(
             name="Image Requests", value=f"`{config['image_requests']}`", inline=True)

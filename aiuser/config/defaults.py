@@ -66,6 +66,7 @@ DEFAULT_GUILD = {
     "scan_images_mode": ScanImageMode.LLM.value,
     "scan_images_model": DEFAULT_LLM_MODEL,
     "max_image_size": DEFAULT_IMAGE_UPLOAD_LIMIT,
+    "max_image_pixels": None,
     "max_video_size": DEFAULT_VIDEO_UPLOAD_LIMIT,
     "max_document_size": DEFAULT_DOCUMENT_UPLOAD_LIMIT,
     "max_audio_size": DEFAULT_VIDEO_UPLOAD_LIMIT,

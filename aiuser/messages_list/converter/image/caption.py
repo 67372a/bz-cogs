@@ -34,7 +34,15 @@ async def transcribe_image(cog: MixinMeta, message: Message):
         logger.error(f"Failed to decode image from attachment in message {message.id}")
         return None
 
-    maxsize = 4096*4096 if mode == ScanImageMode.LLM else 1024*1024
+    max_pixels = await config.guild(message.guild).max_image_pixels()
+    
+    if max_pixels is not None:
+        maxsize = max_pixels
+    elif mode == ScanImageMode.LLM:
+        maxsize = 16777216 # 4096 * 4096
+    else:
+        maxsize = 1048576 # 1024 * 1024
+
     scaled_cv_image = scale_image(cv_image, maxsize)
 
     content = await process_image(cog, message, scaled_cv_image, mode)
