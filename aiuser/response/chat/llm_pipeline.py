@@ -122,7 +122,7 @@ class LLMPipeline:
 
     async def call_client(
         self, kwargs: Dict[str, Any]
-    ) -> Tuple[Optional[str], Optional[str], List[ChatCompletionMessageToolCall], Optional[Dict]]:
+    ) -> Tuple[Optional[str], Optional[str], List[ChatCompletionMessageToolCall], Optional[List[Dict]]]:
         current_messages_json = self.msg_list.get_json()
 
         plugins = [
@@ -188,11 +188,11 @@ class LLMPipeline:
         llm_reasoning = getattr(message, "reasoning", None) # This can be None
         llm_tool_calls = message.tool_calls or []
 
-        llm_extra_content = getattr(message, "extra_content", None)
-        if llm_extra_content is None and getattr(message, "model_extra", None):
-             llm_extra_content = message.model_extra.get("extra_content")
+        llm_reasoning_details = getattr(message, "reasoning_details", None)
+        if llm_reasoning_details is None and getattr(message, "model_extra", None):
+             llm_reasoning_details = message.model_extra.get("reasoning_details")
 
-        return llm_content, llm_reasoning, llm_tool_calls, llm_extra_content
+        return llm_content, llm_reasoning, llm_tool_calls, llm_reasoning_details
 
     @retry(
         wait=wait_random_exponential(min=1, max=5), # Wait 1-5 seconds between retries
@@ -236,7 +236,7 @@ class LLMPipeline:
             if "gemini-3" in self.model.lower():
                 kwargs1["parallel_tool_calls"] = True
 
-        response_text, reasoning_text, response_tool_calls, response_extra_content = await self.call_client(
+        response_text, reasoning_text, response_tool_calls, response_reasoning_details = await self.call_client(
              kwargs1
         )
 
@@ -246,7 +246,7 @@ class LLMPipeline:
         await self.msg_list.add_assistant(
             content=current_llm_text_response, 
             tool_calls=response_tool_calls, 
-            extra_content=response_extra_content,
+            reasoning_details=response_reasoning_details,
             index=len(self.msg_list) + 1
         )
 
@@ -260,7 +260,7 @@ class LLMPipeline:
             ]
             kwargs2["tool_choice"] = "none"
 
-            response_text, reasoning_text, _, response_extra_content_final = await self.call_client(
+            response_text, reasoning_text, _, response_reasoning_details_final = await self.call_client(
                 kwargs2
             )
  
@@ -269,7 +269,7 @@ class LLMPipeline:
 
             await self.msg_list.add_assistant(
                 content=current_llm_text_response, 
-                extra_content=response_extra_content_final,
+                reasoning_details=response_reasoning_details_final,
                 index=len(self.msg_list) + 1
             )
 

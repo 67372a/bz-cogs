@@ -209,10 +209,10 @@ class MessagesList:
         self.messages.insert(index or 0, entry)
         await self._add_tokens(content)
 
-    async def add_assistant(self, content: str, index: int = None, tool_calls: list = [], extra_content: dict = None):
+    async def add_assistant(self, content: str, index: int = None, tool_calls: list = [], reasoning_details: list = None):
         if self.tokens > self.token_limit:
             return
-        entry = MessageEntry("assistant", content, tool_calls=tool_calls, extra_content=extra_content)
+        entry = MessageEntry("assistant", content, tool_calls=tool_calls, reasoning_details=reasoning_details)
         self.messages.insert(index or 0, entry)
         await self._add_tokens(content)
 
@@ -317,8 +317,8 @@ class MessagesList:
             if hasattr(message, 'tool_call_id') and message.tool_call_id:
                 msg_dict["tool_call_id"] = message.tool_call_id
             
-            if hasattr(message, 'extra_content') and message.extra_content:
-                msg_dict["extra_content"] = message.extra_content
+            if hasattr(message, 'reasoning_details') and message.reasoning_details:
+                msg_dict["reasoning_details"] = message.reasoning_details
 
             messages_as_dict.append(msg_dict)
 
