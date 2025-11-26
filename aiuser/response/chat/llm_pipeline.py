@@ -309,7 +309,7 @@ class LLMPipeline:
             return tool_call_id, tool_function_name, result
 
         tasks = [process_single_tool(tc) for tc in tool_calls]
-        results = await asyncio.gather(*tasks, True)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
         for tool_call_id, tool_function_name, tool_result_content in results:
             await self.msg_list.add_tool_result(
