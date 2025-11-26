@@ -62,7 +62,7 @@ class ReactToMessageToolCall(ToolCall):
             return f"An unexpected error occurred while fetching the message: {e}"
 
         emoji_map = await get_guild_emoji_map(self.ctx)
-        emoji = emoji_map[emoji_name]
+        emoji = emoji_map.get(emoji_name, None)
 
         if emoji:
             try:
@@ -72,7 +72,7 @@ class ReactToMessageToolCall(ToolCall):
                 logger.exception(f"Failed to react to message {message_id} in {guild.name}")
                 return f"An unexpected error occurred while reacting: {e}"
         else:
-            return f"Emoji with name `{emoji_name}` not found."
+            return f"Error: Emoji with name `{emoji_name}` not found."
 
 #
 # Pin Message ToolCall
