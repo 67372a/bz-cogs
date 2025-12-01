@@ -264,30 +264,28 @@ class LLMPipeline:
             if "gemini-3" in self.model.lower():
                 kwargs2["parallel_tool_calls"] = True
 
-            response_text, reasoning_text, _, response_reasoning_details_final = await self.call_client(
+            tool_response_text, tool_reasoning_text, _, tool_response_reasoning_details = await self.call_client(
                 kwargs2
             )
  
             # 1. Add ONLY the new chunk to the history (to maintain valid chat structure)
             await self.msg_list.add_assistant(
-                content=response_text, 
-                reasoning_details=response_reasoning_details_final,
+                content=tool_response_text, 
+                reasoning_details=tool_response_reasoning_details,
                 index=len(self.msg_list) + 1
             )
 
             # 2. Combine the previous text with the new text for the final Discord message
-            if current_llm_text_response and response_text:
-                # Gemini often splits mid-sentence (e.g., "check" + "in"). 
-                # Depending on preference, you can add a space " " or just combine +
-                current_llm_text_response += response_text 
-            elif response_text:
-                current_llm_text_response = response_text
+            if current_llm_text_response and tool_response_text:
+                current_llm_text_response += tool_response_text 
+            elif tool_response_text:
+                current_llm_text_response = tool_response_text
                 
             # 3. Combine reasoning if applicable
-            if current_llm_text_reasoning and reasoning_text:
-                current_llm_text_reasoning += "\n\n" + reasoning_text
-            elif reasoning_text:
-                current_llm_text_reasoning = reasoning_text
+            if current_llm_text_reasoning and tool_reasoning_text:
+                current_llm_text_reasoning += "\n\n" + tool_reasoning_text
+            elif tool_reasoning_text:
+                current_llm_text_reasoning = tool_reasoning_text
 
         self.reasoning = current_llm_text_reasoning
         self.completion = current_llm_text_response
