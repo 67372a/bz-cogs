@@ -277,7 +277,11 @@ class LLMPipeline:
 
             # 2. Combine the previous text with the new text for the final Discord message
             if current_llm_text_response and tool_response_text:
-                current_llm_text_response += tool_response_text 
+                # Fix for models (like Gemini 3.0) that repeat the pre-tool text in the post-tool response
+                if tool_response_text.strip().startswith(current_llm_text_response.strip()):
+                    current_llm_text_response = tool_response_text
+                else:
+                    current_llm_text_response += tool_response_text 
             elif tool_response_text:
                 current_llm_text_response = tool_response_text
                 
