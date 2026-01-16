@@ -22,8 +22,6 @@ def compile_and_apply(pattern_str: str, text: str) -> str:
     pattern = re.compile(pattern_str)
     return pattern.sub('', text).strip(' \n')
 
-import re
-
 async def remove_patterns_from_response(ctx: commands.Context, config: Config, response: str, recent_authors) -> str:
     # Get patterns from config and replace "{botname}".
     patterns = await config.guild(ctx.guild).removelist_regexes()

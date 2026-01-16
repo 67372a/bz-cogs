@@ -1,6 +1,7 @@
 import re
 from abc import ABC
 from datetime import datetime
+from asyncio import Queue, Task
 
 from openai import AsyncOpenAI
 from redbot.core import Config, commands
@@ -33,3 +34,6 @@ class MixinMeta(ABC):
         self.channels_whitelist: dict[int, list[int]]
         self.openai_client: AsyncOpenAI
         self.optindefault: dict[int, bool] 
+        self.generating_channels: set[int]
+        self.message_queues: dict[int, Queue]
+        self.processing_tasks: dict[int, Task]

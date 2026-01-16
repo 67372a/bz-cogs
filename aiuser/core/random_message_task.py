@@ -8,7 +8,6 @@ from discord.ext import tasks
 from aiuser.config.constants import RANDOM_MESSAGE_TASK_RETRY_SECONDS
 from aiuser.config.defaults import DEFAULT_PROMPT
 from aiuser.messages_list.messages import create_messages_list
-from aiuser.response.dispatcher import dispatch_response
 from aiuser.types.abc import MixinMeta
 from aiuser.utils.utilities import format_variables
 
@@ -35,6 +34,10 @@ class RandomMessageTask(MixinMeta):
 
             if not await self.check_if_valid_for_random_message(guild, last):
                 return
+            
+            # Don't send random messages if the bot is currently processing responses in this channel
+            if channel.id in self.processing_tasks:
+                return
 
             topics = await self.config.guild(guild).random_messages_prompts() or None
             if not topics:
@@ -50,7 +53,7 @@ class RandomMessageTask(MixinMeta):
             await messages_list.add_system(f"Using the persona above, follow these instructions: {topic}", index=len(messages_list) + 1)
             messages_list.can_reply = False
 
-            return await dispatch_response(self, ctx, messages_list)
+            return await self.queue_response(ctx, messages_list)
 
     async def get_discord_context(self, guild_id: int, channels: list):
         guild = self.bot.get_guild(guild_id)

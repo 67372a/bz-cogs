@@ -1,4 +1,5 @@
 import logging
+import asyncio
 import re
 from datetime import datetime
 
@@ -19,6 +20,7 @@ from aiuser.core.random_message_task import RandomMessageTask
 from aiuser.dashboard.base import DashboardIntegration
 from aiuser.messages_list.entry import MessageEntry
 from aiuser.settings.base import Settings
+from aiuser.response.dispatcher import dispatch_response
 from aiuser.types.abc import CompositeMetaClass
 from aiuser.utils.cache import Cache
 
@@ -50,6 +52,8 @@ class AIUser(
         self.ignore_regex: dict[int, re.Pattern] = {}
         self.override_prompt_start_time: dict[int, datetime] = {}
         self.cached_messages: Cache[int, MessageEntry] = Cache(limit=100)
+        self.message_queues: dict[int, asyncio.Queue] = {}
+        self.processing_tasks: dict[int, asyncio.Task] = {}
 
         self.config.register_member(**DEFAULT_MEMBER)
         self.config.register_role(**DEFAULT_ROLE)
@@ -110,3 +114,37 @@ class AIUser(
     @commands.Cog.listener()
     async def on_message_without_command(self, message: discord.Message):
         await handle_message(self, message)
+
+    async def queue_response(self, ctx: commands.Context, messages_list=None):
+        """
+        Adds a response request to the channel's queue.
+        If no processor is running for this channel, start one.
+        """
+        channel_id = ctx.channel.id
+        
+        if channel_id not in self.message_queues:
+            self.message_queues[channel_id] = asyncio.Queue()
+            
+        await self.message_queues[channel_id].put((ctx, messages_list))
+
+        if channel_id not in self.processing_tasks or self.processing_tasks[channel_id].done():
+            self.processing_tasks[channel_id] = asyncio.create_task(self.process_queue(channel_id))
+
+    async def process_queue(self, channel_id: int):
+        """
+        Sequentially processes requests in the channel's queue.
+        """
+        queue = self.message_queues[channel_id]
+        while not queue.empty():
+            try:
+                ctx, messages_list = await queue.get()
+                await dispatch_response(self, ctx, messages_list)
+            except Exception:
+                logger.exception(f"Error processing queue for channel {channel_id}")
+            finally:
+                # Small buffer between messages to ensure order and prevent rate-limit bursts
+                await asyncio.sleep(1) 
+        
+        del self.processing_tasks[channel_id]
+        if queue.empty():
+            del self.message_queues[channel_id]

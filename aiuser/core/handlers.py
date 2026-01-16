@@ -12,7 +12,6 @@ from aiuser.config.constants import URL_PATTERN
 from aiuser.config.defaults import DEFAULT_REPLY_PERCENT
 from aiuser.core.triggers import check_triggers
 from aiuser.core.validators import is_valid_message
-from aiuser.response.dispatcher import dispatch_response
 from aiuser.types.abc import MixinMeta
 from aiuser.utils.utilities import is_embed_valid
 
@@ -44,7 +43,7 @@ async def handle_slash_command(cog: MixinMeta, inter: discord.Interaction, text:
         )
 
     try:
-        await dispatch_response(cog, ctx)
+        await cog.queue_response(ctx)
     except Exception:
         await ctx.send(":warning: Error in generating response!", ephemeral=True)
 
@@ -56,7 +55,14 @@ async def handle_message(cog: MixinMeta, message: discord.Message):
     if not (await is_valid_message(cog, ctx)):
         return
 
-    if await check_triggers(cog, ctx, message):
+    is_triggered = await check_triggers(cog, ctx, message)
+
+    # If the bot is already processing triggers in this channel, 
+    # and this message is NOT a trigger (just a random chance), ignore it.
+    if not is_triggered and (ctx.channel.id in cog.processing_tasks):
+        return
+
+    if is_triggered:
         pass
     elif random.random() > await get_percentage(cog, ctx):
         return
@@ -69,7 +75,7 @@ async def handle_message(cog: MixinMeta, message: discord.Message):
             f"Want to respond but ratelimited until {rate_limit_reset.strftime('%Y-%m-%d %H:%M:%S')}"
         )
         if (
-            await check_triggers(cog, ctx, message)
+            is_triggered
             or await get_percentage(cog, ctx) == 1.0
         ):
             await ctx.react_quietly("💤", message="`aiuser` is ratedlimited")
@@ -78,7 +84,7 @@ async def handle_message(cog: MixinMeta, message: discord.Message):
     if URL_PATTERN.search(ctx.message.content):
         ctx = await wait_for_embed(ctx)
 
-    await dispatch_response(cog, ctx)
+    await cog.queue_response(ctx)
 
 
 async def get_percentage(cog: MixinMeta, ctx: commands.Context) -> float:
