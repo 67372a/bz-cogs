@@ -18,6 +18,7 @@ from aiuser.messages_list.opt_view import OptView
 from aiuser.types.abc import MixinMeta
 from aiuser.types.enums import ScanImageMode
 from aiuser.utils.utilities import format_variables
+from aiuser.config.constants import XML_SYSTEM_PROMPT_APPENDIX
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
@@ -75,14 +76,24 @@ class MessagesList:
         if not prompt:
             await self.add_msg(self.init_message)
 
-        bot_prompt = prompt or await self._pick_prompt()
+        # 1. Get the user-defined persona (e.g., "You are a helpful assistant...")
+        raw_persona = prompt or await self._pick_prompt()
+        
+        # 2. Format variables (e.g., replace {botname})
+        formatted_persona = await format_variables(self.ctx, raw_persona)
+
+        # 3. Combine Persona + XML Protocol
+        # We add a double newline to separate the personality from the technical instructions
+        final_system_prompt = f"{formatted_persona}\n\n{XML_SYSTEM_PROMPT_APPENDIX}"
+
         self.prefill = await self._pick_prefill()
 
         # Account for prefill tokens without adding to history
         if self.prefill:
             await self._add_tokens(self.prefill)
 
-        await self.add_system(await format_variables(self.ctx, bot_prompt))
+        # 4. Add the combined system prompt
+        await self.add_system(final_system_prompt)
 
         if await self._check_if_inital_img():
             self.model = await self.config.guild(self.guild).scan_images_model()

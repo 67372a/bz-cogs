@@ -1,50 +1,74 @@
 import logging
 from io import BytesIO, TextIOWrapper
 import base64
-
+from xml.sax.saxutils import escape
 from discord import Message, MessageType
 
 from aiuser.config.constants import URL_PATTERN
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
+def _get_msg_header(message: Message) -> str:
+    """Helper to generate standard XML message header"""
+    # Escape quotes and special chars to prevent XML breakage
+    author_name = escape(message.author.name)
+    display_name = escape(message.author.display_name)
+    
+    return (f'<message id="{message.id}" '
+            f'timestamp="{message.created_at.isoformat()}" '
+            f'author_id="{message.author.id}" '
+            f'username="{author_name}" '
+            f'displayname="{display_name}">')
 
 def format_text_content(message: Message):
     if message.type == MessageType.new_member:
-        return f'[MESSAGE_ID={message.id} TIMESTAMP={message.created_at.isoformat()} USER_ID={message.author.id} USERNAME="{message.author.name}" NICKNAME="{message.author.display_name}"] joined the server as a new member.'
+        return f'{_get_msg_header(message)}Joined the server.</message>'
+    
     if not message.content or message.content == "" or message.content.isspace():
         return None
+        
     content = mention_to_text(message)
+    
+    # If it's the bot's own message, we return just the content 
+    # TODO: determine if should apply XML to responses
     if message.author.id == message.guild.me.id:
-        return f'{content}'
-    return f'[MESSAGE_ID={message.id} TIMESTAMP={message.created_at.isoformat()} USER_ID={message.author.id} USERNAME="{message.author.name}" NICKNAME="{message.author.display_name}"] said "{content}"'
+        return content
 
+    # Standard User Message
+    return f'{_get_msg_header(message)}{content}</message>'
 
 def format_embed_text_content(message: Message):
     content = mention_to_text(message)
     content = URL_PATTERN.sub("", content)
     if not content or content == "" or content.isspace():
         return None
+    
     if message.author.id == message.guild.me.id:
-        return f'{content}'
-    return f'[MESSAGE_ID={message.id} TIMESTAMP={message.created_at.isoformat()} USER_ID={message.author.id} USERNAME="{message.author.name}" NICKNAME="{message.author.display_name}"] said "{content}"'
+        return content
+        
+    return f'{_get_msg_header(message)}{content}</message>'
 
 
 def format_generic_image(message: Message):
-    title = f', title "{message.attachments[0].title}"' if message.attachments[0].title else ""
-    description = f', description "{message.attachments[0].description}"' if message.attachments[0].description else ""
+    title = f' title="{escape(message.attachments[0].title)}"' if message.attachments[0].title else ""
+    desc = f' description="{escape(message.attachments[0].description)}"' if message.attachments[0].description else ""
+    filename = escape(message.attachments[0].filename)
+
+    xml_content = f'<image filename="{filename}"{title}{desc}/>'
 
     if message.author.id == message.guild.me.id:
-        return f'An image with the filename "{message.attachments[0].filename}{title}{description}."'
-    return f'[MESSAGE_ID={message.id} TIMESTAMP={message.created_at.isoformat()} USER_ID={message.author.id} USERNAME="{message.author.name}" NICKNAME="{message.author.display_name}"] sent an image with the filename "{message.attachments[0].filename}"{title}{description}."'
+        return f"Sent {xml_content}"
+        
+    return f'{_get_msg_header(message)}{xml_content}</message>'
 
 def format_generic_document(message: Message):
-    title = f', title "{message.attachments[0].title}"' if message.attachments[0].title else ""
-    description = f', description "{message.attachments[0].description}"' if message.attachments[0].description else ""
-
+    filename = escape(message.attachments[0].filename)
+    xml_content = f'<file filename="{filename}"/>'
+    
     if message.author.id == message.guild.me.id:
-        return f'A document with the filename "{message.attachments[0].filename}{title}{description}."'
-    return f'[MESSAGE_ID={message.id} TIMESTAMP={message.created_at.isoformat()} USER_ID={message.author.id} USERNAME="{message.author.name}" NICKNAME="{message.author.display_name}"] sent a document with the filename "{message.attachments[0].filename}"{title}{description}."'
+        return f"Sent {xml_content}"
+        
+    return f'{_get_msg_header(message)}{xml_content}</message>'
 
 async def format_binary_document(message: Message):
     attachment = message.attachments[0]
@@ -79,39 +103,48 @@ async def format_binary_document(message: Message):
 
 async def format_text_document(message: Message):
     attachment = message.attachments[0]
-
     content = []
+    
     if message.content != "":
         content.append({"type": "text", "text": format_text_content(message)})
 
-    with BytesIO() as buffer: # Use BytesIO as a context manager
+    with BytesIO() as buffer:
         await attachment.save(buffer)
-
-        buffer.seek(0)  # Reset buffer pointer to the beginning for reading
+        buffer.seek(0)
         text_data = TextIOWrapper(buffer, encoding='utf-8').read()
 
-    mime_type = get_mime_type(attachment.content_type)
+    # Sanitizing content to avoid breaking XML structure if it contains tags
+    # Though LLMs are usually smart enough to figure it out, explicit CDATA or escaping is safer
+    # For simplicity here, we assume standard text, but escaping is recommended:
+    text_data = escape(text_data) 
+    
+    filename = escape(attachment.filename)
+    
+    # We use a custom tag structure here
+    doc_xml = (f'{_get_msg_header(message)}'
+               f'<document filename="{filename}">'
+               f'{text_data}'
+               f'</document>'
+               f'</message>')
 
-    title = f', title "{message.attachments[0].title}"' if message.attachments[0].title else ""
-    description = f', description "{message.attachments[0].description}"' if message.attachments[0].description else ""
-    document_content = f'[MESSAGE_ID={message.id} TIMESTAMP={message.created_at.isoformat()} USER_ID={message.author.id} USERNAME="{message.author.name}" NICKNAME="{message.author.display_name}"] sent a document with the filename "{message.attachments[0].filename}{title}{description}."\n<DOCUMENT_START>{text_data}<DOCUMENT_END>'
-
-    content.append(
-        {
-            "type": "text", 
-            "text": document_content
-        })
+    content.append({"type": "text", "text": doc_xml})
     return content
 
 async def format_sticker_content(message: Message):
     try:
         sticker = await message.stickers[0].fetch()
-        description = getattr(sticker,"description","")
-        description_text = f' and description "{description}"' if description else ""
-        return f'[MESSAGE_ID={message.id} TIMESTAMP={message.created_at.isoformat()} USER_ID={message.author.id} USERNAME="{message.author.name}" NICKNAME="{message.author.display_name}"] sent a sticker with name "{sticker.name}"{description_text}.'
+        sticker_name = escape(sticker.name)
+        desc_attr = f' description="{escape(sticker.description)}"' if getattr(sticker, "description", "") else ""
+        
+        xml_content = f'<sticker name="{sticker_name}"{desc_attr}/>'
     except Exception:
-        sticker_name = message.stickers[0].name
-        return f'[MESSAGE_ID={message.id} TIMESTAMP={message.created_at.isoformat()} USER_ID={message.author.id} USERNAME="{message.author.name}" NICKNAME="{message.author.display_name}"] sent a sticker with name "{sticker_name}"'
+        sticker_name = escape(message.stickers[0].name)
+        xml_content = f'<sticker name="{sticker_name}"/>'
+
+    if message.author.id == message.guild.me.id:
+        return f"Sent {xml_content}"
+
+    return f'{_get_msg_header(message)}{xml_content}</message>'
 
 
 def mention_to_text(message: Message) -> str:
