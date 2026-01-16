@@ -47,7 +47,7 @@ async def transcribe_image(cog: MixinMeta, message: Message):
 
     content = await process_image(cog, message, scaled_cv_image, mode)
 
-    if content and mode != ScanImageMode.LLM:
+    if content:
         cog.cached_messages[message.id] = content
 
     return content
