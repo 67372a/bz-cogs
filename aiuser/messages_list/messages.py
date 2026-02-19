@@ -167,6 +167,9 @@ class MessagesList:
             )
             return False
 
+        if message.embeds and any(embed.title and THOUGHTS_EMBED_TITLE_REGEX.search(embed.title) for embed in message.embeds):
+            return False
+
         if self.ignore_regex and self.ignore_regex.search(message.content):
             return False
         if not await self.bot.allowed_by_whitelist_blacklist(message.author):
@@ -290,7 +293,7 @@ class MessagesList:
             if (past_messages[i].author.id == self.bot.user.id) and (past_messages[i].embeds and past_messages[i].embeds[0].title == OPTIN_EMBED_TITLE):
                 continue
             # Ignore reasoning
-            if (past_messages[i].author.id == self.bot.user.id) and (past_messages[i].embeds and THOUGHTS_EMBED_TITLE_REGEX.search(past_messages[i].embeds[0].title)):
+            if past_messages[i].embeds and past_messages[i].embeds[0].title and THOUGHTS_EMBED_TITLE_REGEX.search(past_messages[i].embeds[0].title):
                 continue
             if await self._is_valid_time_gap(past_messages[i], past_messages[i + 1], max_seconds_gap):
                 await self.add_msg(past_messages[i])
