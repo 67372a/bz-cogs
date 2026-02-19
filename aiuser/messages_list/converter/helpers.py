@@ -14,11 +14,23 @@ def _get_msg_header(message: Message) -> str:
     author_name = escape(message.author.name)
     display_name = escape(message.author.display_name)
     
+    reply_info = ""
+    if message.reference and isinstance(getattr(message.reference, 'resolved', None), Message):
+        reply_message = message.reference.resolved
+        reply_author_name = escape(reply_message.author.name)
+        reply_author_displayname = escape(reply_message.author.display_name)
+        reply_info = (f' reply_to_id="{reply_message.id}" '
+                      f'reply_target_id="{reply_message.author.id}" '
+                      f'reply_target_username="{reply_author_name}" '
+                      f'reply_target_displayname="{reply_author_displayname}"')
+    elif message.reference and getattr(message.reference, 'message_id', None):
+        reply_info = f' reply_to_id="{message.reference.message_id}"'
+
     return (f'<message id="{message.id}" '
             f'timestamp="{message.created_at.isoformat()}" '
             f'author_id="{message.author.id}" '
             f'username="{author_name}" '
-            f'displayname="{display_name}">')
+            f'displayname="{display_name}"{reply_info}>')
 
 def format_text_content(message: Message):
     if message.type == MessageType.new_member:

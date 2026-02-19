@@ -24,7 +24,7 @@ OPENROUTER_URL = "https://openrouter.ai/api/"
 XML_SYSTEM_PROMPT_APPENDIX = (
     "IMPORTANT CONTEXTUAL INSTRUCTIONS:\n"
     "1. The chat history below is formatted in Semantic XML. "
-    "User messages are wrapped in <message> tags containing metadata (id, author, time).\n"
+    "User messages are wrapped in <message> tags containing metadata (id, author, time, and reply targets).\n"
     "2. Media attachments are represented by tags like <image/>, <file/>, or <sticker/>.\n"
     "3. You are part of this chat. Do not output these XML tags yourself. "
     "Respond naturally in with text, inclusive of markdown and emojis as is relevant, adhering to the persona described above."
