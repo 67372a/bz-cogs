@@ -70,7 +70,26 @@ class RandomMessageTask(MixinMeta):
         last_message = await channel.fetch_message(channel.last_message_id)
         ctx = await self.bot.get_context(last_message)
 
-        return last_message, ctx
+        class MockMessage:
+            def __init__(self, message, author):
+                self._message = message
+                self.author = author
+
+            def __getattr__(self, item):
+                return getattr(self._message, item)
+
+        class MockContext:
+            def __init__(self, ctx, author):
+                self._ctx = ctx
+                self.message = MockMessage(ctx.message, author)
+                self.author = author
+
+            def __getattr__(self, item):
+                return getattr(self._ctx, item)
+
+        mock_ctx = MockContext(ctx, guild.me)
+
+        return last_message, mock_ctx
 
     async def check_if_valid_for_random_message(self, guild: discord.Guild, last: discord.Message):
         if await self.bot.cog_disabled_in_guild(self, guild):
