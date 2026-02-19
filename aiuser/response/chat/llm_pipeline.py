@@ -218,7 +218,7 @@ class LLMPipeline:
             logging.error(f"Error occured while calling LLM API: {e}")
             raise  
 
-    async def create_completion(self) -> Optional[str]:
+    async def create_completion(self) -> Tuple[Optional[str], Optional[str]]:
         custom_kwargs = await self.get_custom_parameters()
         await self.setup_tools()
 

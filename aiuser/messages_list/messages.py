@@ -275,7 +275,7 @@ class MessagesList:
 
         for message in messages:
             if (
-                (not message.author.bot)
+                (message.author.id != self.bot.user.id)
                 and (message.author.id not in await self.config.optin())
                 and (message.author.id not in await self.config.optout())
             ):

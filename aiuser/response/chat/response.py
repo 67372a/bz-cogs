@@ -117,11 +117,18 @@ async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_l
     
     cleaned_reasoning = None
     if reasoning:
-        cleaned_response, cleaned_reasoning = await asyncio.gather(remove_patterns_from_response(ctx, cog.config, response, recent_authors),
-                                         remove_patterns_from_response(ctx, cog.config, reasoning, recent_authors),
-                                         return_exceptions=True)
+        res = await asyncio.gather(
+            remove_patterns_from_response(ctx, cog.config, response, recent_authors),
+            remove_patterns_from_response(ctx, cog.config, reasoning, recent_authors),
+            return_exceptions=True
+        )
+        cleaned_response = res[0] if not isinstance(res[0], Exception) else None
+        cleaned_reasoning = res[1] if not isinstance(res[1], Exception) else None
     else:
-        cleaned_response = await remove_patterns_from_response(ctx, cog.config, response, recent_authors)
+        try:
+            cleaned_response = await remove_patterns_from_response(ctx, cog.config, response, recent_authors)
+        except Exception:
+            cleaned_response = None
 
     if not cleaned_response:
         return False
