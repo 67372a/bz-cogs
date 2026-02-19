@@ -178,6 +178,7 @@ class MessagesList:
             return False
         if (
             (not message.author.id == self.bot.user.id)
+            and not message.author.bot
             and message.author.id not in await self.config.optin()
             and not await self.config.guild(self.guild).optin_by_default()
         ):
@@ -279,6 +280,7 @@ class MessagesList:
         for message in messages:
             if (
                 (message.author.id != self.bot.user.id)
+                and (not message.author.bot)
                 and (message.author.id not in await self.config.optin())
                 and (message.author.id not in await self.config.optout())
             ):
