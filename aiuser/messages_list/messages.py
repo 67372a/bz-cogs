@@ -324,6 +324,10 @@ class MessagesList:
             await self.add_msg(msg, index=len(self.messages))
             last_msg = msg
 
+        # Ensure the conversation history ends with a user message to prevent API strict-sequence errors (e.g. UNEXPECTED_TOOL_CALL)
+        if self.messages and self.messages[-1].role == "assistant":
+            self.messages.append(MessageEntry("user", "System Note: Please continue or respond to the latest context."))
+
     async def _send_optin_embed(self, users):
         users = ", ".join([user.mention for user in users])
         embed = discord.Embed(
