@@ -11,7 +11,7 @@ from redbot.core import commands
 from aiuser.config.constants import URL_PATTERN
 from aiuser.config.defaults import DEFAULT_REPLY_PERCENT
 from aiuser.core.triggers import check_triggers
-from aiuser.core.validators import is_valid_message
+from aiuser.core.validators import is_valid_message, is_bot_mentioned_or_replied
 from aiuser.types.abc import MixinMeta
 from aiuser.utils.utilities import is_embed_valid
 
@@ -57,10 +57,10 @@ async def handle_message(cog: MixinMeta, message: discord.Message):
 
     is_triggered = await check_triggers(cog, ctx, message)
 
-    # If the bot is already processing triggers in this channel, 
-    # and this message is NOT a trigger (just a random chance), ignore it.
-    if not is_triggered and (ctx.channel.id in cog.processing_tasks):
-        return
+    # If the bot is already processing a response, ignore all messages unless it's a mention
+    if ctx.channel.id in cog.processing_tasks:
+        if not await is_bot_mentioned_or_replied(cog, message):
+            return
 
     if is_triggered:
         pass

@@ -1,3 +1,7 @@
+---
+trigger: always_on
+---
+
 # Python Virtual Environment Rules
 
 To ensure the Antigravity agent uses the project's virtual environment for Python tasks, the following configuration is applied:
@@ -7,9 +11,10 @@ To ensure the Antigravity agent uses the project's virtual environment for Pytho
 - **Pip**: For package management, use `.\venv\Scripts\pip.exe`.
 
 ## Instructions for Agent
-Whenever performing Python-related tasks (running scripts, installing dependencies, linting), always prefix commands with the path to the virtual environment's interpreter or activate it first.
+Whenever performing Python-related tasks (running scripts, installing dependencies, linting, testing, etc.), you MUST ALWAYS first activate the virtual environment before running any Python commands or you MUST prefix the command with the path to the python executable in the venv.
 
 Example:
 ```powershell
-.\venv\Scripts\python.exe path\to\script.py
+.\venv\Scripts\Activate.ps1
+python path\to\script.py
 ```

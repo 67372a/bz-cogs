@@ -245,31 +245,36 @@ class MessagesList:
             self.start_time - timedelta(seconds=1) if self.start_time else None
         )
 
-        past_messages = await self._get_past_messages(limit, start_time)
-        if not past_messages:
-            return
+        before_msgs, after_msgs = await self._get_past_messages(limit, start_time)
+        
+        all_past_messages = list(reversed(after_msgs)) + [self.init_message] + before_msgs
+        users = await self._get_unopted_users(all_past_messages[:10])
 
-        if not await self._is_valid_time_gap(self.init_message, past_messages[0], max_seconds_gap):
-            return
-
-        users = await self._get_unopted_users(past_messages[:10])
-
-        await self._process_past_messages(past_messages, max_seconds_gap)
+        await self._process_past_messages(before_msgs, after_msgs, max_seconds_gap)
 
         if users and not await self.config.guild(self.guild).optin_disable_embed():
             if (random.random() <= 0.33) or (len(users) > 3):
                 await self._send_optin_embed(users)
 
     async def _get_past_messages(self, limit, start_time):
-        return [
+        before_msgs = [
             message
             async for message in self.init_message.channel.history(
-                limit=limit + 1,
+                limit=limit,
                 before=self.init_message,
                 after=start_time,
                 oldest_first=False,
             )
         ]
+        after_msgs = [
+            message
+            async for message in self.init_message.channel.history(
+                limit=limit,
+                after=self.init_message,
+                oldest_first=True,
+            )
+        ]
+        return before_msgs, after_msgs
 
     async def _get_unopted_users(self, messages):
         users = set()
@@ -288,20 +293,36 @@ class MessagesList:
 
         return users
 
-    async def _process_past_messages(self, past_messages, max_seconds_gap):
-        for i in range(len(past_messages) - 1):
+    async def _process_past_messages(self, before_msgs, after_msgs, max_seconds_gap):
+        last_msg = self.init_message
+        for msg in before_msgs:
+            if not await self._is_valid_time_gap(last_msg, msg, max_seconds_gap):
+                break
             if self.tokens > self.token_limit:
-                return logger.debug(f"{self.tokens} tokens used - nearing limit, stopping context creation for message {self.init_message.id}")
-            if (past_messages[i].author.id == self.bot.user.id) and (past_messages[i].embeds and past_messages[i].embeds[0].title == OPTIN_EMBED_TITLE):
+                logger.debug(f"{self.tokens} tokens used - nearing limit, stopping context creation for message {self.init_message.id}")
+                break
+            if (msg.author.id == self.bot.user.id) and (msg.embeds and msg.embeds[0].title == OPTIN_EMBED_TITLE):
                 continue
             # Ignore reasoning
-            if past_messages[i].embeds and past_messages[i].embeds[0].title and THOUGHTS_EMBED_TITLE_REGEX.search(past_messages[i].embeds[0].title):
+            if msg.embeds and msg.embeds[0].title and THOUGHTS_EMBED_TITLE_REGEX.search(msg.embeds[0].title):
                 continue
-            if await self._is_valid_time_gap(past_messages[i], past_messages[i + 1], max_seconds_gap):
-                await self.add_msg(past_messages[i])
-            else:
-                await self.add_msg(past_messages[i])
+            await self.add_msg(msg, index=1)
+            last_msg = msg
+
+        last_msg = self.init_message
+        for msg in after_msgs:
+            if not await self._is_valid_time_gap(last_msg, msg, max_seconds_gap):
                 break
+            if self.tokens > self.token_limit:
+                logger.debug(f"{self.tokens} tokens used - nearing limit, stopping context creation for message {self.init_message.id}")
+                break
+            if (msg.author.id == self.bot.user.id) and (msg.embeds and msg.embeds[0].title == OPTIN_EMBED_TITLE):
+                continue
+            # Ignore reasoning
+            if msg.embeds and msg.embeds[0].title and THOUGHTS_EMBED_TITLE_REGEX.search(msg.embeds[0].title):
+                continue
+            await self.add_msg(msg, index=len(self.messages))
+            last_msg = msg
 
     async def _send_optin_embed(self, users):
         users = ", ".join([user.mention for user in users])
