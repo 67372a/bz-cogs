@@ -26,6 +26,7 @@ from tests.mock_functions_importer import (
     OpenRouterWebFetch,
     OpenRouterImageGeneration,
     OpenRouterPdfParsing,
+    OpenRouterImageParsing,
 )
 from aiuser.types.enums import OpenRouterToolType
 from aiuser.types.openrouter_types import (
@@ -117,6 +118,210 @@ class TestOpenRouterWebSearch:
         ctx.guild.id = 123456789
         ctx.guild.name = "Test Guild"
         return ctx
+
+
+class TestImageUrlDetection:
+    """Tests for image URL detection in message text."""
+
+    @staticmethod
+    def _get_detect_function():
+        return OpenRouterImageParsing.detect_image_urls
+
+    def test_no_urls_in_empty_string(self):
+        detect = self._get_detect_function()
+        assert detect("") == []
+        assert detect(None) == []
+
+    def test_no_image_urls(self):
+        detect = self._get_detect_function()
+        assert detect("Hello world") == []
+        assert detect("Check this out https://example.com/page.html") == []
+        assert detect("Read this PDF: https://example.com/doc.pdf") == []
+
+    def test_single_png_url(self):
+        detect = self._get_detect_function()
+        urls = detect("See this: https://example.com/image.png")
+        assert urls == ["https://example.com/image.png"]
+
+    def test_single_jpg_url(self):
+        detect = self._get_detect_function()
+        urls = detect("Photo: https://example.com/photo.jpg")
+        assert urls == ["https://example.com/photo.jpg"]
+
+    def test_single_jpeg_url(self):
+        detect = self._get_detect_function()
+        urls = detect("Photo: https://example.com/photo.jpeg")
+        assert urls == ["https://example.com/photo.jpeg"]
+
+    def test_single_gif_url(self):
+        detect = self._get_detect_function()
+        urls = detect("GIF: https://example.com/animation.gif")
+        assert urls == ["https://example.com/animation.gif"]
+
+    def test_single_webp_url(self):
+        detect = self._get_detect_function()
+        urls = detect("WebP: https://example.com/image.webp")
+        assert urls == ["https://example.com/image.webp"]
+
+    def test_single_bmp_url(self):
+        detect = self._get_detect_function()
+        urls = detect("BMP: https://example.com/image.bmp")
+        assert urls == ["https://example.com/image.bmp"]
+
+    def test_multiple_image_urls(self):
+        detect = self._get_detect_function()
+        urls = detect(
+            "Pic1: https://a.com/img1.png and Pic2: https://b.com/img2.jpg"
+        )
+        assert len(urls) == 2
+        assert "https://a.com/img1.png" in urls
+        assert "https://b.com/img2.jpg" in urls
+
+    def test_image_url_with_query_params(self):
+        detect = self._get_detect_function()
+        urls = detect("Image: https://example.com/photo.png?w=800&h=600")
+        assert urls == ["https://example.com/photo.png?w=800&h=600"]
+
+    def test_image_url_mid_sentence(self):
+        detect = self._get_detect_function()
+        urls = detect(
+            "Check out this cool image https://example.com/cat.png for a preview."
+        )
+        assert urls == ["https://example.com/cat.png"]
+
+    def test_deduplicates_urls(self):
+        detect = self._get_detect_function()
+        urls = detect("Same URL twice: https://a.com/img.png and https://a.com/img.png")
+        assert urls == ["https://a.com/img.png"]
+
+    def test_case_insensitive(self):
+        detect = self._get_detect_function()
+        urls = detect("Image: https://example.com/Photo.JPG")
+        assert urls == ["https://example.com/Photo.JPG"]
+
+    def test_ftp_not_matched(self):
+        detect = self._get_detect_function()
+        urls = detect("FTP: ftp://example.com/image.png")
+        assert urls == []
+
+    def test_pdf_not_matched(self):
+        detect = self._get_detect_function()
+        urls = detect("PDF: https://example.com/doc.pdf")
+        assert urls == []
+
+    def test_mixed_images_and_pdfs(self):
+        detect = self._get_detect_function()
+        urls = detect(
+            "Image: https://example.com/photo.png and PDF: https://example.com/doc.pdf"
+        )
+        assert urls == ["https://example.com/photo.png"]
+
+
+class TestImageBase64Encoding:
+    """Tests for base64 encoding of image data."""
+
+    def test_encode_png_image(self):
+        data = b"\x89PNG\r\n\x1a\nThis is fake PNG data.\n"
+        result = OpenRouterImageParsing.encode_image_to_base64(data, "image/png")
+        assert result.startswith("data:image/png;base64,")
+        import base64
+        encoded_part = result.split(",", 1)[1]
+        decoded = base64.b64decode(encoded_part)
+        assert decoded == data
+
+    def test_encode_jpeg_image(self):
+        data = b"\xff\xd8\xff\xe0This is fake JPEG data.\n"
+        result = OpenRouterImageParsing.encode_image_to_base64(data, "image/jpeg")
+        assert result.startswith("data:image/jpeg;base64,")
+
+    def test_encode_webp_image(self):
+        data = b"RIFF...WEBP...fake data.\n"
+        result = OpenRouterImageParsing.encode_image_to_base64(data, "image/webp")
+        assert result.startswith("data:image/webp;base64,")
+
+
+class TestImageContentBuilding:
+    """Tests for building image_url content parts."""
+
+    def test_build_image_content(self):
+        result = OpenRouterImageParsing.build_image_content(
+            "data:image/png;base64,SGVsbG8="
+        )
+        assert result["type"] == "image_url"
+        assert result["image_url"]["url"] == "data:image/png;base64,SGVsbG8="
+
+
+class TestImageFetchAndProcess:
+    """Tests for fetch_image with mocked aiohttp responses."""
+
+    @staticmethod
+    def _make_mock_get(mock_response):
+        """Create a proper async context manager mock for session.get(url).
+
+        async with session.get(url) as resp requires:
+        - session.get(url) returns a coroutine
+        - that coroutine yields an object whose __aenter__ returns the response
+        - __aexit__ is also available
+        """
+        mock_get_context = AsyncMock()
+        mock_get_context.__aenter__.return_value = mock_response
+        mock_get_context.__aexit__.return_value = None
+        return mock_get_context
+
+    async def _run_fetch_test(self, mock_response, max_size=10485760):
+        """Helper to run fetch_image with proper mock setup."""
+        mock_get_context = self._make_mock_get(mock_response)
+        
+        mock_session = MagicMock()
+        mock_session.__aenter__.return_value = mock_session
+        mock_session.get = MagicMock(return_value=mock_get_context)
+
+        with patch("aiohttp.ClientSession", return_value=mock_session):
+            return await OpenRouterImageParsing.fetch_image(
+                "https://example.com/image.png", max_size=max_size
+            )
+
+    @pytest.mark.asyncio
+    async def test_fetch_image_success(self):
+        """A successful download returns bytes."""
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.headers = {"Content-Type": "image/png"}
+        mock_response.read.return_value = b"\x89PNG fake image bytes"
+
+        result = await self._run_fetch_test(mock_response)
+        assert result == b"\x89PNG fake image bytes"
+
+    @pytest.mark.asyncio
+    async def test_fetch_image_non_image_content_type(self):
+        """Non-image Content-Type returns None."""
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.headers = {"Content-Type": "text/html"}
+        mock_response.read.return_value = b"<html>not an image</html>"
+
+        result = await self._run_fetch_test(mock_response)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_fetch_image_exceeds_max_size(self):
+        """Image exceeding max_size returns None."""
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.headers = {"Content-Type": "image/png"}
+        mock_response.read.return_value = b"x" * 500
+
+        result = await self._run_fetch_test(mock_response, max_size=100)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_fetch_image_http_error(self):
+        """HTTP error returns None."""
+        mock_response = AsyncMock()
+        mock_response.status = 404
+
+        result = await self._run_fetch_test(mock_response)
+        assert result is None
 
 
 class TestOpenRouterWebFetch:

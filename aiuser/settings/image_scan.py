@@ -148,6 +148,35 @@ class ImageScanSettings(MixinMeta):
             await self.config.guild(ctx.guild).scan_images_model.set(model)
             return await ctx.send(embed=embed)
         
+    @imagescan.group(name="urls")
+    async def image_urls(self, _):
+        """ Configure scanning images from URLs in messages
+
+            (All subcommands are per server)
+        """
+        pass
+
+    @image_urls.command(name="toggle")
+    async def image_url_scanning(self, ctx: commands.Context):
+        """ Toggle scanning images from URLs in message text """
+        value = not (await self.config.guild(ctx.guild).openrouter_image_parsing_enabled())
+        await self.config.guild(ctx.guild).openrouter_image_parsing_enabled.set(value)
+        embed = discord.Embed(
+            title="Scanning Images from URLs now set to:",
+            description=f"`{value}`",
+            color=await ctx.embed_color())
+        return await ctx.send(embed=embed)
+
+    @image_urls.command(name="maxsize")
+    async def image_url_maxsize(self, ctx: commands.Context, size: float):
+        """ Set max download size in Megabytes for image URLs """
+        await self.config.guild(ctx.guild).openrouter_image_parsing_max_size.set(size * 1024 * 1024)
+        embed = discord.Embed(
+            title="Max download size for image URLs now set to:",
+            description=f"`{size:.2f}` MB",
+            color=await ctx.embed_color())
+        return await ctx.send(embed=embed)
+
     @imagescan.command(name="model")
     async def image_model(self, ctx: commands.Context, model_name: str):
         """ Set the specific LLM used in the `supported-llm` mode

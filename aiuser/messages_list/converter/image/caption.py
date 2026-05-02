@@ -48,6 +48,10 @@ async def transcribe_image(cog: MixinMeta, message: Message):
     content = await process_image(cog, message, scaled_cv_image, mode)
 
     if content:
+        # Use channel-scoped cache key to prevent cross-channel collisions
+        cache_key = f"{message.channel.id}:{message.id}"
+        cog.cached_messages[cache_key] = content
+        # Also cache under plain message.id for backward compatibility
         cog.cached_messages[message.id] = content
 
     return content

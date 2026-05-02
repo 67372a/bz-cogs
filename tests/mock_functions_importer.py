@@ -97,9 +97,13 @@ sys.modules["aiuser.functions.openrouter.image_generation"] = import_module_dire
 sys.modules["aiuser.functions.openrouter.pdf_parsing"] = import_module_directly(
     "aiuser.functions.openrouter.pdf_parsing", "aiuser/functions/openrouter/pdf_parsing.py"
 )
+sys.modules["aiuser.functions.openrouter.image_parsing"] = import_module_directly(
+    "aiuser.functions.openrouter.image_parsing", "aiuser/functions/openrouter/image_parsing.py"
+)
 
 # Re-export
 OpenRouterWebSearch = sys.modules["aiuser.functions.openrouter.web_search"].OpenRouterWebSearch
 OpenRouterWebFetch = sys.modules["aiuser.functions.openrouter.web_fetch"].OpenRouterWebFetch
 OpenRouterImageGeneration = sys.modules["aiuser.functions.openrouter.image_generation"].OpenRouterImageGeneration
 OpenRouterPdfParsing = sys.modules["aiuser.functions.openrouter.pdf_parsing"].OpenRouterPdfParsing
+OpenRouterImageParsing = sys.modules["aiuser.functions.openrouter.image_parsing"].OpenRouterImageParsing
