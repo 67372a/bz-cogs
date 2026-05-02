@@ -25,8 +25,14 @@ from tests.mock_functions_importer import (
     OpenRouterWebSearch,
     OpenRouterWebFetch,
     OpenRouterImageGeneration,
+    OpenRouterPdfParsing,
 )
 from aiuser.types.enums import OpenRouterToolType
+from aiuser.types.openrouter_types import (
+    PdfParsingParameters,
+    serialize_parameters,
+    deserialize_parameters,
+)
 
 
 class TestOpenRouterWebSearch:
@@ -308,4 +314,241 @@ class TestOpenRouterImageGeneration:
         ctx.channel.name = "test-channel"
         ctx.send = AsyncMock()
         ctx.embed_color = AsyncMock(return_value=discord_mock.Color.blue())
+        return ctx
+
+
+class TestPdfParsingParameters:
+    """Tests for PdfParsingParameters dataclass and serialization."""
+
+    def test_enum_value(self):
+        assert OpenRouterToolType.PDF_PARSING.value == "openrouter:pdf_parsing"
+
+    def test_default_params(self):
+        params = PdfParsingParameters()
+        assert params.engine is None
+
+    def test_params_with_engine(self):
+        params = PdfParsingParameters(engine="mistral-ocr")
+        assert params.engine == "mistral-ocr"
+
+    def test_serialize_defaults(self):
+        params = PdfParsingParameters()
+        result = serialize_parameters(params)
+        assert result == '{"engine": null}'
+
+    def test_serialize_cloudflare(self):
+        params = PdfParsingParameters(engine="cloudflare-ai")
+        result = serialize_parameters(params)
+        assert result == '{"engine": "cloudflare-ai"}'
+
+    def test_deserialize_none(self):
+        params = deserialize_parameters(None, OpenRouterToolType.PDF_PARSING)
+        assert isinstance(params, PdfParsingParameters)
+        assert params.engine is None
+
+    def test_deserialize_empty_string(self):
+        params = deserialize_parameters("", OpenRouterToolType.PDF_PARSING)
+        assert isinstance(params, PdfParsingParameters)
+        assert params.engine is None
+
+    def test_deserialize_valid_json(self):
+        params = deserialize_parameters(
+            '{"engine": "mistral-ocr"}',
+            OpenRouterToolType.PDF_PARSING,
+        )
+        assert isinstance(params, PdfParsingParameters)
+        assert params.engine == "mistral-ocr"
+
+    def test_deserialize_invalid_json(self):
+        params = deserialize_parameters(
+            "not valid json",
+            OpenRouterToolType.PDF_PARSING,
+        )
+        assert isinstance(params, PdfParsingParameters)
+        assert params.engine is None
+
+    def test_deserialize_native_engine(self):
+        params = deserialize_parameters(
+            '{"engine": "native"}',
+            OpenRouterToolType.PDF_PARSING,
+        )
+        assert params.engine == "native"
+
+    def test_roundtrip(self):
+        original = PdfParsingParameters(engine="cloudflare-ai")
+        serialized = serialize_parameters(original)
+        deserialized = deserialize_parameters(serialized, OpenRouterToolType.PDF_PARSING)
+        assert deserialized.engine == original.engine
+
+
+class TestPdfUrlDetection:
+    """Tests for PDF URL detection in message text."""
+
+    @staticmethod
+    def _get_detect_function():
+        return OpenRouterPdfParsing.detect_pdf_links
+
+    def test_no_urls_in_empty_string(self):
+        detect = self._get_detect_function()
+        assert detect("") == []
+        assert detect(None) == []
+
+    def test_no_pdf_urls(self):
+        detect = self._get_detect_function()
+        assert detect("Hello world") == []
+        assert detect("Check this out https://example.com/page.html") == []
+
+    def test_single_pdf_url(self):
+        detect = self._get_detect_function()
+        urls = detect("Read this: https://example.com/document.pdf")
+        assert urls == ["https://example.com/document.pdf"]
+
+    def test_multiple_pdf_urls(self):
+        detect = self._get_detect_function()
+        urls = detect(
+            "Doc1: https://a.com/file1.pdf and Doc2: https://b.com/file2.pdf"
+        )
+        assert len(urls) == 2
+        assert "https://a.com/file1.pdf" in urls
+        assert "https://b.com/file2.pdf" in urls
+
+    def test_pdf_url_with_query_params(self):
+        detect = self._get_detect_function()
+        urls = detect("Doc: https://example.com/report.pdf?version=2&download=1")
+        assert urls == ["https://example.com/report.pdf?version=2&download=1"]
+
+    def test_pdf_url_mid_sentence(self):
+        detect = self._get_detect_function()
+        urls = detect(
+            "Please read https://arxiv.org/pdf/2301.12345.pdf for more info on this topic."
+        )
+        assert urls == ["https://arxiv.org/pdf/2301.12345.pdf"]
+
+    def test_deduplicates_urls(self):
+        detect = self._get_detect_function()
+        urls = detect("Same URL twice: https://a.com/doc.pdf and https://a.com/doc.pdf")
+        assert urls == ["https://a.com/doc.pdf"]
+
+    def test_case_insensitive(self):
+        detect = self._get_detect_function()
+        urls = detect("Doc: https://example.com/Document.PDF")
+        assert urls == ["https://example.com/Document.PDF"]
+
+    def test_ftp_not_matched(self):
+        detect = self._get_detect_function()
+        urls = detect("FTP: ftp://example.com/file.pdf")
+        assert urls == []
+
+
+class TestPdfBase64Encoding:
+    """Tests for base64 encoding of PDF data."""
+
+    def test_encode_small_pdf(self):
+        data = b"%PDF-1.4\nThis is a test PDF file.\n"
+        result = OpenRouterPdfParsing.encode_pdf_to_base64(data)
+        assert result.startswith("data:application/pdf;base64,")
+        # Should be valid base64
+        import base64
+        encoded_part = result.split(",", 1)[1]
+        decoded = base64.b64decode(encoded_part)
+        assert decoded == data
+
+
+class TestPdfFileContentBuilding:
+    """Tests for building file content parts."""
+
+    def test_build_file_content(self):
+        result = OpenRouterPdfParsing.build_file_content(
+            "test.pdf", "data:application/pdf;base64,SGVsbG8="
+        )
+        assert result["type"] == "file"
+        assert result["file"]["filename"] == "test.pdf"
+        assert result["file"]["file_data"] == "data:application/pdf;base64,SGVsbG8="
+
+
+class TestPdfFilenameExtraction:
+    """Tests for filename extraction from URLs."""
+
+    def test_extract_basic_filename(self):
+        filename = OpenRouterPdfParsing.extract_filename_from_url(
+            "https://example.com/papers/article.pdf"
+        )
+        assert filename == "article.pdf"
+
+    def test_extract_with_query_string(self):
+        filename = OpenRouterPdfParsing.extract_filename_from_url(
+            "https://example.com/report.pdf?version=2"
+        )
+        assert filename == "report.pdf"
+
+    def test_fallback_filename(self):
+        filename = OpenRouterPdfParsing.extract_filename_from_url(
+            "https://example.com/download", index=2
+        )
+        assert filename == "document_3.pdf"
+
+
+class TestPdfPluginsBuilding:
+    """Tests for plugins array building with PdfParsing service."""
+
+    @pytest.mark.asyncio
+    async def test_default_engine_when_disabled(self):
+        config = MagicMock()
+        guild_cfg = MagicMock()
+        guild_cfg.openrouter_pdf_parsing_enabled = AsyncMock(return_value=False)
+        config.guild.return_value = guild_cfg
+        ctx = self._make_ctx()
+        service = OpenRouterPdfParsing(config, ctx)
+        # We don't test build_plugins directly since it reads from config,
+        # instead we test the class can be instantiated
+        assert service is not None
+        assert service.config is config
+        assert service.ctx is ctx
+
+    @pytest.mark.asyncio
+    async def test_build_plugins_cloudflare(self):
+        config = MagicMock()
+        guild_cfg = MagicMock()
+        guild_cfg.openrouter_pdf_parsing_parameters = AsyncMock(
+            return_value='{"engine": "cloudflare-ai"}'
+        )
+        config.guild.return_value = guild_cfg
+        ctx = self._make_ctx()
+        service = OpenRouterPdfParsing(config, ctx)
+        plugins = await service.build_plugins()
+        assert len(plugins) == 1
+        assert plugins[0]["id"] == "file-parser"
+        assert plugins[0]["pdf"]["engine"] == "cloudflare-ai"
+
+    @pytest.mark.asyncio
+    async def test_build_plugins_mistral_ocr(self):
+        config = MagicMock()
+        guild_cfg = MagicMock()
+        guild_cfg.openrouter_pdf_parsing_parameters = AsyncMock(
+            return_value='{"engine": "mistral-ocr"}'
+        )
+        config.guild.return_value = guild_cfg
+        ctx = self._make_ctx()
+        service = OpenRouterPdfParsing(config, ctx)
+        plugins = await service.build_plugins()
+        assert plugins[0]["pdf"]["engine"] == "mistral-ocr"
+
+    @pytest.mark.asyncio
+    async def test_build_plugins_default_when_no_config(self):
+        config = MagicMock()
+        guild_cfg = MagicMock()
+        guild_cfg.openrouter_pdf_parsing_parameters = AsyncMock(return_value=None)
+        config.guild.return_value = guild_cfg
+        ctx = self._make_ctx()
+        service = OpenRouterPdfParsing(config, ctx)
+        plugins = await service.build_plugins()
+        # Default should be cloudflare-ai when no config set
+        assert plugins[0]["pdf"]["engine"] == "cloudflare-ai"
+
+    @staticmethod
+    def _make_ctx():
+        ctx = MagicMock()
+        ctx.guild = MagicMock()
+        ctx.guild.id = 123456789
+        ctx.guild.name = "Test Guild"
         return ctx

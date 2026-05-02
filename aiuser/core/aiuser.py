@@ -54,6 +54,8 @@ class AIUser(
         self.cached_messages: Cache[int, MessageEntry] = Cache(limit=100)
         self.message_queues: dict[int, asyncio.Queue] = {}
         self.processing_tasks: dict[int, asyncio.Task] = {}
+        # PDF annotation cache: (channel_id, originating_user_message_id) -> list[dict]
+        self.pdf_annotations: dict[tuple[int, int], list[dict]] = {}
 
         self.config.register_member(**DEFAULT_MEMBER)
         self.config.register_role(**DEFAULT_ROLE)

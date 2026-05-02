@@ -113,6 +113,8 @@ DEFAULT_GUILD = {
     "openrouter_web_fetch_parameters": None,
     "openrouter_image_generation_enabled": False,
     "openrouter_image_generation_parameters": None,
+    "openrouter_pdf_parsing_enabled": False,
+    "openrouter_pdf_parsing_parameters": None,
 }
 
 DEFAULT_CHANNEL = {

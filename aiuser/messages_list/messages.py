@@ -338,9 +338,9 @@ class MessagesList:
         embed.description = f"{users}\nPlease choose whether to allow a subset of your Discord messages from any server with the bot, to be sent to OpenAI or an external party.\nThis will allow the bot to reply to your messages or use your messages.\nThis message will disappear if all current chatters have made a choice."
         await self.init_message.channel.send(embed=embed, view=view)
 
-    def get_json(self):
+    def get_json(self, annotations_for_assistant: list = None):
         messages_as_dict = []
-        for message in self.messages:
+        for i, message in enumerate(self.messages):
             msg_dict = {
                 "role": message.role,
                 "content": message.content,
@@ -357,9 +357,15 @@ class MessagesList:
 
             if hasattr(message, 'tool_call_id') and message.tool_call_id:
                 msg_dict["tool_call_id"] = message.tool_call_id
-            
+             
             if hasattr(message, 'reasoning_details') and message.reasoning_details:
                 msg_dict["reasoning_details"] = message.reasoning_details
+
+            # Inject PDF annotations into the first assistant message after a PDF user message
+            if annotations_for_assistant and message.role == "assistant" and not message.tool_calls:
+                msg_dict["annotations"] = annotations_for_assistant
+                # Only inject once
+                annotations_for_assistant = None
 
             messages_as_dict.append(msg_dict)
 

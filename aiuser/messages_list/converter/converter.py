@@ -41,6 +41,10 @@ class MessageConverter():
         """Converts a Discord message to ChatML format message(s)"""
         res = []
         role = "user" if message.author.id != self.bot_id else "assistant"
+        if not message.attachments and message.content:
+            await self.handle_pdf_urls(message, res, role)
+            if res:  # handle_pdf_urls fully handled the message
+                return res
         if message.attachments:
             await self.handle_attachment(message, res, role)
         elif message.stickers:
@@ -124,6 +128,53 @@ class MessageConverter():
             await self.add_entry(content, res, role)
             content = format_embed_text_content(message)
             await self.add_entry(content, res, role)
+
+    async def handle_pdf_urls(self, message: Message, res, role):
+        """Detect PDF URLs in message text, download and encode them as file content parts.
+        
+        This is a pre-processing step that happens before the main convert() logic.
+        When PDF URLs are found and openrouter_pdf_parsing is enabled, the PDFs are 
+        downloaded, base64-encoded, and added as file content parts to the messages array.
+        """
+        from aiuser.functions.openrouter.pdf_parsing import OpenRouterPdfParsing
+        
+        try:
+            pdf_enabled = await self.config.guild(message.guild).openrouter_pdf_parsing_enabled()
+            if not pdf_enabled:
+                return
+        except Exception:
+            return
+        
+        service = OpenRouterPdfParsing(self.config, self.ctx)
+        
+        # Only process the triggering message and messages it replies to
+        is_trigger = (self.init_msg.id == message.id) or (
+            self.init_msg.reference and self.init_msg.reference.message_id == message.id
+        )
+        if not is_trigger:
+            return
+        
+        file_contents, filenames = await service.process_message_for_pdfs(message.content)
+        
+        if not file_contents:
+            return
+        
+        logger.info(
+            f"Found {len(file_contents)} PDF(s) in message {message.id}: {', '.join(filenames)}"
+        )
+        
+        # Add file content parts as the first entry
+        content_parts = file_contents.copy()
+        
+        # Add text content after files if there is meaningful text
+        text_content = format_text_content(message)
+        if text_content:
+            content_parts.append({"type": "text", "text": text_content})
+        
+        res.append(MessageEntry(role, content_parts))
+        
+        # Mark that we've already added the text content so it's not duplicated
+        self._handled_pdf_text = True
 
     async def add_entry(self, content, res, role):
         if not content:

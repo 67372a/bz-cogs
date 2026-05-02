@@ -270,6 +270,16 @@ class FunctionCallingSettings(MixinMeta):
         """
         await self._toggle_openrouter_boolean(ctx, "openrouter_image_generation_enabled", "Image Generation")
 
+    @functions.command(name="or_pdf_parsing")
+    async def toggle_or_pdf_parsing(self, ctx: commands.Context):
+        """ Toggle OpenRouter PDF parsing
+
+        Enables/disables PDF parsing via OpenRouter's server-side file-parser plugin.
+        When enabled, PDF links in messages will be downloaded and sent to the LLM
+        for parsing. PDF attachments are also processed.
+        """
+        await self._toggle_openrouter_boolean(ctx, "openrouter_pdf_parsing_enabled", "PDF Parsing")
+
     # ─── OpenRouter Config Commands ────────────────────────────────────────────
 
     @functions.command(name="or_web_search_config")
@@ -469,6 +479,79 @@ class FunctionCallingSettings(MixinMeta):
 
         embed = discord.Embed(
             title="OpenRouter Image Generation Configuration Updated",
+            description=f"Parameters saved: {serialized}",
+            color=await ctx.embed_color(),
+        )
+        await ctx.send(embed=embed)
+
+    @functions.command(name="or_pdf_parsing_config")
+    async def config_or_pdf_parsing(self, ctx: commands.Context, *params):
+        """ Configure OpenRouter PDF parsing engine
+
+        Set parameters as key=value pairs. If no arguments provided, shows current config.
+        Parameters: engine (cloudflare-ai, mistral-ocr, or native)
+
+        Examples:
+        {ctx.clean_prefix}functions or_pdf_parsing_config engine=cloudflare-ai
+        {ctx.clean_prefix}functions or_pdf_parsing_config engine=mistral-ocr
+        """
+        from aiuser.types.openrouter_types import PdfParsingParameters
+
+        config_key = "openrouter_pdf_parsing_parameters"
+        tool_type = OpenRouterToolType.PDF_PARSING
+
+        if not params:
+            current_json = await getattr(self.config.guild(ctx.guild), config_key)()
+            params_obj = deserialize_parameters(current_json, tool_type)
+            embed = discord.Embed(
+                title="OpenRouter PDF Parsing Configuration",
+                color=await ctx.embed_color(),
+            )
+            for field_name, field_value in params_obj.__dict__.items():
+                if field_value is not None:
+                    embed.add_field(name=field_name, value=f"`{field_value}`", inline=True)
+            if not embed.fields:
+                embed.description = "No custom engine set. Using cloudflare-ai (free)."
+            embed.add_field(
+                name="Available Engines",
+                value="`cloudflare-ai` (free), `mistral-ocr` (paid), `native` (model-native only)",
+                inline=False,
+            )
+            embed.set_footer(text="Use key=value arguments to set parameters")
+            return await ctx.send(embed=embed)
+
+        current_json = await getattr(self.config.guild(ctx.guild), config_key)()
+        params_obj = deserialize_parameters(current_json, tool_type)
+        params_dict = params_obj.__dict__.copy()
+
+        for param in params:
+            if "=" not in param:
+                return await ctx.send(f"Invalid parameter format: `{param}`. Use `key=value`.")
+            key, value = param.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+
+            if key not in params_dict:
+                return await ctx.send(f"Unknown parameter: `{key}`. Valid: {', '.join(params_dict.keys())}.")
+
+            try:
+                if value.lower() == "null":
+                    params_dict[key] = None
+                elif key == "engine" and value not in ("cloudflare-ai", "mistral-ocr", "native"):
+                    return await ctx.send(
+                        f"Invalid engine: `{value}`. Valid: cloudflare-ai, mistral-ocr, native."
+                    )
+                else:
+                    params_dict[key] = value
+            except ValueError:
+                return await ctx.send(f"Invalid value for `{key}`: `{value}`.")
+
+        params_obj = PdfParsingParameters(**params_dict)
+        serialized = serialize_parameters(params_obj)
+        await getattr(self.config.guild(ctx.guild), config_key).set(serialized)
+
+        embed = discord.Embed(
+            title="OpenRouter PDF Parsing Configuration Updated",
             description=f"Parameters saved: {serialized}",
             color=await ctx.embed_color(),
         )

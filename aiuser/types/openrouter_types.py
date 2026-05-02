@@ -37,10 +37,16 @@ class ImageGenerationParameters:
     moderation: Optional[str] = None
 
 
+@dataclass
+class PdfParsingParameters:
+    engine: Optional[str] = None  # "cloudflare-ai", "mistral-ocr", or "native"
+
+
 _PARAM_CLASS_MAP = {
     OpenRouterToolType.WEB_SEARCH: WebSearchParameters,
     OpenRouterToolType.WEB_FETCH: WebFetchParameters,
     OpenRouterToolType.IMAGE_GENERATION: ImageGenerationParameters,
+    OpenRouterToolType.PDF_PARSING: PdfParsingParameters,
 }
 
 

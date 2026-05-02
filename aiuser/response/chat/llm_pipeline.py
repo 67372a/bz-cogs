@@ -151,6 +151,134 @@ class LLMPipeline:
             OpenRouterToolType.IMAGE_GENERATION.value,
         }
 
+    async def _build_plugins(self) -> List[dict]:
+        """Build the plugins array with configurable PDF parsing engine.
+
+        Reads the configured engine from guild config and returns
+        the file-parser plugin block. Defaults to 'cloudflare-ai'.
+
+        Returns:
+            List containing the file-parser plugin dict, or empty list
+            if PDF parsing is disabled.
+        """
+        from aiuser.functions.openrouter.pdf_parsing import OpenRouterPdfParsing
+        try:
+            pdf_enabled = await self.config.guild(self.ctx.guild).openrouter_pdf_parsing_enabled()
+            if not pdf_enabled:
+                return [{"id": "file-parser", "pdf": {"engine": "cloudflare-ai"}}]
+
+            service = OpenRouterPdfParsing(self.config, self.ctx)
+            return await service.build_plugins()
+        except Exception:
+            logger.warning(f"Error building PDF plugins, using default engine", exc_info=True)
+            return [{"id": "file-parser", "pdf": {"engine": "cloudflare-ai"}}]
+
+    async def _inject_pdf_annotations(self):
+        """Inject cached PDF annotations for reply-chain messages.
+
+        If the current message is a reply to a message that had PDFs processed,
+        the annotations from that original message are injected into the
+        conversation history to skip re-parsing costs.
+
+        This walks the reply chain back to find the original PDF message.
+        """
+        cog = self.bot.get_cog("AIUser")
+        if not cog or not hasattr(cog, "pdf_annotations"):
+            return
+
+        init_message = self.msg_list.init_message
+        if not init_message or not init_message.reference:
+            return
+
+        try:
+            # Try to find the original PDF message in the reply chain
+            original_msg = init_message.reference.resolved
+            if not original_msg and init_message.reference.message_id:
+                try:
+                    original_msg = await self.ctx.channel.fetch_message(
+                        init_message.reference.message_id
+                    )
+                except Exception:
+                    pass
+
+            if not original_msg:
+                return
+
+            cache_key = (self.ctx.channel.id, original_msg.id)
+            annotations = cog.pdf_annotations.get(cache_key)
+
+            if annotations:
+                logger.info(
+                    f"Injecting {len(annotations)} cached PDF annotation(s) from message {original_msg.id} "
+                    f"into reply chain for channel {self.ctx.channel.id}"
+                )
+                # Add a synthetic assistant message with annotations before dispatch
+                # This tells OpenRouter the PDFs were already parsed
+                if self.msg_list.messages:
+                    last_msg = self.msg_list.messages[-1]
+                    if not hasattr(last_msg, "annotations"):
+                        # We need to modify the messages dict directly for the API call
+                        # Store annotations in msg_list for get_json() to use
+                        self._cached_pdf_annotations = annotations
+        except Exception:
+            logger.warning("Error injecting PDF annotations for reply chain", exc_info=True)
+
+    def _store_pdf_annotations_from_response(self, response):
+        """Extract and cache file annotations from an API response.
+
+        OpenRouter responses include annotations with parsed file hashes
+        and content. Caching these allows reply chains to skip re-parsing.
+
+        Args:
+            response: The raw ChatCompletion response object.
+        """
+        cog = self.bot.get_cog("AIUser")
+        if not cog or not hasattr(cog, "pdf_annotations"):
+            return
+
+        try:
+            init_message = self.msg_list.init_message
+            if not init_message:
+                return
+
+            # Extract annotations from the response
+            annotations = None
+            if response.choices and len(response.choices) > 0:
+                message = response.choices[0].message
+                if hasattr(message, "annotations") and message.annotations:
+                    annotations = message.annotations
+                elif hasattr(message, "model_extra") and message.model_extra:
+                    annotations = message.model_extra.get("annotations")
+
+            if annotations:
+                cache_key = (self.ctx.channel.id, init_message.id)
+                cog.pdf_annotations[cache_key] = annotations
+                logger.info(
+                    f"Stored {len(annotations)} PDF annotation(s) for message {init_message.id} "
+                    f"in channel {self.ctx.channel.id}"
+                )
+
+                # Also cache for any bot messages in the reply chain so that
+                # the bot's own follow-ups can reference the original PDFs
+                if init_message.reference:
+                    try:
+                        original_msg = init_message.reference.resolved
+                        if not original_msg and init_message.reference.message_id:
+                            try:
+                                original_msg = self.ctx.channel.fetch_message(
+                                    init_message.reference.message_id
+                                )
+                            except Exception:
+                                pass
+                        if original_msg:
+                            cache_key = (self.ctx.channel.id, original_msg.id)
+                            if cache_key not in cog.pdf_annotations:
+                                cog.pdf_annotations[cache_key] = annotations
+                    except Exception:
+                        pass
+        except Exception:
+            logger.warning("Error storing PDF annotations", exc_info=True)
+
     async def setup_tools(self):
         if not (await self.config.guild(self.ctx.guild).function_calling()):
             self.enabled_tools = []
@@ -170,19 +298,25 @@ class LLMPipeline:
     async def call_client(
         self, kwargs: Dict[str, Any]
     ) -> Tuple[Optional[str], Optional[str], List[ChatCompletionMessageToolCall], Optional[List[Dict]]]:
-        current_messages_json = self.msg_list.get_json()
+        # Inject cached PDF annotations into the messages JSON if available
+        injected_annotations = getattr(self, "_cached_pdf_annotations", None)
+        current_messages_json = self.msg_list.get_json(
+            annotations_for_assistant=injected_annotations
+        )
 
-        plugins = [
-            {
-                "id": "file-parser",
-                "pdf": {
-                    "engine": "native"
-                }
-            }
-        ]
+        # Build plugins with configurable PDF parsing engine
+        plugins = await self._build_plugins()
 
         if 'extra_body' in kwargs:
-            kwargs['extra_body'].update({"plugins": plugins})
+            if isinstance(kwargs['extra_body'], dict):
+                if "plugins" in kwargs['extra_body']:
+                    # Merge if there are already plugins (unlikely but safe)
+                    existing = kwargs['extra_body'].get("plugins", [])
+                    kwargs['extra_body']["plugins"] = existing + plugins
+                else:
+                    kwargs['extra_body']["plugins"] = plugins
+            else:
+                kwargs['extra_body'] = {"plugins": plugins}
         else:
             kwargs['extra_body'] = {"plugins": plugins}
 
@@ -217,6 +351,9 @@ class LLMPipeline:
                 messages=current_messages_json, 
                 **kwargs
         )
+
+        # Store PDF annotations from response for reply-chain caching
+        self._store_pdf_annotations_from_response(response)
 
         if response.usage:
             logger.info(
@@ -268,6 +405,7 @@ class LLMPipeline:
     async def create_completion(self) -> Tuple[Optional[str], Optional[str]]:
         custom_kwargs = await self.get_custom_parameters()
         await self.setup_tools()
+        await self._inject_pdf_annotations()
 
         current_llm_text_response: Optional[str] = None
         current_llm_text_reasoning: Optional[str] = None

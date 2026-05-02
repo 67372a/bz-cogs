@@ -66,6 +66,7 @@ OpenRouterToolType = _enums.OpenRouterToolType  # noqa: F811
 WebSearchParameters = _openrouter_types.WebSearchParameters
 WebFetchParameters = _openrouter_types.WebFetchParameters
 ImageGenerationParameters = _openrouter_types.ImageGenerationParameters
+PdfParsingParameters = _openrouter_types.PdfParsingParameters
 build_openrouter_tool_dict = _openrouter_types.build_openrouter_tool_dict
 serialize_parameters = _openrouter_types.serialize_parameters
 deserialize_parameters = _openrouter_types.deserialize_parameters
