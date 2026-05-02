@@ -1,6 +1,7 @@
 
 import json
 import logging
+from dataclasses import fields
 
 import discord
 from redbot.core import checks, commands
@@ -282,278 +283,220 @@ class FunctionCallingSettings(MixinMeta):
 
     # ─── OpenRouter Config Commands ────────────────────────────────────────────
 
-    @functions.command(name="or_web_search_config")
-    async def config_or_web_search(self, ctx: commands.Context, *params):
-        """ Configure OpenRouter web search parameters
+    async def _handle_or_json_config(
+        self,
+        ctx: commands.Context,
+        config_key: str,
+        tool_type: OpenRouterToolType,
+        param_display_name: str,
+        example_config: dict,
+        *,
+        json_block: str,
+        extra_help: str = "",
+    ):
+        """Shared helper for OpenRouter *config commands using JSON.
 
-        Set parameters as key=value pairs. If no arguments provided, shows current config.
-        Parameters: engine, max_results, max_total_results, search_context_size,
-        allowed_domains, excluded_domains
-
-        Examples:
-        {ctx.clean_prefix}functions or_web_search_config engine=exa max_results=10
-        {ctx.clean_prefix}functions or_web_search_config allowed_domains='["arxiv.org","nature.com"]'
+        Matches the pattern of `[p]aiuser response parameters`:
+        - No args or 'show'/'list' → shows current config + example
+        - 'reset'/'clear' → resets to defaults
+        - JSON code block → sets parameters
         """
-        config_key = "openrouter_web_search_parameters"
-        tool_type = OpenRouterToolType.WEB_SEARCH
+        from aiuser.types.openrouter_types import _PARAM_CLASS_MAP
 
-        if not params:
+        param_class = _PARAM_CLASS_MAP.get(tool_type)
+
+        if not json_block or json_block in ('show', 'list'):
             # Show current config
             current_json = await getattr(self.config.guild(ctx.guild), config_key)()
             params_obj = deserialize_parameters(current_json, tool_type)
+
             embed = discord.Embed(
-                title="OpenRouter Web Search Configuration",
+                title=f"OpenRouter {param_display_name} Configuration",
                 color=await ctx.embed_color(),
             )
-            for field_name, field_value in params_obj.__dict__.items():
-                if field_value is not None:
+
+            # Current settings
+            current_fields = {f.name: getattr(params_obj, f.name) for f in fields(param_class)}
+            non_null = {k: v for k, v in current_fields.items() if v is not None}
+            if non_null:
+                for field_name, field_value in non_null.items():
                     embed.add_field(name=field_name, value=f"`{field_value}`", inline=True)
-            if not embed.fields:
-                embed.description = "No custom parameters set. Using OpenRouter defaults."
-            embed.set_footer(text="Use key=value arguments to set parameters")
-            return await ctx.send(embed=embed)
+            else:
+                embed.add_field(name="Current", value="No custom parameters set. Using OpenRouter defaults.", inline=False)
 
-        # Parse key=value pairs and update config
-        current_json = await getattr(self.config.guild(ctx.guild), config_key)()
-        params_obj = deserialize_parameters(current_json, tool_type)
-        params_dict = params_obj.__dict__.copy()
-
-        for param in params:
-            if "=" not in param:
-                return await ctx.send(f"Invalid parameter format: `{param}`. Use `key=value`.")
-            key, value = param.split("=", 1)
-            key = key.strip()
-            value = value.strip()
-
-            if key not in params_dict:
-                return await ctx.send(f"Unknown parameter: `{key}`. Valid: {', '.join(params_dict.keys())}.")
-
-            # Parse value types
-            try:
-                if key in ("max_results", "max_total_results"):
-                    params_dict[key] = int(value)
-                elif key in ("allowed_domains", "excluded_domains"):
-                    params_dict[key] = json.loads(value) if value.lower() != "null" else None
-                elif key == "user_location":
-                    params_dict[key] = json.loads(value) if value.lower() != "null" else None
-                elif value.lower() == "null":
-                    params_dict[key] = None
-                else:
-                    params_dict[key] = value
-            except (json.JSONDecodeError, ValueError):
-                return await ctx.send(f"Invalid value for `{key}`: `{value}`.")
-
-        params_obj = WebSearchParameters(**params_dict)
-        serialized = serialize_parameters(params_obj)
-        await getattr(self.config.guild(ctx.guild), config_key).set(serialized)
-
-        embed = discord.Embed(
-            title="OpenRouter Web Search Configuration Updated",
-            description=f"Parameters saved: {serialized}",
-            color=await ctx.embed_color(),
-        )
-        await ctx.send(embed=embed)
-
-    @functions.command(name="or_web_fetch_config")
-    async def config_or_web_fetch(self, ctx: commands.Context, *params):
-        """ Configure OpenRouter web fetch parameters
-
-        Set parameters as key=value pairs. If no arguments provided, shows current config.
-        Parameters: engine, max_uses, max_content_tokens, allowed_domains, blocked_domains
-
-        Examples:
-        {ctx.clean_prefix}functions or_web_fetch_config engine=firecrawl max_uses=5
-        """
-        config_key = "openrouter_web_fetch_parameters"
-        tool_type = OpenRouterToolType.WEB_FETCH
-
-        if not params:
-            current_json = await getattr(self.config.guild(ctx.guild), config_key)()
-            params_obj = deserialize_parameters(current_json, tool_type)
-            embed = discord.Embed(
-                title="OpenRouter Web Fetch Configuration",
-                color=await ctx.embed_color(),
-            )
-            for field_name, field_value in params_obj.__dict__.items():
-                if field_value is not None:
-                    embed.add_field(name=field_name, value=f"`{field_value}`", inline=True)
-            if not embed.fields:
-                embed.description = "No custom parameters set. Using OpenRouter defaults."
-            embed.set_footer(text="Use key=value arguments to set parameters")
-            return await ctx.send(embed=embed)
-
-        current_json = await getattr(self.config.guild(ctx.guild), config_key)()
-        params_obj = deserialize_parameters(current_json, tool_type)
-        params_dict = params_obj.__dict__.copy()
-
-        for param in params:
-            if "=" not in param:
-                return await ctx.send(f"Invalid parameter format: `{param}`. Use `key=value`.")
-            key, value = param.split("=", 1)
-            key = key.strip()
-            value = value.strip()
-
-            if key not in params_dict:
-                return await ctx.send(f"Unknown parameter: `{key}`. Valid: {', '.join(params_dict.keys())}.")
-
-            try:
-                if key in ("max_uses", "max_content_tokens"):
-                    params_dict[key] = int(value)
-                elif key in ("allowed_domains", "blocked_domains"):
-                    params_dict[key] = json.loads(value) if value.lower() != "null" else None
-                elif value.lower() == "null":
-                    params_dict[key] = None
-                else:
-                    params_dict[key] = value
-            except (json.JSONDecodeError, ValueError):
-                return await ctx.send(f"Invalid value for `{key}`: `{value}`.")
-
-        params_obj = WebFetchParameters(**params_dict)
-        serialized = serialize_parameters(params_obj)
-        await getattr(self.config.guild(ctx.guild), config_key).set(serialized)
-
-        embed = discord.Embed(
-            title="OpenRouter Web Fetch Configuration Updated",
-            description=f"Parameters saved: {serialized}",
-            color=await ctx.embed_color(),
-        )
-        await ctx.send(embed=embed)
-
-    @functions.command(name="or_image_gen_config")
-    async def config_or_image_gen(self, ctx: commands.Context, *params):
-        """ Configure OpenRouter image generation parameters
-
-        Set parameters as key=value pairs. If no arguments provided, shows current config.
-        Parameters: model, quality, size, aspect_ratio, background, output_format,
-        output_compression, moderation
-
-        Examples:
-        {ctx.clean_prefix}functions or_image_gen_config model=openai/dall-e-3 quality=high
-        {ctx.clean_prefix}functions or_image_gen_config size=1024x1024 output_format=png
-        """
-        config_key = "openrouter_image_generation_parameters"
-        tool_type = OpenRouterToolType.IMAGE_GENERATION
-
-        if not params:
-            current_json = await getattr(self.config.guild(ctx.guild), config_key)()
-            params_obj = deserialize_parameters(current_json, tool_type)
-            embed = discord.Embed(
-                title="OpenRouter Image Generation Configuration",
-                color=await ctx.embed_color(),
-            )
-            for field_name, field_value in params_obj.__dict__.items():
-                if field_value is not None:
-                    embed.add_field(name=field_name, value=f"`{field_value}`", inline=True)
-            if not embed.fields:
-                embed.description = "No custom parameters set. Using OpenRouter defaults."
-            embed.set_footer(text="Use key=value arguments to set parameters")
-            return await ctx.send(embed=embed)
-
-        current_json = await getattr(self.config.guild(ctx.guild), config_key)()
-        params_obj = deserialize_parameters(current_json, tool_type)
-        params_dict = params_obj.__dict__.copy()
-
-        for param in params:
-            if "=" not in param:
-                return await ctx.send(f"Invalid parameter format: `{param}`. Use `key=value`.")
-            key, value = param.split("=", 1)
-            key = key.strip()
-            value = value.strip()
-
-            if key not in params_dict:
-                return await ctx.send(f"Unknown parameter: `{key}`. Valid: {', '.join(params_dict.keys())}.")
-
-            try:
-                if key == "output_compression":
-                    params_dict[key] = int(value)
-                elif value.lower() == "null":
-                    params_dict[key] = None
-                else:
-                    params_dict[key] = value
-            except ValueError:
-                return await ctx.send(f"Invalid value for `{key}`: `{value}`.")
-
-        params_obj = ImageGenerationParameters(**params_dict)
-        serialized = serialize_parameters(params_obj)
-        await getattr(self.config.guild(ctx.guild), config_key).set(serialized)
-
-        embed = discord.Embed(
-            title="OpenRouter Image Generation Configuration Updated",
-            description=f"Parameters saved: {serialized}",
-            color=await ctx.embed_color(),
-        )
-        await ctx.send(embed=embed)
-
-    @functions.command(name="or_pdf_parsing_config")
-    async def config_or_pdf_parsing(self, ctx: commands.Context, *params):
-        """ Configure OpenRouter PDF parsing engine
-
-        Set parameters as key=value pairs. If no arguments provided, shows current config.
-        Parameters: engine (cloudflare-ai, mistral-ocr, or native)
-
-        Examples:
-        {ctx.clean_prefix}functions or_pdf_parsing_config engine=cloudflare-ai
-        {ctx.clean_prefix}functions or_pdf_parsing_config engine=mistral-ocr
-        """
-        from aiuser.types.openrouter_types import PdfParsingParameters
-
-        config_key = "openrouter_pdf_parsing_parameters"
-        tool_type = OpenRouterToolType.PDF_PARSING
-
-        if not params:
-            current_json = await getattr(self.config.guild(ctx.guild), config_key)()
-            params_obj = deserialize_parameters(current_json, tool_type)
-            embed = discord.Embed(
-                title="OpenRouter PDF Parsing Configuration",
-                color=await ctx.embed_color(),
-            )
-            for field_name, field_value in params_obj.__dict__.items():
-                if field_value is not None:
-                    embed.add_field(name=field_name, value=f"`{field_value}`", inline=True)
-            if not embed.fields:
-                embed.description = "No custom engine set. Using cloudflare-ai (free)."
+            # Example reference
+            example_json = json.dumps(example_config, indent=2)
             embed.add_field(
-                name="Available Engines",
-                value="`cloudflare-ai` (free), `mistral-ocr` (paid), `native` (model-native only)",
+                name="Reference Example (JSON)",
+                value=f"```json\n{example_json}\n```",
                 inline=False,
             )
-            embed.set_footer(text="Use key=value arguments to set parameters")
+
+            # Usage instructions
+            usage = (
+                f"• Set: `{ctx.clean_prefix}functions {tool_type.value.replace(':', '_')}_config "
+                f"```json\n{'{...}'}\n``` `\n"
+                f"• Reset: `{ctx.clean_prefix}functions {tool_type.value.replace(':', '_')}_config reset`"
+            )
+            if extra_help:
+                usage += f"\n{extra_help}"
+            embed.add_field(name="Usage", value=usage, inline=False)
+
             return await ctx.send(embed=embed)
 
-        current_json = await getattr(self.config.guild(ctx.guild), config_key)()
-        params_obj = deserialize_parameters(current_json, tool_type)
-        params_dict = params_obj.__dict__.copy()
+        if json_block in ('reset', 'clear'):
+            await getattr(self.config.guild(ctx.guild), config_key).set(None)
+            return await ctx.send(f"OpenRouter {param_display_name} configuration reset to defaults.")
 
-        for param in params:
-            if "=" not in param:
-                return await ctx.send(f"Invalid parameter format: `{param}`. Use `key=value`.")
-            key, value = param.split("=", 1)
-            key = key.strip()
-            value = value.strip()
+        # Parse JSON block
+        raw = json_block
+        if raw.startswith("```"):
+            raw = raw.replace("```json", "").replace("```", "").strip()
 
-            if key not in params_dict:
-                return await ctx.send(f"Unknown parameter: `{key}`. Valid: {', '.join(params_dict.keys())}.")
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return await ctx.send(":warning: Invalid JSON format!")
 
-            try:
-                if value.lower() == "null":
-                    params_dict[key] = None
-                elif key == "engine" and value not in ("cloudflare-ai", "mistral-ocr", "native"):
-                    return await ctx.send(
-                        f"Invalid engine: `{value}`. Valid: cloudflare-ai, mistral-ocr, native."
-                    )
-                else:
-                    params_dict[key] = value
-            except ValueError:
-                return await ctx.send(f"Invalid value for `{key}`: `{value}`.")
+        if not isinstance(data, dict):
+            return await ctx.send(":warning: Expected a JSON object.")
 
-        params_obj = PdfParsingParameters(**params_dict)
+        # Filter to only valid fields
+        valid_fields = {f.name for f in fields(param_class)}
+        unknown_keys = [k for k in data if k not in valid_fields]
+        if unknown_keys:
+            await ctx.send(
+                f":warning: Unknown key(s): {', '.join(f'`{k}`' for k in unknown_keys)}. "
+                f"Valid keys: {', '.join(f'`{k}`' for k in valid_fields)}."
+            )
+            # Still proceed with valid keys only
+            data = {k: v for k, v in data.items() if k in valid_fields}
+
+        # Rebuild using the dataclass (validates types implicitly)
+        try:
+            params_obj = param_class(**{k: v for k, v in data.items() if k in valid_fields})
+        except TypeError as e:
+            return await ctx.send(f":warning: Invalid parameter values: {e}")
+
         serialized = serialize_parameters(params_obj)
         await getattr(self.config.guild(ctx.guild), config_key).set(serialized)
 
         embed = discord.Embed(
-            title="OpenRouter PDF Parsing Configuration Updated",
+            title=f"OpenRouter {param_display_name} Configuration Updated",
             description=f"Parameters saved: {serialized}",
             color=await ctx.embed_color(),
         )
         await ctx.send(embed=embed)
+
+    @functions.command(name="or_web_search_config")
+    async def config_or_web_search(self, ctx: commands.Context, *, json_block: str = ""):
+        """ Configure OpenRouter web search parameters using JSON
+
+        To reset parameters to default, use `{ctx.clean_prefix}functions or_web_search_config reset`
+        To show current parameters, use `{ctx.clean_prefix}functions or_web_search_config show`
+
+        Example command:
+        `{ctx.clean_prefix}functions or_web_search_config ```json\n{"engine": "exa", "max_results": 10}\n``` `
+
+        Valid fields: engine, max_results, max_total_results, search_context_size,
+        user_location, allowed_domains, excluded_domains
+        """
+        await self._handle_or_json_config(
+            ctx=ctx,
+            config_key="openrouter_web_search_parameters",
+            tool_type=OpenRouterToolType.WEB_SEARCH,
+            param_display_name="Web Search",
+            example_config={
+                "engine": "exa",
+                "max_results": 10,
+                "max_total_results": 100,
+                "search_context_size": "medium",
+                "user_location": None,
+                "allowed_domains": ["arxiv.org", "nature.com"],
+                "excluded_domains": None,
+            },
+            json_block=json_block,
+        )
+
+    @functions.command(name="or_web_fetch_config")
+    async def config_or_web_fetch(self, ctx: commands.Context, *, json_block: str = ""):
+        """ Configure OpenRouter web fetch parameters using JSON
+
+        To reset parameters to default, use `{ctx.clean_prefix}functions or_web_fetch_config reset`
+        To show current parameters, use `{ctx.clean_prefix}functions or_web_fetch_config show`
+
+        Example command:
+        `{ctx.clean_prefix}functions or_web_fetch_config ```json\n{"engine": "firecrawl", "max_uses": 5}\n``` `
+
+        Valid fields: engine, max_uses, max_content_tokens, allowed_domains, blocked_domains
+        """
+        await self._handle_or_json_config(
+            ctx=ctx,
+            config_key="openrouter_web_fetch_parameters",
+            tool_type=OpenRouterToolType.WEB_FETCH,
+            param_display_name="Web Fetch",
+            example_config={
+                "engine": "firecrawl",
+                "max_uses": 5,
+                "max_content_tokens": 8000,
+                "allowed_domains": None,
+                "blocked_domains": ["example.com"],
+            },
+            json_block=json_block,
+        )
+
+    @functions.command(name="or_image_gen_config")
+    async def config_or_image_gen(self, ctx: commands.Context, *, json_block: str = ""):
+        """ Configure OpenRouter image generation parameters using JSON
+
+        To reset parameters to default, use `{ctx.clean_prefix}functions or_image_gen_config reset`
+        To show current parameters, use `{ctx.clean_prefix}functions or_image_gen_config show`
+
+        Example command:
+        `{ctx.clean_prefix}functions or_image_gen_config ```json\n{"model": "openai/dall-e-3", "quality": "high"}\n``` `
+
+        Valid fields: model, quality, size, aspect_ratio, background, output_format,
+        output_compression, moderation
+        """
+        await self._handle_or_json_config(
+            ctx=ctx,
+            config_key="openrouter_image_generation_parameters",
+            tool_type=OpenRouterToolType.IMAGE_GENERATION,
+            param_display_name="Image Generation",
+            example_config={
+                "model": "openai/dall-e-3",
+                "quality": "high",
+                "size": "1024x1024",
+                "aspect_ratio": None,
+                "background": None,
+                "output_format": "png",
+                "output_compression": None,
+                "moderation": None,
+            },
+            json_block=json_block,
+        )
+
+    @functions.command(name="or_pdf_parsing_config")
+    async def config_or_pdf_parsing(self, ctx: commands.Context, *, json_block: str = ""):
+        """ Configure OpenRouter PDF parsing engine using JSON
+
+        To reset parameters to default, use `{ctx.clean_prefix}functions or_pdf_parsing_config reset`
+        To show current parameters, use `{ctx.clean_prefix}functions or_pdf_parsing_config show`
+
+        Example command:
+        `{ctx.clean_prefix}functions or_pdf_parsing_config ```json\n{"engine": "cloudflare-ai"}\n``` `
+
+        Valid fields: engine (cloudflare-ai, mistral-ocr, or native)
+        """
+        await self._handle_or_json_config(
+            ctx=ctx,
+            config_key="openrouter_pdf_parsing_parameters",
+            tool_type=OpenRouterToolType.PDF_PARSING,
+            param_display_name="PDF Parsing",
+            example_config={
+                "engine": "cloudflare-ai",
+            },
+            json_block=json_block,
+            extra_help="Available engines: `cloudflare-ai` (free), `mistral-ocr` (paid), `native` (model-native only)",
+        )
 
