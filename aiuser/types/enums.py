@@ -11,3 +11,8 @@ class MentionType(Enum):
     USER = auto()
     ROLE = auto()
     CHANNEL = auto()
+
+class OpenRouterToolType(Enum):
+    WEB_SEARCH = "openrouter:web_search"
+    WEB_FETCH = "openrouter:web_fetch"
+    IMAGE_GENERATION = "openrouter:image_generation"

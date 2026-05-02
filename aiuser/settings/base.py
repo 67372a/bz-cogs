@@ -141,6 +141,16 @@ class Settings(
             value=f"`{len(await get_enabled_tools(self.config, ctx))}`",
         )
 
+        # OpenRouter server tools status
+        or_web_search = await self.config.guild(ctx.guild).openrouter_web_search_enabled()
+        or_web_fetch = await self.config.guild(ctx.guild).openrouter_web_fetch_enabled()
+        or_image_gen = await self.config.guild(ctx.guild).openrouter_image_generation_enabled()
+        main_embed.add_field(
+            name="OpenRouter Server Tools",
+            inline=True,
+            value=f"Search: `{or_web_search}`\nFetch: `{or_web_fetch}`\nImage: `{or_image_gen}`",
+        )
+
         main_embed.add_field(
             name="",
             inline=True,

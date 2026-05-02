@@ -107,6 +107,12 @@ DEFAULT_GUILD = {
     "grok_trigger": False,
     "custom_model_tokens_limit": None,
     "always_reply_on_words": [],
+    "openrouter_web_search_enabled": False,
+    "openrouter_web_search_parameters": None,
+    "openrouter_web_fetch_enabled": False,
+    "openrouter_web_fetch_parameters": None,
+    "openrouter_image_generation_enabled": False,
+    "openrouter_image_generation_parameters": None,
 }
 
 DEFAULT_CHANNEL = {

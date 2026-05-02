@@ -1,3 +1,29 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build outputs
+/build/
+/dist/
+/.next/
+/out/
+
+# Testing artifacts
+/coverage/
+
+# Environment variables
+.env
+.env.*
+
+# Large data files
+*.csv
+*.xlsx
+*.sqlite
+
+# Generated/minified code
+*.min.js
+*.map
+
 .redbot-data/
 .python-version
 .dashboard-venv/
@@ -144,6 +170,10 @@ cython_debug/
 
 # PyCharm
 .idea/
-*.code-workspace
 
-memory-bank/
+# Not relevant
+bittensorimg/
+oneletteronly/
+aimage/
+aiemote/
+.github/

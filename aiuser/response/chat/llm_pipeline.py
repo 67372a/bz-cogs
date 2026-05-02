@@ -25,7 +25,13 @@ from aiuser.config.models import (
 from aiuser.functions.tool_call import ToolCall
 from aiuser.functions.types import ToolCallSchema
 from aiuser.messages_list.messages import MessagesList
+from aiuser.functions.openrouter import (
+    OpenRouterWebSearch,
+    OpenRouterWebFetch,
+    OpenRouterImageGeneration,
+)
 from aiuser.types.abc import MixinMeta
+from aiuser.types.enums import OpenRouterToolType
 from aiuser.utils.utilities import get_enabled_tools
 
 # --- Predicate function for tenacity ---
@@ -80,6 +86,7 @@ class LLMPipeline:
         self.openai_client = cog.openai_client
         self.enabled_tools: List[ToolCall] = []
         self.available_tools_schemas: List[ToolCallSchema] = []
+        self.openrouter_tools: List[dict] = []
         self.completion: Optional[str] = None # Stores the *final* text completion
         self.reasoning: Optional[str] = None # Stores the *final* text reasoning
 
@@ -110,15 +117,55 @@ class LLMPipeline:
 
         return kwargs
 
+    async def get_openrouter_tools(self) -> List[dict]:
+        """Build list of OpenRouter server tool dicts based on config.
+
+        Checks each of the 3 OpenRouter tool config booleans. If enabled,
+        instantiates the corresponding class and calls get_tool_dict().
+
+        Returns:
+            List of dicts like [{"type": "openrouter:web_search", "parameters": {...}}]
+        """
+        openrouter_tools: List[dict] = []
+
+        if await self.config.guild(self.ctx.guild).openrouter_web_search_enabled():
+            tool = OpenRouterWebSearch(self.config, self.ctx)
+            openrouter_tools.append(await tool.get_tool_dict())
+
+        if await self.config.guild(self.ctx.guild).openrouter_web_fetch_enabled():
+            tool = OpenRouterWebFetch(self.config, self.ctx)
+            openrouter_tools.append(await tool.get_tool_dict())
+
+        if await self.config.guild(self.ctx.guild).openrouter_image_generation_enabled():
+            tool = OpenRouterImageGeneration(self.config, self.ctx)
+            openrouter_tools.append(await tool.get_tool_dict())
+
+        return openrouter_tools
+
+    @staticmethod
+    def _is_openrouter_tool_name(tool_name: str) -> bool:
+        """Check if a tool name matches an OpenRouter server tool type."""
+        return tool_name in {
+            OpenRouterToolType.WEB_SEARCH.value,
+            OpenRouterToolType.WEB_FETCH.value,
+            OpenRouterToolType.IMAGE_GENERATION.value,
+        }
+
     async def setup_tools(self):
         if not (await self.config.guild(self.ctx.guild).function_calling()):
             self.enabled_tools = []
             self.available_tools_schemas = []
+            self.openrouter_tools = []
             return
         self.enabled_tools = await get_enabled_tools(self.config, self.ctx)
         self.available_tools_schemas = [
             tool.schema for tool in self.enabled_tools
         ]
+        self.openrouter_tools = await self.get_openrouter_tools()
+        if self.openrouter_tools:
+            logger.info(
+                f"OpenRouter server tools enabled for guild {self.ctx.guild.name}: {[t.get('type', 'unknown') for t in self.openrouter_tools]}"
+            )
 
     async def call_client(
         self, kwargs: Dict[str, Any]
@@ -227,10 +274,10 @@ class LLMPipeline:
 
         kwargs1 = custom_kwargs.copy()
 
-        if self.available_tools_schemas:
+        if self.available_tools_schemas or self.openrouter_tools:
             kwargs1["tools"] = [
                 asdict(schema) for schema in self.available_tools_schemas
-            ]
+            ] + self.openrouter_tools
             kwargs1["tool_choice"] = "auto"
 
             if "gemini-3" in self.model.lower():
@@ -251,14 +298,30 @@ class LLMPipeline:
         )
 
         if response_tool_calls:
-            await self._process_and_add_tool_results(response_tool_calls)
+            # Filter out OpenRouter server tool calls - they're handled server-side
+            local_tool_calls = [
+                tc for tc in response_tool_calls
+                if not self._is_openrouter_tool_name(tc.function.name)
+            ]
+            openrouter_tool_calls = [
+                tc for tc in response_tool_calls
+                if self._is_openrouter_tool_name(tc.function.name)
+            ]
+
+            if openrouter_tool_calls:
+                logger.info(
+                    f"OpenRouter server tool calls detected: {[tc.function.name for tc in openrouter_tool_calls]}"
+                )
+
+            if local_tool_calls:
+                await self._process_and_add_tool_results(local_tool_calls)
 
             kwargs2 = custom_kwargs.copy()
 
             # Prevent further function calls
             kwargs2["tools"] = [
                 asdict(schema) for schema in self.available_tools_schemas
-            ]
+            ] + self.openrouter_tools
             kwargs2["tool_choice"] = "none"
 
             if "gemini-3" in self.model.lower():
@@ -275,7 +338,11 @@ class LLMPipeline:
                 index=len(self.msg_list) + 1
             )
 
-            # 2. Combine the previous text with the new text for the final Discord message
+            # Process OpenRouter server tool response artifacts (e.g., image URLs)
+            if openrouter_tool_calls and tool_response_text:
+                await self._process_openrouter_tool_results(openrouter_tool_calls, tool_response_text)
+
+            # Combine the previous text with the new text for the final Discord message
             if current_llm_text_response and tool_response_text:
                 # Fix for models (like Gemini 3.0) that repeat the pre-tool text in the post-tool response
                 if tool_response_text.strip().startswith(current_llm_text_response.strip()):
@@ -363,6 +430,41 @@ class LLMPipeline:
             f'Tool "{tool_name}" not found or not enabled in guild {self.ctx.guild.name}.'
         )
         return f"Error: Tool '{tool_name}' is not available or not recognized."
+
+    async def _process_openrouter_tool_results(
+        self,
+        tool_calls: List[ChatCompletionMessageToolCall],
+        response_text: str,
+    ):
+        """Process OpenRouter server tool results from the response.
+
+        OpenRouter server tools are handled entirely server-side. The results
+        are returned to the model automatically. This method processes any
+        response artifacts that need client-side handling (e.g., sending
+        generated image URLs to Discord).
+
+        Args:
+            tool_calls: The server tool calls from the LLM response.
+            response_text: The model's text response after tool execution.
+        """
+        for tool_call in tool_calls:
+            tool_name = tool_call.function.name
+
+            if tool_name == OpenRouterToolType.IMAGE_GENERATION.value:
+                logger.info(
+                    f"Processing image_generation server tool response for guild {self.ctx.guild.name}"
+                )
+                await OpenRouterImageGeneration.handle_tool_response_content(
+                    response_text, self.ctx
+                )
+            elif tool_name == OpenRouterToolType.WEB_SEARCH.value:
+                logger.info(
+                    f"Web search server tool was used by the model in guild {self.ctx.guild.name}"
+                )
+            elif tool_name == OpenRouterToolType.WEB_FETCH.value:
+                logger.info(
+                    f"Web fetch server tool was used by the model in guild {self.ctx.guild.name}"
+                )
 
     async def run(self) -> Tuple[str|None, str|None]:
         try:
