@@ -61,7 +61,7 @@ def is_response_unsatisfactory(response: ChatCompletion) -> bool:
 
     # These are the reasons we might get an empty but otherwise valid response.
     # We want to retry in these cases if the content is empty.
-    retryable_reasons = {'stop', 'length', 'content_filter'}
+    retryable_reasons = {'stop', 'error', 'content_filter'}
     
     if finish_reason in retryable_reasons:
         # If content is None or just whitespace, it's unsatisfactory.
