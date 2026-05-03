@@ -107,144 +107,170 @@ async def send_reasoning(ctx: commands.Context, reasoning: str, can_reply: bool,
     return True
 
 async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_list: MessagesList) -> bool:
+    """Create and send a chat response using the two-phase pipeline.
+
+    Phase 1: first LLM call.
+    - If no tool calls: send text as a single message, done.
+    - If tool calls and pre-text is complete: send pre-text immediately (early output),
+      then proceed to phase 2.
+    - If tool calls and pre-text incomplete: wait for phase 2 to send combined message.
+
+    Phase 2: execute tools + second LLM call.
+    - Sends final text + images as a single combined Discord message
+      (embed with file attachments).
+    """
     pipeline = LLMPipeline(cog, ctx, messages=messages_list)
-    response_parts, response, reasoning = await pipeline.run()
-    if not response and not response_parts:
+
+    # ---- Phase 1: First LLM call ----
+    pre_text, reasoning, has_tools, is_incomplete = await pipeline.phase1()
+
+    if not pre_text and not has_tools:
         return False
 
     recent_authors = [
         msg.author async for msg in ctx.channel.history(limit=20)
         if msg.author != ctx.guild.me
     ]
-    
-    cleaned_reasoning = None
+
+    # Send reasoning if present (always before any response text)
     if reasoning:
         try:
             cleaned_reasoning = await remove_patterns_from_response(ctx, cog.config, reasoning, recent_authors)
         except Exception:
             cleaned_reasoning = None
+        if cleaned_reasoning:
+            cleaned_reasoning = collapse_lines(cleaned_reasoning, replacement=r'\n')
+            cleaned_reasoning = escape_unescaped_backticks(cleaned_reasoning)
+            cleaned_reasoning = await resolve_emojis_for_discord(ctx, cleaned_reasoning)
+            await send_reasoning(ctx, cleaned_reasoning, messages_list.can_reply, recent_authors)
 
-    if cleaned_reasoning:
-        # Collapse multiple newlines and blank lines for more compact embed
-        cleaned_reasoning = collapse_lines(cleaned_reasoning, replacement=r'\n')
-        cleaned_reasoning = escape_unescaped_backticks(cleaned_reasoning)
-        cleaned_reasoning = await resolve_emojis_for_discord(ctx, cleaned_reasoning)
-        await send_reasoning(ctx, cleaned_reasoning, messages_list.can_reply, recent_authors)
+    if not has_tools:
+        # No tool calls — single response, send it and done
+        if pre_text:
+            try:
+                cleaned_pre = await remove_patterns_from_response(ctx, cog.config, pre_text, recent_authors)
+            except Exception:
+                cleaned_pre = None
+            if cleaned_pre:
+                cleaned_pre = collapse_lines(cleaned_pre, replacement=r'\n\n')
+                cleaned_pre = escape_unescaped_backticks(cleaned_pre)
+                cleaned_pre = await resolve_emojis_for_discord(ctx, cleaned_pre)
+                return await send_response(ctx, cleaned_pre, messages_list.can_reply, recent_authors)
+        return True
 
-    # Send response parts sequentially, all as replies to the original message
-    if response_parts:
-        return await send_response_parts(ctx, cog, response_parts, messages_list.can_reply, recent_authors)
+    # ---- Has tool calls ----
+    # Early output: if pre-text doesn't look incomplete, send it immediately
+    sent_early = False
+    if pre_text and not is_incomplete:
+        try:
+            cleaned_pre = await remove_patterns_from_response(ctx, cog.config, pre_text, recent_authors)
+        except Exception:
+            cleaned_pre = None
+        if cleaned_pre:
+            cleaned_pre = collapse_lines(cleaned_pre, replacement=r'\n\n')
+            cleaned_pre = escape_unescaped_backticks(cleaned_pre)
+            cleaned_pre = await resolve_emojis_for_discord(ctx, cleaned_pre)
+            await send_response(ctx, cleaned_pre, messages_list.can_reply, recent_authors)
+            sent_early = True
 
-    # Fallback: if no parts, send the combined response as before
-    try:
-        cleaned_response = await remove_patterns_from_response(ctx, cog.config, response, recent_authors)
-    except Exception:
-        cleaned_response = None
+    # ---- Phase 2: tools + second LLM call ----
+    final_text, final_reasoning, images = await pipeline.phase2()
 
-    if not cleaned_response:
-        return False
+    # If there's a combined final text or images, send them together
+    text_to_send = final_text
+    if pipeline.response_parts and pipeline.response_parts[0].type == "text_and_images":
+        text_to_send = pipeline.response_parts[0].content
+        if not images and pipeline.response_parts[0].images:
+            images = pipeline.response_parts[0].images
 
-    cleaned_response = collapse_lines(cleaned_response, replacement=r'\n\n')
-    cleaned_response = escape_unescaped_backticks(cleaned_response)
-    cleaned_response = await resolve_emojis_for_discord(ctx, cleaned_response)
-    return await send_response(ctx, cleaned_response, messages_list.can_reply, recent_authors)
+    if not text_to_send and not images:
+        return sent_early or False
+
+    await send_single_combined_message(ctx, cog, text_to_send, images, messages_list.can_reply, recent_authors)
+    return True
 
 
-async def send_response_parts(
+async def send_single_combined_message(
     ctx: commands.Context,
     cog: MixinMeta,
-    parts: List[ResponsePart],
+    text: Optional[str],
+    images: List[Dict],
     can_reply: bool,
-    recent_authors
+    recent_authors,
 ) -> bool:
-    """Send response parts sequentially, all as replies to the original triggering message.
+    """Send a single Discord reply with an embed + optional image file attachments.
 
-    Parts are sent in order:
-    1. Text parts are sent as separate embed replies.
-    2. An image part (containing all images) is sent as a single message with file attachments.
+    If text is empty but images exist, sends only the files.
+    If images are empty but text exists, sends only the embed.
+    If both, sends embed + files in a single message.
 
-    Each part is sent as a reply to the original triggering message (ctx.message).
-
-    Args:
-        ctx: The command context.
-        cog: The AIUser cog instance.
-        parts: Ordered list of ResponsePart objects.
-        can_reply: Whether the bot can reply to messages.
-        recent_authors: List of recent message authors for regex filtering.
-
-    Returns:
-        True if any part was sent successfully, False otherwise.
+    The message is always a reply to the original triggering message (ctx.message).
     """
     allowed = AllowedMentions(everyone=False, roles=False, users=[ctx.message.author])
 
-    sent_any = False
+    # Build Discord file attachments
+    files = []
+    for img_data in images:
+        if not isinstance(img_data, dict):
+            continue
+        img_bytes = img_data.get("bytes")
+        filename = img_data.get("filename", "generated_image.png")
+        if img_bytes:
+            files.append(discord.File(fp=io.BytesIO(img_bytes), filename=filename))
 
-    for part in parts:
-        if part.type == "text":
-            text = str(part.content)
-            if not text or not text.strip():
-                continue
-
-            # Clean up the text
-            try:
-                cleaned_text = await remove_patterns_from_response(ctx, cog.config, text, recent_authors)
-            except Exception:
-                cleaned_text = None
-
-            if not cleaned_text:
-                continue
-
+    # Clean text
+    cleaned_text = None
+    if text:
+        try:
+            cleaned_text = await remove_patterns_from_response(ctx, cog.config, text, recent_authors)
+        except Exception:
+            cleaned_text = None
+        if cleaned_text:
             cleaned_text = collapse_lines(cleaned_text, replacement=r'\n\n')
             cleaned_text = escape_unescaped_backticks(cleaned_text)
             cleaned_text = await resolve_emojis_for_discord(ctx, cleaned_text)
 
-            if len(cleaned_text) > 4096:
-                total_embed_count = math.ceil(len(cleaned_text) / 4096)
-                for i in range(0, len(cleaned_text), 4096):
-                    embed = Embed(title=f"{ctx.bot.user.name}'s Response", description=cleaned_text[i:i + 4096])
-                    embed.set_footer(text=f"{int((i + 4096) / 4096)} of {total_embed_count}")
-                    await ctx.message.reply(embed=embed, mention_author=False, allowed_mentions=allowed)
-            else:
-                await ctx.message.reply(
-                    embed=Embed(title=f"{ctx.bot.user.name}'s Response", description=cleaned_text),
-                    mention_author=False,
-                    allowed_mentions=allowed
-                )
-            sent_any = True
+    # Handle the 3 cases
+    try:
+        if cleaned_text and files:
+            # Combined: embed + files in one reply
+            embed = Embed(title=f"{ctx.bot.user.name}'s Response", description=cleaned_text)
+            await ctx.message.reply(
+                embed=embed,
+                files=files,
+                mention_author=False,
+                allowed_mentions=allowed,
+            )
+            logger.info(
+                f"[Combined] Sent text embed + {len(files)} image(s) in one reply "
+                f"to message {ctx.message.id}"
+            )
+            return True
 
-        elif part.type == "images":
-            image_data_list = part.content
-            if not image_data_list or not isinstance(image_data_list, list) or len(image_data_list) == 0:
-                continue
+        elif cleaned_text:
+            # Text only
+            return await send_response(ctx, cleaned_text, can_reply, recent_authors)
 
-            # Build Discord file attachments for all images
-            files = []
-            for img_data in image_data_list:
-                if not isinstance(img_data, dict):
-                    continue
-                img_bytes = img_data.get("bytes")
-                filename = img_data.get("filename", "generated_image.png")
-                if img_bytes:
-                    files.append(discord.File(fp=io.BytesIO(img_bytes), filename=filename))
+        elif files:
+            # Images only
+            await ctx.message.reply(files=files, mention_author=False, allowed_mentions=allowed)
+            logger.info(f"[Combined] Sent {len(files)} image(s) as reply to message {ctx.message.id}")
+            return True
 
-            if not files:
-                continue
-
-            # Send all images as a single message in reply to the original message
+    except discord.HTTPException as e:
+        logger.error(f"[Combined] Failed to send combined reply: {e}")
+        # Fallback: send text and images separately
+        if cleaned_text:
+            await send_response(ctx, cleaned_text, can_reply, recent_authors)
+        for f in files:
             try:
-                await ctx.message.reply(files=files, mention_author=False, allowed_mentions=allowed)
-                sent_any = True
-                logger.info(
-                    f"[ResponseParts] Sent {len(files)} generated image(s) as reply "
-                    f"to message {ctx.message.id} in #{ctx.channel.name}"
-                )
-            except discord.HTTPException as e:
-                logger.error(f"[ResponseParts] Failed to send images as reply: {e}")
-                # Fallback: send as separate messages
-                for f in files:
-                    try:
-                        await ctx.message.reply(file=f, mention_author=False, allowed_mentions=allowed)
-                    except Exception as e2:
-                        logger.error(f"[ResponseParts] Failed to send image {f.filename}: {e2}")
+                await ctx.message.reply(file=f, mention_author=False, allowed_mentions=allowed)
+            except Exception as e2:
+                logger.error(f"[Combined] Failed to send image {f.filename}: {e2}")
+        return bool(cleaned_text or files)
 
-    return sent_any
+    except Exception as e:
+        logger.error(f"[Combined] Unexpected error sending reply: {e}")
+        return False
+
+    return False
