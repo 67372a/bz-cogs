@@ -382,6 +382,16 @@ class LLMPipeline:
             choice = response.choices[0]
             llm_model_extra = getattr(choice.message, "model_extra", None)
 
+        # ---- DIAGNOSTIC: Log model_extra explicitly ----
+        if llm_model_extra is not None:
+            logger.info(f"[LLMPipeline] model_extra keys: {list(llm_model_extra.keys())}")
+            for me_key, me_value in llm_model_extra.items():
+                me_preview = str(me_value)[:500]
+                logger.info(f"[LLMPipeline] model_extra['{me_key}'] = {me_preview}")
+        else:
+            logger.info(f"[LLMPipeline] model_extra is None for model {self.model}")
+        # ---- End diagnostic ----
+
         return llm_content, llm_reasoning, llm_tool_calls, llm_reasoning_details, llm_model_extra
 
     @retry(
@@ -509,6 +519,29 @@ class LLMPipeline:
                 current_llm_text_reasoning += "\n\n" + tool_reasoning_text
             elif tool_reasoning_text:
                 current_llm_text_reasoning = tool_reasoning_text
+
+        # ---- TRANSPARENT PATH: OpenRouter may handle image_generation server-side
+        # in a single API call without exposing tool_calls to the client. In this case
+        # model_extra will contain the image result data. Check for it even when no
+        # tool_calls were returned. ----
+        else:
+            # No tool_calls returned — but if image gen was enabled, check model_extra
+            if self.openrouter_tools:
+                has_image_gen_tool = any(
+                    t.get("type") == OpenRouterToolType.IMAGE_GENERATION.value
+                    for t in self.openrouter_tools
+                )
+                if has_image_gen_tool and first_call_model_extra:
+                    logger.info(
+                        "[LLMPipeline] No tool_calls returned, but image_generation was "
+                        "enabled and model_extra is present. Checking for transparent "
+                        "image generation results."
+                    )
+                    await OpenRouterImageGeneration.handle_tool_response_content(
+                        response_text or "",
+                        self.ctx,
+                        model_extra=first_call_model_extra,
+                    )
 
         self.reasoning = current_llm_text_reasoning
         self.completion = current_llm_text_response
