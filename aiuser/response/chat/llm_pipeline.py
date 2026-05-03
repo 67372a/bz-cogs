@@ -1,7 +1,7 @@
 import asyncio
 import json
 import logging
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional, Tuple
 import hashlib
 
@@ -24,6 +24,7 @@ from aiuser.config.models import (
 )
 from aiuser.functions.tool_call import ToolCall
 from aiuser.functions.types import ToolCallSchema
+from aiuser.functions.generate_image.tool_call import GenerateImageToolCall
 from aiuser.messages_list.messages import MessagesList
 from aiuser.functions.openrouter import (
     OpenRouterWebSearch,
@@ -33,6 +34,19 @@ from aiuser.functions.openrouter import (
 from aiuser.types.abc import MixinMeta
 from aiuser.types.enums import OpenRouterToolType
 from aiuser.utils.utilities import get_enabled_tools
+
+
+@dataclass
+class ResponsePart:
+    """A single part of the bot's response to send to Discord.
+
+    Parts are emitted in order: text before tool calls, images, text after tool calls.
+    This allows the response layer to send them sequentially rather than concatenating
+    into a single Discord message.
+    """
+    type: str  # "text" or "images"
+    content: str | List[Dict]  # text string or list of image-data dicts
+
 
 # --- Predicate function for tenacity ---
 def is_response_unsatisfactory(response: ChatCompletion) -> bool:
@@ -73,7 +87,9 @@ def is_response_unsatisfactory(response: ChatCompletion) -> bool:
     # the response is considered satisfactory.
     return False
 
+
 logger = logging.getLogger("red.bz_cogs.aiuser")
+
 
 class LLMPipeline:
     def __init__(self, cog: MixinMeta, ctx: commands.Context, messages: MessagesList):
@@ -89,6 +105,8 @@ class LLMPipeline:
         self.openrouter_tools: List[dict] = []
         self.completion: Optional[str] = None # Stores the *final* text completion
         self.reasoning: Optional[str] = None # Stores the *final* text reasoning
+        self.response_parts: List[ResponsePart] = []  # Ordered parts for sequential sending
+        self.collected_images: List[Dict] = []  # Images collected from local tools
 
     async def get_custom_parameters(self) -> Dict[str, Any]:
         custom_parameters = await self.config.guild(self.ctx.guild).parameters()
@@ -423,6 +441,9 @@ class LLMPipeline:
         await self.setup_tools()
         await self._inject_pdf_annotations()
 
+        self.response_parts = []
+        self.collected_images = []
+
         current_llm_text_response: Optional[str] = None
         current_llm_text_reasoning: Optional[str] = None
 
@@ -474,8 +495,35 @@ class LLMPipeline:
                     f"OpenRouter server tool calls detected: {[tc.function.name for tc in openrouter_tool_calls]}"
                 )
 
+            # Execute local tools and collect any generated images
             if local_tool_calls:
+                # Collect images from GenerateImageToolCall instances
+                images = self._collect_images_from_tools(local_tool_calls)
+                if images:
+                    self.collected_images.extend(images)
+
                 await self._process_and_add_tool_results(local_tool_calls)
+
+                # Collect images again after execution (images from this run)
+                for tool_call in local_tool_calls:
+                    for tool_obj in self.enabled_tools:
+                        if (tool_obj.function_name == tool_call.function.name
+                                and isinstance(tool_obj, GenerateImageToolCall)):
+                            tool_images = tool_obj.get_generated_images()
+                            if tool_images:
+                                self.collected_images.extend(tool_images)
+
+            # Build response parts: pre-tool text, then images (if any).
+            # Pre-tool text is always sent as its own part when present.
+            # If the post-tool is a Gemini-style replacement (repeats pre-tool text),
+            # the pre-tool part will be replaced later.
+            if response_text and response_text.strip():
+                self.response_parts.append(ResponsePart(type="text", content=response_text))
+                if self.collected_images:
+                    self.response_parts.append(ResponsePart(type="images", content=self.collected_images))
+            elif self.collected_images:
+                # No pre-tool text but images exist
+                self.response_parts.append(ResponsePart(type="images", content=self.collected_images))
 
             kwargs2 = custom_kwargs.copy()
 
@@ -496,7 +544,7 @@ class LLMPipeline:
                 kwargs2
             )
  
-            # 1. Add ONLY the new chunk to the history (to maintain valid chat structure)
+            # Add post-tool response to history
             await self.msg_list.add_assistant(
                 content=tool_response_text, 
                 reasoning_details=tool_response_reasoning_details,
@@ -512,17 +560,29 @@ class LLMPipeline:
                     model_extra=tool_response_model_extra or first_call_model_extra,
                 )
 
-            # Combine the previous text with the new text for the final Discord message
-            if current_llm_text_response and tool_response_text:
-                # Fix for models (like Gemini 3.0) that repeat the pre-tool text in the post-tool response
-                if tool_response_text.strip().startswith(current_llm_text_response.strip()):
+            # Build post-tool response parts
+            if tool_response_text and tool_response_text.strip():
+                is_replacement = False
+                if response_text and tool_response_text.strip().startswith(response_text.strip()):
+                    # Gemini-style: post-tool text repeats then extends the pre-tool text
+                    is_replacement = True
+
+                if is_replacement:
+                    # Gemini-style: post-tool text repeats then extends the pre-tool text.
+                    # Use the post-tool text as the single text part (replaces pre-tool).
+                    self.response_parts = [
+                        ResponsePart(type="text", content=tool_response_text)
+                    ]
+                    if self.collected_images:
+                        self.response_parts.append(ResponsePart(type="images", content=self.collected_images))
                     current_llm_text_response = tool_response_text
                 else:
-                    current_llm_text_response += tool_response_text 
-            elif tool_response_text:
-                current_llm_text_response = tool_response_text
-                
-            # 3. Combine reasoning if applicable
+                    # Not a replacement. Pre-tool text was already added as a separate part.
+                    # Add post-tool text as a separate follow-up part.
+                    self.response_parts.append(ResponsePart(type="text", content=tool_response_text))
+                    current_llm_text_response = response_text + tool_response_text
+
+            # Combine reasoning if applicable
             if current_llm_text_reasoning and tool_reasoning_text:
                 current_llm_text_reasoning += "\n\n" + tool_reasoning_text
             elif tool_reasoning_text:
@@ -533,7 +593,11 @@ class LLMPipeline:
         # model_extra will contain the image result data. Check for it even when no
         # tool_calls were returned. ----
         else:
-            # No tool_calls returned — but if image gen was enabled, check model_extra
+            # No tool_calls returned. Use the single response as the sole text part.
+            if response_text and response_text.strip():
+                self.response_parts = [ResponsePart(type="text", content=response_text)]
+
+            # Check for transparent image gen
             if self.openrouter_tools:
                 has_image_gen_tool = any(
                     t.get("type") == OpenRouterToolType.IMAGE_GENERATION.value
@@ -564,7 +628,31 @@ class LLMPipeline:
                 f"Final LLM response for guild {self.ctx.guild.name} (model {self.model}) is empty/None."
             )
 
+        # Log response parts
+        if self.response_parts:
+            logger.info(
+                f"Response parts for guild {self.ctx.guild.name}: "
+                f"{[f'{p.type}({len(str(p.content))} chars)' for p in self.response_parts]}"
+            )
+
         return self.completion, self.reasoning
+
+    def _collect_images_from_tools(self, tool_calls: List[ChatCompletionMessageToolCall]) -> List[Dict]:
+        """Pre-collect images from GenerateImageToolCall instances before execution.
+
+        This handles the case where images were generated in a previous pipeline run
+        but not yet collected. Typically, images are collected after execution via
+        get_generated_images().
+        """
+        images = []
+        for tool_call in tool_calls:
+            if tool_call.function.name == "generate_image":
+                for tool_obj in self.enabled_tools:
+                    if isinstance(tool_obj, GenerateImageToolCall):
+                        existing = tool_obj.get_generated_images()
+                        if existing:
+                            images.extend(existing)
+        return images
 
     async def _process_and_add_tool_results(
         self, tool_calls: List[ChatCompletionMessageToolCall]
@@ -662,9 +750,18 @@ class LLMPipeline:
                     f"Web fetch server tool was used by the model in guild {self.ctx.guild.name}"
                 )
 
-    async def run(self) -> Tuple[str|None, str|None]:
+    async def get_response_parts(self) -> List[ResponsePart]:
+        """Get the response parts for sequential sending.
+
+        Returns:
+            List of ResponsePart objects in order: pre-tool text, images, post-tool text.
+        """
+        return self.response_parts
+
+    async def run(self) -> Tuple[List[ResponsePart] | None, str | None, str | None]:
         try:
-            return await self.create_completion()
+            response_text, reasoning_text = await self.create_completion()
+            return self.response_parts, response_text, reasoning_text
         except httpx.ReadTimeout:
             logger.error(f"LLM request to {self.model} timed out for guild {self.ctx.guild.name}.")
             await self.ctx.react_quietly("💤", message="`aiuser` request timed out")
@@ -674,10 +771,10 @@ class LLMPipeline:
         except openai.APIConnectionError as e:
             logger.error(f"LLM API connection error for {self.model} in guild {self.ctx.guild.name}: {e}")
             await self.ctx.react_quietly("⚠️", message="`aiuser` could not connect to LLM API")
-        except openai.APIStatusError as e: # Catches 4xx and 5xx errors from OpenAI
+        except openai.APIStatusError as e:
             logger.error(f"LLM API error for {self.model} in guild {self.ctx.guild.name} (Status {e.status_code}): {e.response.text if e.response else 'No response body'}")
             await self.ctx.react_quietly("⚠️", message=f"`aiuser` LLM API error (Status {e.status_code})")
         except Exception:
             logger.exception(f"An unexpected error occurred during LLM processing for model {self.model} in guild {self.ctx.guild.name}")
             await self.ctx.react_quietly("⚠️", message="`aiuser` request failed due to an unexpected error")
-        return None, None
+        return [], None, None

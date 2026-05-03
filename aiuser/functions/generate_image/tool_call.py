@@ -31,6 +31,9 @@ class GenerateImageToolCall(ToolCall):
 
     The model and image_size are configured server-side via settings commands.
     The prompt and aspect_ratio are provided by the LLM in the function call.
+
+    Generated image data is stored in `self.generated_images` and is retrieved
+    by the pipeline to be sent to Discord alongside the response text.
     """
 
     schema = ToolCallSchema(
@@ -55,6 +58,7 @@ class GenerateImageToolCall(ToolCall):
                         "enum": [
                             "1:1", "2:3", "3:2", "3:4", "4:3",
                             "4:5", "5:4", "9:16", "16:9", "21:9",
+                            "1:4", "4:1", "1:8", "8:1"
                         ],
                         "description": (
                             "The desired aspect ratio for the generated image. "
@@ -71,6 +75,7 @@ class GenerateImageToolCall(ToolCall):
     def __init__(self, config: Config, ctx: commands.Context):
         super().__init__(config, ctx)
         self._cog = None
+        self.generated_images: List[Dict] = []
 
     @property
     def cog(self):
@@ -78,6 +83,19 @@ class GenerateImageToolCall(ToolCall):
         if self._cog is None:
             self._cog = self.bot.get_cog("AIUser")
         return self._cog
+
+    def get_generated_images(self) -> List[Dict]:
+        """Return stored image data and clear the internal list.
+
+        Each entry has:
+            - bytes: Raw decoded image bytes.
+            - format: Image format string (e.g., "png", "jpeg").
+            - filename: Suggested filename for Discord attachment.
+            - data_url: The original base64 data URL (for LLM context injection).
+        """
+        images = self.generated_images[:]
+        self.generated_images.clear()
+        return images
 
     async def _get_generation_params(self) -> DirectImageGenerationParameters:
         """Read the preconfigured generation parameters from guild config."""
@@ -91,7 +109,7 @@ class GenerateImageToolCall(ToolCall):
 
         Reads preconfigured model + image_size from guild config, uses the
         LLM-provided prompt and aspect_ratio, calls the OpenRouter API, and
-        sends the resulting image to Discord.
+        stores the resulting image data for later sending to Discord.
 
         Args:
             arguments: Dict with 'prompt' (required) and 'aspect_ratio' (optional).
@@ -153,7 +171,7 @@ class GenerateImageToolCall(ToolCall):
 
         logger.info(
             f"[DirectImageGen] Generating image for guild {self.ctx.guild.name}: "
-            f"model={model}, prompt={prompt[:100]}{'...' if len(prompt) > 100 else ''}, "
+            f"model={model}, prompt={prompt[:1000]}{'...' if len(prompt) > 1000 else ''}, "
             f"aspect_ratio={aspect_ratio}, image_size={image_size}"
         )
 
@@ -185,32 +203,82 @@ class GenerateImageToolCall(ToolCall):
                 )
             return "Error: No image was generated. The model may not support image generation or returned an empty response."
 
-        # Send each image to Discord
-        sent_count = 0
+        # Decode and store images for later sending by the response layer
         for image_data_url in images:
             try:
-                await self._send_image_to_discord(image_data_url, prompt)
-                sent_count += 1
+                decoded = self._decode_image_data(image_data_url)
+                if decoded:
+                    self.generated_images.append(decoded)
             except Exception as e:
                 logger.error(
-                    f"[DirectImageGen] Failed to send image to Discord: {e}"
+                    f"[DirectImageGen] Failed to process image data: {e}"
                 )
 
-        if sent_count == 0:
+        if not self.generated_images:
             return (
-                "Error: Image was generated but could not be sent to the Discord channel."
+                "Error: Image was generated but could not be processed."
             )
 
         logger.info(
-            f"[DirectImageGen] Successfully generated and sent {sent_count} image(s) "
+            f"[DirectImageGen] Successfully generated {len(self.generated_images)} image(s) "
             f"for guild {self.ctx.guild.name}"
         )
 
         return (
-            f"Successfully generated {sent_count} image(s) with the prompt: {prompt[:200]}"
-            f"{'...' if len(prompt) > 200 else ''}. "
-            "The image(s) have been sent to the Discord channel."
+            f"Successfully generated image(s), the image(s) has been generated."
         )
+
+    def _decode_image_data(self, image_data_url: str) -> Optional[Dict]:
+        """Decode a base64 image data URL into image bytes and metadata.
+
+        Args:
+            image_data_url: The base64 data URL of the image.
+                           Format: data:image/{format};base64,{encoded_data}
+
+        Returns:
+            Dict with 'bytes', 'format', 'filename', and 'data_url', or None if parsing fails.
+        """
+        import base64
+
+        # Format: data:image/{format};base64,{encoded_data}
+        header_match = re.match(
+            r"data:image/(?P<fmt>[a-zA-Z]+);base64,(?P<data>.+)",
+            image_data_url,
+        )
+        if not header_match:
+            logger.warning(
+                "[DirectImageGen] Could not parse data URL header"
+            )
+            return None
+
+        fmt = header_match.group("fmt").lower()
+        encoded_data = header_match.group("data")
+
+        try:
+            image_bytes = base64.b64decode(encoded_data)
+        except Exception as e:
+            logger.error(f"[DirectImageGen] Failed to decode base64 image data: {e}")
+            return None
+
+        # Map format to file extension
+        ext_map = {
+            "png": "png",
+            "jpeg": "jpg",
+            "jpg": "jpg",
+            "gif": "gif",
+            "webp": "webp",
+            "bmp": "bmp",
+            "avif": "avif",
+        }
+        ext = ext_map.get(fmt, "png")
+        filename = f"generated_{self.ctx.message.id}.{ext}"
+
+        return {
+            "bytes": image_bytes,
+            "format": fmt,
+            "filename": filename,
+            "data_url": image_data_url,
+        }
 
     def _extract_images_from_response(self, response) -> List[str]:
         """Extract base64 image data URLs from an OpenRouter ChatCompletion response.
@@ -265,67 +333,3 @@ class GenerateImageToolCall(ToolCall):
                     images.append(url)
 
         return images
-
-    async def _send_image_to_discord(
-        self, image_data_url: str, prompt: str
-    ) -> None:
-        """Decode a base64 image data URL and send it as a Discord file attachment.
-
-        Args:
-            image_data_url: The base64 data URL of the image.
-            prompt: The original prompt (used for logging).
-
-        Raises:
-            Exception: If sending to Discord fails.
-        """
-        # Parse the data URL
-        # Format: data:image/{format};base64,{encoded_data}
-        header_match = re.match(
-            r"data:image/(?P<fmt>[a-zA-Z]+);base64,(?P<data>.+)",
-            image_data_url,
-        )
-        if not header_match:
-            logger.warning(
-                "[DirectImageGen] Could not parse data URL header, trying to send as-is"
-            )
-            # Fallback: send as embed
-            embed = discord.Embed(color=await self.ctx.embed_color())
-            embed.set_image(url=image_data_url)
-            await self.ctx.send(embed=embed)
-            return
-
-        fmt = header_match.group("fmt").lower()
-        encoded_data = header_match.group("data")
-
-        import base64
-
-        try:
-            image_bytes = base64.b64decode(encoded_data)
-        except Exception as e:
-            logger.error(f"[DirectImageGen] Failed to decode base64 image data: {e}")
-            # Fallback: send as embed
-            embed = discord.Embed(color=await self.ctx.embed_color())
-            embed.set_image(url=image_data_url)
-            await self.ctx.send(embed=embed)
-            return
-
-        # Map format to file extension
-        ext_map = {
-            "png": "png",
-            "jpeg": "jpg",
-            "jpg": "jpg",
-            "gif": "gif",
-            "webp": "webp",
-            "bmp": "bmp",
-            "avif": "avif",
-        }
-        ext = ext_map.get(fmt, "png")
-        filename = f"generated_{self.ctx.message.id}.{ext}"
-
-        file = discord.File(fp=io.BytesIO(image_bytes), filename=filename)
-        await self.ctx.send(file=file)
-
-        logger.info(
-            f"[DirectImageGen] Sent generated image to #{self.ctx.channel.name} "
-            f"as {filename} ({len(image_bytes)} bytes)"
-        )
