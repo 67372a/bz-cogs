@@ -437,6 +437,10 @@ class LLMPipeline:
             if "gemini-3" in self.model.lower():
                 kwargs1["parallel_tool_calls"] = True
 
+        kwargs1['extra_body']['modalities'] = ['text']
+        if 'openrouter:image_generation' in kwargs1["tools"]:
+            kwargs1['extra_body']['modalities'].append('image')
+
         response_text, reasoning_text, response_tool_calls, response_reasoning_details, response_model_extra = await self.call_client(
              kwargs1
         )
@@ -480,6 +484,10 @@ class LLMPipeline:
                 asdict(schema) for schema in self.available_tools_schemas
             ] + self.openrouter_tools
             kwargs2["tool_choice"] = "none"
+
+            kwargs2['extra_body']['modalities'] = ['text']
+            if 'openrouter:image_generation' in kwargs1["tools"]:
+                kwargs2['extra_body']['modalities'].append('image')
 
             if "gemini-3" in self.model.lower():
                 kwargs2["parallel_tool_calls"] = True
