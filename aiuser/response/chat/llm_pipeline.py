@@ -374,6 +374,8 @@ class LLMPipeline:
     async def _create_completion_with_retry(self, **kwargs) -> ChatCompletion:
         try:
             result = await self.openai_client.chat.completions.create(**kwargs)
+            if not result.choices:
+                raise openai.APIError(f"API returned no choices: {result}")
             native_finish_reason = getattr(result.choices[0], "native_finish_reason", None) or result.choices[0].finish_reason
             logger.info(f"Finish reason: {result.choices[0].finish_reason}. Native finish reason: {native_finish_reason}")
             return result
