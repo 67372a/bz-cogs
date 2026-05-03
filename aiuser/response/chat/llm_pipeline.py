@@ -506,7 +506,7 @@ class LLMPipeline:
         if is_replacement:
             final_text = tool_response_text
         else:
-            final_text = response_text + (tool_response_text or "")
+            final_text = (response_text or "") + (tool_response_text or "")
 
         # Combine reasoning
         final_reasoning = reasoning_text
