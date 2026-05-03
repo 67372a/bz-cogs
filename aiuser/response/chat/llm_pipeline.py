@@ -297,7 +297,7 @@ class LLMPipeline:
 
     async def call_client(
         self, kwargs: Dict[str, Any]
-    ) -> Tuple[Optional[str], Optional[str], List[ChatCompletionMessageToolCall], Optional[List[Dict]]]:
+    ) -> Tuple[Optional[str], Optional[str], List[ChatCompletionMessageToolCall], Optional[List[Dict]], Optional[Dict]]:
         # Inject cached PDF annotations into the messages JSON if available
         injected_annotations = getattr(self, "_cached_pdf_annotations", None)
         current_messages_json = self.msg_list.get_json(
@@ -376,7 +376,13 @@ class LLMPipeline:
         if llm_reasoning_details is None and getattr(message, "model_extra", None):
              llm_reasoning_details = message.model_extra.get("reasoning_details")
 
-        return llm_content, llm_reasoning, llm_tool_calls, llm_reasoning_details
+        # Capture model_extra for use downstream (e.g., image generation metadata from OpenRouter)
+        llm_model_extra = getattr(message, "model_extra", None)
+        if llm_model_extra is None and len(response.choices) > 0:
+            choice = response.choices[0]
+            llm_model_extra = getattr(choice.message, "model_extra", None)
+
+        return llm_content, llm_reasoning, llm_tool_calls, llm_reasoning_details, llm_model_extra
 
     @retry(
         wait=wait_random_exponential(min=1, max=5), # Wait 1-5 seconds between retries
@@ -421,7 +427,7 @@ class LLMPipeline:
             if "gemini-3" in self.model.lower():
                 kwargs1["parallel_tool_calls"] = True
 
-        response_text, reasoning_text, response_tool_calls, response_reasoning_details = await self.call_client(
+        response_text, reasoning_text, response_tool_calls, response_reasoning_details, response_model_extra = await self.call_client(
              kwargs1
         )
 
@@ -434,6 +440,9 @@ class LLMPipeline:
             reasoning_details=response_reasoning_details,
             index=len(self.msg_list) + 1
         )
+
+        # Track model_extra from the first call for image generation
+        first_call_model_extra = response_model_extra
 
         if response_tool_calls:
             # Filter out OpenRouter server tool calls - they're handled server-side
@@ -465,7 +474,7 @@ class LLMPipeline:
             if "gemini-3" in self.model.lower():
                 kwargs2["parallel_tool_calls"] = True
 
-            tool_response_text, tool_reasoning_text, _, tool_response_reasoning_details = await self.call_client(
+            tool_response_text, tool_reasoning_text, _, tool_response_reasoning_details, tool_response_model_extra = await self.call_client(
                 kwargs2
             )
  
@@ -477,8 +486,13 @@ class LLMPipeline:
             )
 
             # Process OpenRouter server tool response artifacts (e.g., image URLs)
+            # Pass model_extra from both calls so image generation can inspect metadata
             if openrouter_tool_calls and tool_response_text:
-                await self._process_openrouter_tool_results(openrouter_tool_calls, tool_response_text)
+                await self._process_openrouter_tool_results(
+                    openrouter_tool_calls,
+                    tool_response_text,
+                    model_extra=tool_response_model_extra or first_call_model_extra,
+                )
 
             # Combine the previous text with the new text for the final Discord message
             if current_llm_text_response and tool_response_text:
@@ -573,6 +587,7 @@ class LLMPipeline:
         self,
         tool_calls: List[ChatCompletionMessageToolCall],
         response_text: str,
+        model_extra: Optional[Dict] = None,
     ):
         """Process OpenRouter server tool results from the response.
 
@@ -584,6 +599,8 @@ class LLMPipeline:
         Args:
             tool_calls: The server tool calls from the LLM response.
             response_text: The model's text response after tool execution.
+            model_extra: Optional dict of extra metadata from the LLM response
+                (may contain image generation data from OpenRouter).
         """
         for tool_call in tool_calls:
             tool_name = tool_call.function.name
@@ -593,7 +610,7 @@ class LLMPipeline:
                     f"Processing image_generation server tool response for guild {self.ctx.guild.name}"
                 )
                 await OpenRouterImageGeneration.handle_tool_response_content(
-                    response_text, self.ctx
+                    response_text, self.ctx, model_extra=model_extra
                 )
             elif tool_name == OpenRouterToolType.WEB_SEARCH.value:
                 logger.info(
