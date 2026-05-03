@@ -147,7 +147,7 @@ class LLMPipeline:
 
         # Check 1: trailing punctuation that signals continuation
         # Colon is excluded because it's used for emoji syntax (e.g. :smile:)
-        incomplete_endings = (',', ';', '-', '–', '…', '...')
+        incomplete_endings = (',', ';', '-', '–')
         if stripped.endswith(incomplete_endings):
             return True
 
