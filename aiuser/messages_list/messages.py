@@ -18,7 +18,7 @@ from aiuser.messages_list.opt_view import OptView
 from aiuser.types.abc import MixinMeta
 from aiuser.types.enums import ScanImageMode
 from aiuser.utils.utilities import format_variables
-from aiuser.config.constants import XML_SYSTEM_PROMPT_APPENDIX
+from aiuser.config.constants import XML_SYSTEM_PROMPT_APPENDIX, OPENROUTER_CITATION_INSTRUCTIONS
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
@@ -85,6 +85,12 @@ class MessagesList:
         # 3. Combine Persona + XML Protocol
         # We add a double newline to separate the personality from the technical instructions
         final_system_prompt = f"{formatted_persona}\n\n{XML_SYSTEM_PROMPT_APPENDIX}"
+
+        # 3b. Append OpenRouter citation instructions if web search/fetch tools are enabled
+        search_enabled = await self.config.guild(self.guild).openrouter_web_search_enabled()
+        fetch_enabled = await self.config.guild(self.guild).openrouter_web_fetch_enabled()
+        if search_enabled or fetch_enabled:
+            final_system_prompt += f"\n\n{OPENROUTER_CITATION_INSTRUCTIONS}"
 
         self.prefill = await self._pick_prefill()
 

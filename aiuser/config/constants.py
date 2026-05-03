@@ -29,3 +29,23 @@ XML_SYSTEM_PROMPT_APPENDIX = (
     "3. You are part of this chat. Do not output these XML tags yourself. "
     "Respond naturally in with text, inclusive of markdown and emojis as is relevant, adhering to the persona described above."
 )
+
+OPENROUTER_CITATION_INSTRUCTIONS = (
+    "CITATION REQUIREMENTS:\n"
+    "When you use information from web_search or web_fetch tools, you MUST include "
+    "markdown-based source citations for factual claims derived from those results.\n\n"
+    "Format: Use numbered footnotes — `[^1]`, `[^2]` — inline after sourced claims. "
+    "List the source URLs at the end of your message:\n"
+    "  `[^1]: https://source-url.com`\n"
+    "  `[^2]: https://another-source.org`\n\n"
+    "Rules:\n"
+    "- Only cite information actually retrieved via the tools, not your own knowledge.\n"
+    "- Use only URLs returned by the tools. If no URL was provided, write:\n"
+    "  `[^N]: Retrieved via web search — no direct URL provided`\n"
+    "- Place the source list at the very end of your message, after a blank line.\n"
+    "- Group citations like `[^1][^2]` when multiple sources support the same claim.\n\n"
+    "Example:\n"
+    "  The project reached $10M in funding last week[^1] and plans to launch in Q3[^2].\n\n"
+    "  [^1]: https://techcrunch.com/example\n"
+    "  [^2]: https://theverge.com/example"
+)
