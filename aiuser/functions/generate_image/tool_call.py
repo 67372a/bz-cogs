@@ -224,8 +224,13 @@ class GenerateImageToolCall(ToolCall):
             f"for guild {self.ctx.guild.name}"
         )
 
+        model_info = model.split("/")[-1] if "/" in model else model
+        ratio_info = aspect_ratio or "default"
         return (
-            f"Successfully generated image(s), the image(s) has been generated."
+            f"Image generation successful. Generated {len(self.generated_images)} image(s) "
+            f"using model '{model_info}' at aspect ratio '{ratio_info}'. "
+            f"Prompt used: \"{prompt[:200]}{'...' if len(prompt) > 200 else ''}\". "
+            f"The image(s) have been sent to the Discord channel."
         )
 
     def _decode_image_data(self, image_data_url: str) -> Optional[Dict]:

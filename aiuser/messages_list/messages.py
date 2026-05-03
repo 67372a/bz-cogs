@@ -209,7 +209,7 @@ class MessagesList:
                     if item.get("type") == "text":
                         await self._add_tokens(item.get("text"))
                     elif item.get("type") == "image_url":
-                        self.tokens += 255  # TODO: calculate actual image token cost
+                        self.tokens += 756  # TODO: calculate actual image token cost
             else:
                 await self._add_tokens(entry.content)
 
@@ -229,7 +229,16 @@ class MessagesList:
             return
         entry = MessageEntry("assistant", content, tool_calls=tool_calls, reasoning_details=reasoning_details)
         self.messages.insert(index or 0, entry)
-        await self._add_tokens(content)
+        if isinstance(content, list):
+            for item in content:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("type") == "text":
+                    await self._add_tokens(item.get("text"))
+                elif item.get("type") == "image_url":
+                    self.tokens += 756  # matches estimate in add_msg()
+        else:
+            await self._add_tokens(content)
 
     async def add_tool_result(self, content: str,  tool_call_id: int, name: str = None, index: int = None):
         if self.tokens > self.token_limit:

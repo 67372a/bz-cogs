@@ -457,22 +457,34 @@ class LLMPipeline:
 
         # Execute local tools
         if local_tool_calls:
-            for tc in local_tool_calls:
-                if tc.function.name == "generate_image":
-                    for tool_obj in self.enabled_tools:
-                        if isinstance(tool_obj, GenerateImageToolCall):
-                            existing = tool_obj.get_generated_images()
-                            if existing:
-                                self.collected_images.extend(existing)
-
             await self._process_and_add_tool_results(local_tool_calls)
 
+            # Collect generated images from tool executions
             for tc in local_tool_calls:
                 for tool_obj in self.enabled_tools:
                     if tool_obj.function_name == tc.function.name and isinstance(tool_obj, GenerateImageToolCall):
                         tool_images = tool_obj.get_generated_images()
                         if tool_images:
                             self.collected_images.extend(tool_images)
+
+        # Inject generated images into msg_list for same-turn vision context
+        # This lets the LLM "see" what it just generated in phase 2
+        if self.collected_images and self.model in VISION_SUPPORTED_MODELS:
+            image_content_parts = []
+            for img_data in self.collected_images:
+                data_url = img_data.get("data_url")
+                if data_url:
+                    image_content_parts.append({"type": "image_url", "image_url": {"url": data_url}})
+            if image_content_parts:
+                # Add a text part describing the image generation
+                image_content_parts.append({
+                    "type": "text",
+                    "text": "System: Above are the image(s) I just generated and sent to the user.",
+                })
+                await self.msg_list.add_assistant(
+                    content=image_content_parts,
+                    index=len(self.msg_list) + 1
+                )
 
         # Phase 2 LLM call
         kwargs2 = custom_kwargs.copy()
@@ -566,17 +578,6 @@ class LLMPipeline:
 
         final_text, final_reasoning, images = await self.phase2()
         return self.completion, self.reasoning
-
-    def _collect_images_from_tools(self, tool_calls: List[ChatCompletionMessageToolCall]) -> List[Dict]:
-        images = []
-        for tool_call in tool_calls:
-            if tool_call.function.name == "generate_image":
-                for tool_obj in self.enabled_tools:
-                    if isinstance(tool_obj, GenerateImageToolCall):
-                        existing = tool_obj.get_generated_images()
-                        if existing:
-                            images.extend(existing)
-        return images
 
     async def _process_and_add_tool_results(self, tool_calls: List[ChatCompletionMessageToolCall]):
         async def process_single_tool(tool_call):

@@ -1,8 +1,9 @@
 import asyncio
 import io
 import logging
-import re
 import math
+import random
+import re
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
@@ -235,7 +236,7 @@ async def send_single_combined_message(
         if cleaned_text and files:
             # Combined: embed + files in one reply
             embed = Embed(title=f"{ctx.bot.user.name}'s Response", description=cleaned_text)
-            await ctx.message.reply(
+            sent_message = await ctx.message.reply(
                 embed=embed,
                 files=files,
                 mention_author=False,
@@ -245,6 +246,8 @@ async def send_single_combined_message(
                 f"[Combined] Sent text embed + {len(files)} image(s) in one reply "
                 f"to message {ctx.message.id}"
             )
+            # Cache image data URLs for future context turn re-ingestion
+            _cache_generated_images_in_response(ctx, cog, sent_message, images)
             return True
 
         elif cleaned_text:
@@ -253,8 +256,9 @@ async def send_single_combined_message(
 
         elif files:
             # Images only
-            await ctx.message.reply(files=files, mention_author=False, allowed_mentions=allowed)
+            sent_message = await ctx.message.reply(files=files, mention_author=False, allowed_mentions=allowed)
             logger.info(f"[Combined] Sent {len(files)} image(s) as reply to message {ctx.message.id}")
+            _cache_generated_images_in_response(ctx, cog, sent_message, images)
             return True
 
     except discord.HTTPException as e:
@@ -274,3 +278,44 @@ async def send_single_combined_message(
         return False
 
     return False
+
+
+def _cache_generated_images_in_response(
+    ctx: commands.Context,
+    cog: MixinMeta,
+    sent_message: discord.Message,
+    images: List[Dict],
+):
+    """Cache generated image data URLs into the message cache so they're
+    available when the bot's response message is re-ingested on future turns.
+
+    Stores image_url content parts under the sent message's channel-scoped key.
+    """
+    if not images or not sent_message:
+        return
+
+    # Build image_url content parts from the generated image data
+    content_parts: List[dict] = []
+    client_text = getattr(sent_message.embeds[0], "description", "") if sent_message.embeds else ""
+
+    for img_data in images:
+        data_url = img_data.get("data_url")
+        if data_url:
+            content_parts.append({"type": "image_url", "image_url": {"url": data_url}})
+
+    if not content_parts:
+        return
+
+    # Add the text content after the images (matching how user images are formatted)
+    if client_text:
+        content_parts.append({"type": "text", "text": client_text})
+
+    # Cache under the sent message ID for re-ingestion on future turns
+    cache_key = f"{ctx.channel.id}:{sent_message.id}"
+    cog.cached_messages[cache_key] = content_parts
+    cog.cached_messages[sent_message.id] = content_parts
+
+    logger.info(
+        f"[Cache] Cached {len(content_parts)} content part(s) for future re-ingestion "
+        f"of message {sent_message.id} (channel {ctx.channel.id})"
+    )
