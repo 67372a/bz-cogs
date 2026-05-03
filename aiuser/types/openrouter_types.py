@@ -42,12 +42,27 @@ class PdfParsingParameters:
     engine: Optional[str] = None  # "cloudflare-ai", "mistral-ocr", or "native"
 
 
+@dataclass
+class DirectImageGenerationParameters:
+    """Preconfigured parameters for the local generate_image ToolCall.
+
+    These are set by server admins. The model and image_size are fixed
+    across all generations, while the LLM passes prompt and aspect_ratio
+    dynamically in the function call.
+    """
+    model: Optional[str] = None       # e.g. "google/gemini-3.1-flash-image-preview"
+    image_size: Optional[str] = None  # "1K", "2K", "4K", "0.5K"
+
+
 _PARAM_CLASS_MAP = {
     OpenRouterToolType.WEB_SEARCH: WebSearchParameters,
     OpenRouterToolType.WEB_FETCH: WebFetchParameters,
     OpenRouterToolType.IMAGE_GENERATION: ImageGenerationParameters,
     OpenRouterToolType.PDF_PARSING: PdfParsingParameters,
 }
+
+# Additional string-keyed entries for local ToolCalls that don't use OpenRouterToolType
+_PARAM_CLASS_MAP["direct_image_generation"] = DirectImageGenerationParameters
 
 
 def build_openrouter_tool_dict(tool_type: OpenRouterToolType, parameters: dict) -> dict:
@@ -73,13 +88,15 @@ def serialize_parameters(params) -> str:
     return json.dumps(asdict(params))
 
 
-def deserialize_parameters(json_str: Optional[str], tool_type: OpenRouterToolType):
+def deserialize_parameters(json_str: Optional[str], tool_type):
     """
     Deserialize a JSON string into the appropriate parameters dataclass.
 
     Args:
         json_str: JSON string to deserialize, or None.
-        tool_type: The OpenRouterToolType to determine which dataclass to use.
+        tool_type: The OpenRouterToolType (or string key) to determine which
+            dataclass to use. Supports both OpenRouterToolType enum values and
+            string keys like "direct_image_generation".
 
     Returns:
         An instance of the appropriate parameters dataclass with default values

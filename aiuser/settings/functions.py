@@ -271,6 +271,50 @@ class FunctionCallingSettings(MixinMeta):
         """
         await self._toggle_openrouter_boolean(ctx, "openrouter_image_generation_enabled", "Image Generation")
 
+    @functions.command(name="generate_image")
+    async def toggle_generate_image(self, ctx: commands.Context):
+        """ Toggle direct image generation function calling
+
+        Enables/disables the local generate_image function call.
+        When enabled, the LLM can call this function to generate images
+        directly via the configured OpenRouter model.
+
+        Note: You must configure a model using `[p]aiuser functions generate_image_config`
+        before the function will work.
+        """
+        from aiuser.functions.generate_image.tool_call import GenerateImageToolCall
+
+        tool_names = [GenerateImageToolCall.function_name]
+        await self.toggle_function_helper(ctx, tool_names, "Generate Image")
+
+    @functions.command(name="generate_image_config")
+    async def config_generate_image(self, ctx: commands.Context, *, json_block: str = ""):
+        """ Configure direct image generation parameters using JSON
+
+        Sets the model and image_size that will be used for direct image generation.
+        The prompt and aspect_ratio are passed by the LLM, everything else is
+        configured here.
+
+        To reset parameters to default, use `{ctx.clean_prefix}functions generate_image_config reset`
+        To show current parameters, use `{ctx.clean_prefix}functions generate_image_config show`
+
+        Example command:
+        `{ctx.clean_prefix}functions generate_image_config ```json\n{"model": "google/gemini-3.1-flash-image-preview", "image_size": "2K"}\n``` `
+
+        Valid fields: model, image_size
+        """
+        await self._handle_or_json_config(
+            ctx=ctx,
+            config_key="direct_image_generation_parameters",
+            tool_type="direct_image_generation",
+            param_display_name="Direct Image Generation",
+            example_config={
+                "model": "google/gemini-3.1-flash-image-preview",
+                "image_size": "2K",
+            },
+            json_block=json_block,
+        )
+
     @functions.command(name="or_pdf_parsing")
     async def toggle_or_pdf_parsing(self, ctx: commands.Context):
         """ Toggle OpenRouter PDF parsing
@@ -333,10 +377,11 @@ class FunctionCallingSettings(MixinMeta):
             )
 
             # Usage instructions
+            tool_config_name = tool_type if isinstance(tool_type, str) else tool_type.value.replace(':', '_')
             usage = (
-                f"• Set: `{ctx.clean_prefix}functions {tool_type.value.replace(':', '_')}_config "
+                f"• Set: `{ctx.clean_prefix}functions {tool_config_name}_config "
                 f"```json\n{'{...}'}\n``` `\n"
-                f"• Reset: `{ctx.clean_prefix}functions {tool_type.value.replace(':', '_')}_config reset`"
+                f"• Reset: `{ctx.clean_prefix}functions {tool_config_name}_config reset`"
             )
             if extra_help:
                 usage += f"\n{extra_help}"

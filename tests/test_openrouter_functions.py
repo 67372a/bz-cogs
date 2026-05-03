@@ -499,7 +499,7 @@ class TestOpenRouterImageGeneration:
         await OpenRouterImageGeneration.handle_tool_response_content(content, ctx)
 
         assert ctx.send.call_count == 2
-        error_logged = any("Failed to send image embed" in record.message for record in caplog.records)
+        error_logged = any("Failed to send embed fallback" in record.message for record in caplog.records)
         assert error_logged
 
     @staticmethod

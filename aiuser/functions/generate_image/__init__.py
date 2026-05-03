@@ -1,0 +1,1 @@
+# Generate Image - Direct OpenRouter image generation function call
