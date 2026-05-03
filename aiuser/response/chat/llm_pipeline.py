@@ -74,7 +74,7 @@ def is_response_unsatisfactory(response: ChatCompletion) -> bool:
     finish_reason = choice.finish_reason
     content = choice.message.content
 
-    retryable_reasons = {'stop', 'error', 'content_filter'}
+    retryable_reasons = {'error', 'content_filter'}
     
     if finish_reason in retryable_reasons:
         if not content or not content.strip():
