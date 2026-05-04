@@ -175,16 +175,22 @@ class Settings(
         else:
              main_embed.add_field(name="Scan Image Resolution", value=f"`Default`", inline=True)
 
-        main_embed.add_field(
+        embeds.append(main_embed)
+
+        trigger_embed = discord.Embed(
+            title="AI User Settings (continued)", color=await ctx.embed_color()
+        )
+
+        trigger_embed.add_field(
             name="Image Requests", value=f"`{config['image_requests']}`", inline=True)
 
-        main_embed.add_field(
+        trigger_embed.add_field(
             name="Image Req. Less Calls",
             value=f"`{config['image_requests_reduced_llm_calls']}`",
             inline=True,
         )
 
-        main_embed.add_field(
+        trigger_embed.add_field(
             name="",
             value="",
             inline=True,
@@ -193,13 +199,13 @@ class Settings(
         whitelisted_trigger = bool(
             config["members_whitelist"] or config["roles_whitelist"])
 
-        main_embed.add_field(
+        trigger_embed.add_field(
             name="Only Whitelist Trigger",
             inline=True,
             value=f"`{whitelisted_trigger}`",
         )
 
-        main_embed.add_field(
+        trigger_embed.add_field(
             name="Whitelisted Members",
             inline=True,
             value=" ".join(
@@ -207,7 +213,7 @@ class Settings(
             ) or "`None`",
         )
 
-        main_embed.add_field(
+        trigger_embed.add_field(
             name="Whitelisted Roles",
             inline=True,
             value=" ".join(
@@ -219,15 +225,15 @@ class Settings(
         regexes_num = 0
         if removelist_regexes is not None:
             regexes_num = len(removelist_regexes)
-        main_embed.add_field(
+        trigger_embed.add_field(
             name="Remove list", value=f"`{regexes_num}` regexes set"
         )
-        main_embed.add_field(name="Ignore Regex",
+        trigger_embed.add_field(name="Ignore Regex",
                              value=f"`{config['ignore_regex']}`")
-        main_embed.add_field(
+        trigger_embed.add_field(
             name="Public Forget Command", inline=True, value=f"`{config['public_forget']}`"
         )
-        embeds.append(main_embed)
+        embeds.append(trigger_embed)
 
         parameters = config["parameters"]
         if parameters is not None:
