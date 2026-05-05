@@ -100,6 +100,17 @@ class TriggerSettings(MixinMeta):
             color=await ctx.embed_color())
         return await ctx.send(embed=embed)
 
+    @trigger.command(name="public_backfill", aliases=["publicbackfill"])
+    async def public_backfill(self, ctx: commands.Context):
+        """ Toggles whether anyone can use the backfill command, or only moderators """
+        value = not await self.config.guild(ctx.guild).public_backfill()
+        await self.config.guild(ctx.guild).public_backfill.set(value)
+        embed = discord.Embed(
+            title="Anyone can use the backfill command:",
+            description=f"{value}",
+            color=await ctx.embed_color())
+        return await ctx.send(embed=embed)
+
     @trigger.command(name="grok")
     @checks.is_owner()
     async def grok(self, ctx: commands.Context):

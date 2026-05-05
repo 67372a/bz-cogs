@@ -106,6 +106,7 @@ DEFAULT_GUILD = {
     "conversation_reply_time": 20,
     "grok_trigger": False,
     "custom_model_tokens_limit": None,
+    "public_backfill": False,
     "always_reply_on_words": [],
     "openrouter_web_search_enabled": False,
     "openrouter_web_search_parameters": None,

@@ -49,6 +49,36 @@ class Settings(
         """Utilize OpenAI to reply to messages and images in approved channels and by opt-in users"""
         pass
 
+    @aiuser.command()
+    async def backfill(self, ctx: commands.Context, message_id: int):
+        """Set the context anchor to a specific message ID
+
+        On the next message trigger in this channel, the bot will build context
+        starting from the specified message, respecting all existing limits
+        (backread count, time gap, tokens). The anchor is consumed after one use.
+
+        **Arguments**
+            - `message_id` The Discord message ID to anchor context from
+        """
+        if (
+            not ctx.channel.permissions_for(ctx.author).manage_messages
+            and not await self.config.guild(ctx.guild).public_backfill()
+        ):
+            return await ctx.react_quietly("❌")
+
+        try:
+            target_msg = await ctx.channel.fetch_message(message_id)
+        except discord.NotFound:
+            return await ctx.send(":warning: Message not found in this channel.")
+        except discord.HTTPException as e:
+            return await ctx.send(f":warning: Failed to fetch message: {e}")
+
+        self.backfill_anchors[ctx.channel.id] = target_msg
+        logger.info(
+            f"Backfill anchor set for channel {ctx.channel.id}: message {message_id}"
+        )
+        await ctx.react_quietly("✅")
+
     @aiuser.command(aliases=["lobotomize"])
     async def forget(self, ctx: commands.Context):
         """Forces the bot to forget the current conversation up to this point

@@ -37,3 +37,4 @@ class MixinMeta(ABC):
         self.generating_channels: set[int]
         self.message_queues: dict[int, Queue]
         self.processing_tasks: dict[int, Task]
+        self.backfill_anchors: dict[int, discord.Message]

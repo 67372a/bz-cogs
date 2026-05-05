@@ -56,6 +56,8 @@ class AIUser(
         self.processing_tasks: dict[int, asyncio.Task] = {}
         # PDF annotation cache: (channel_id, originating_user_message_id) -> list[dict]
         self.pdf_annotations: dict[tuple[int, int], list[dict]] = {}
+        # Backfill anchors: channel_id -> anchor message for the next trigger
+        self.backfill_anchors: dict[int, discord.Message] = {}
 
         self.config.register_member(**DEFAULT_MEMBER)
         self.config.register_role(**DEFAULT_ROLE)

@@ -31,6 +31,15 @@ async def create_messages_list(
 ):
     """to manage messages in ChatML format"""
     thread = MessagesList(cog, ctx)
+
+    # Check for a backfill anchor for this channel
+    backfill_anchor = cog.backfill_anchors.pop(ctx.channel.id, None)
+    if backfill_anchor:
+        await thread._init(prompt=prompt, skip_init_msg=True)
+        if history:
+            await thread.add_backfill_history(backfill_anchor)
+        return thread
+
     await thread._init(prompt=prompt)
     if history:
         await thread.add_history()
@@ -65,7 +74,7 @@ class MessagesList:
     def __repr__(self) -> str:
         return json.dumps(self.get_json(), indent=4)
 
-    async def _init(self, prompt=None):
+    async def _init(self, prompt=None, skip_init_msg=False):
         self.model = await self.config.guild(self.guild).model()
         self.token_limit = await self.config.guild(self.guild).custom_model_tokens_limit() or self._get_token_limit(self.model)
         try:
@@ -73,7 +82,7 @@ class MessagesList:
         except KeyError:
             self._encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
 
-        if not prompt:
+        if not prompt and not skip_init_msg:
             await self.add_msg(self.init_message)
 
         # 1. Get the user-defined persona (e.g., "You are a helpful assistant...")
@@ -270,6 +279,62 @@ class MessagesList:
         if users and not await self.config.guild(self.guild).optin_disable_embed():
             if (random.random() <= 0.33) or (len(users) > 3):
                 await self._send_optin_embed(users)
+
+    async def add_backfill_history(self, anchor: discord.Message):
+        """Load messages from the anchor message up to the trigger message,
+        respecting backread count, time gap, and token limits.
+
+        Context order:
+            [system prompt]
+            [anchor message]
+            [messages between anchor and trigger, chronological]
+            [trigger message]
+        """
+        limit = await self.config.guild(self.guild).messages_backread()
+        max_seconds_gap = await self.config.guild(self.guild).messages_backread_seconds()
+
+        # Add the anchor message at index 1 (right after system prompt)
+        await self.add_msg(anchor, index=1)
+        if self.tokens > self.token_limit:
+            logger.debug(f"{self.tokens} tokens used - token limit hit after anchor for backfill {anchor.id}")
+            return
+
+        # Fetch messages between anchor (exclusive) and trigger (exclusive), oldest first
+        mid_msgs = [
+            message
+            async for message in self.init_message.channel.history(
+                limit=limit,
+                after=anchor,
+                before=self.init_message,
+                oldest_first=True,
+            )
+        ]
+
+        # Process mid-messages in chronological order, validating time gap and limits
+        last_msg = anchor
+        for msg in mid_msgs:
+            if not await self._is_valid_time_gap(last_msg, msg, max_seconds_gap):
+                logger.debug(f"Time gap exceeded between {last_msg.id} and {msg.id}, stopping backfill")
+                break
+            if self.tokens > self.token_limit:
+                logger.debug(f"{self.tokens} tokens used - nearing limit, stopping backfill for message {self.init_message.id}")
+                break
+            if (msg.author.id == self.bot.user.id) and (msg.embeds and msg.embeds[0].title == OPTIN_EMBED_TITLE):
+                continue
+            if msg.embeds and msg.embeds[0].title and THOUGHTS_EMBED_TITLE_REGEX.search(msg.embeds[0].title):
+                continue
+            # Insert each message at the end (after anchor, before trigger)
+            await self.add_msg(msg, index=len(self.messages))
+            last_msg = msg
+
+        # Add the trigger message at the end
+        await self.add_msg(self.init_message, index=len(self.messages))
+
+        # Ensure the conversation history ends with a user message
+        if self.messages and self.messages[-1].role == "assistant":
+            self.messages.append(MessageEntry("user", "System Note: Please continue or respond to the latest context."))
+
+        logger.info(f"Backfill complete: {len(self.messages)} messages ({self.tokens} tokens) from anchor {anchor.id} to trigger {self.init_message.id}")
 
     async def _get_past_messages(self, limit, start_time):
         before_msgs = [
