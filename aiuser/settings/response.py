@@ -298,7 +298,7 @@ class ResponseSettings(MixinMeta):
             except json.JSONDecodeError:
                 return await ctx.channel.send(":warning: Invalid JSON format!")
 
-            blacklist = ["model", "messages", "stream"]
+            blacklist = ["model", "messages", "stream", "user"]
 
             invalid_keys = [key for key in data.keys() if key in blacklist]
             if invalid_keys:

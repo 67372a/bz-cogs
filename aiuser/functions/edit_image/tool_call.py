@@ -56,56 +56,67 @@ class EditImageToolCall(ToolCall):
     by the pipeline to be sent to Discord alongside the response text.
     """
 
-    schema = ToolCallSchema(
-        function=Function(
-            name="edit_image",
-            description=(
-                "Edits an existing image by modifying it based on natural language instructions. "
-                "Use this when the user asks you to modify, alter, adjust, change, or transform "
-                "something in an image — NOT to create a brand new image from scratch. "
-                "For entirely new images, use 'generate_image' instead. "
-                "Describe what to change about the image, not what the entire image should look like."
-            ),
-            parameters=Parameters(
-                properties={
-                    "prompt": {
-                        "type": "string",
-                        "description": (
-                            "A detailed description of the specific edits to apply to the image. "
-                            "Describe what to change or modify — for example "
-                            "'make the sky more colorful', 'add a dog in the background', "
-                            "'change the lighting to sunset', 'remove the text overlay'. "
-                            "Do NOT describe the entire image from scratch."
-                        ),
-                    },
-                    "image_to_edit": {
-                        "type": "string",
-                        "description": (
-                            "A direct image URL (e.g. https://i.imgur.com/abc.png), "
-                            "Discord message ID, or message link "
-                            "(e.g. https://discord.com/channels/guild_id/channel_id/message_id) "
-                            "containing the image to edit. This is the primary image that will be modified. "
-                            "Provide the image URL, message ID, or link of the message that contains the image to edit."
-                        ),
-                    },
-                    "reference_messages": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": (
-                            "Direct image URLs (e.g. https://i.imgur.com/abc.png), "
-                            "Discord message IDs, or Discord message links "
-                            "(e.g. https://discord.com/channels/guild_id/channel_id/message_id) "
-                            "containing additional images to use as style or context references for the edit. "
-                            "Duplicate image URLs are automatically deduplicated. "
-                            "Up to 13 images total will be used. "
-                            "(The primary image_to_edit counts toward the 14 image limit.)"
-                        ),
-                    },
+schema = ToolCallSchema(
+    function=Function(
+        name="edit_image",
+        description=(
+            "Applies targeted modifications to an existing image using natural language instructions. "
+            "Use this tool when the user wants to transform, adjust, or alter specific elements within an image. "
+            "This is designed for precise edits to existing content - not for generating entirely new images. "
+            "Describe the desired changes to specific areas or attributes of the image, leaving other areas untouched. "
+            "This is a one-shot operation: provide complete, clear instructions for immediate execution. "
+            "All edits should be described in positive terms - what the result should look like, not what to avoid. "
+            "For composite edits, describe the final desired state of the modified areas."
+        ),
+        parameters=Parameters(
+            properties={
+                "prompt": {
+                    "type": "string",
+                    "description": (
+                        "Complete, one-shot instruction set for modifying the image. Describe what the edited result "
+                        "should look like, using positive and specific language. Structure your prompt to cover:\n"
+                        "1. **Target Elements**: Identify the specific areas or objects to modify (e.g., 'the background sky', 'the red car', 'the person's hat')\n"
+                        "2. **Desired Changes**: Describe the new attributes, appearance, or composition for those elements\n"
+                        "3. **Preservation Instructions**: Explicitly describe what should remain unchanged to maintain consistency\n"
+                        "4. **Technical/Style Guidance**: Include camera perspective, lighting, material properties, or artistic style when relevant\n\n"
+                        "Use descriptive language: 'transform the daytime sky into a vivid sunset with orange and purple gradients while maintaining the foreground landscape lighting' "
+                        "rather than 'change the sky to sunset'. For text rendering, use quotation marks around desired text "
+                        "and specify font characteristics. Provide all necessary details in this single prompt - "
+                        "no iterative refinement will occur."
+                    ),
                 },
-                required=["prompt", "image_to_edit"],
-            ),
-        )
+                "image_to_edit": {
+                    "type": "string",
+                    "description": (
+                        "The primary image to be modified. Provide as:\n"
+                        "- Direct image URL (preferred format: https://example.com/image.jpg)\n"
+                        "- Discord message ID containing the image\n"
+                        "- Discord message link (https://discord.com/channels/guild_id/channel_id/message_id)\n\n"
+                        "This is the base image that will be transformed according to your prompt instructions. "
+                        "Ensure the image URL is accessible and the image contains the elements you wish to modify."
+                    ),
+                },
+                "reference_messages": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Optional reference images to guide the editing style or provide visual context. "
+                        "Include up to 13 reference images (total image limit: 14 including primary image). "
+                        "Provide each reference as:\n"
+                        "- Direct image URL\n"
+                        "- Discord message ID\n"
+                        "- Discord message link\n\n"
+                        "References can include: style examples, color palettes, texture samples, lighting references, "
+                        "or compositional guides. The model will incorporate relevant visual information from references "
+                        "while applying the primary edit instructions to the target image. "
+                        "Duplicate URLs are automatically removed."
+                    ),
+                },
+            },
+            required=["prompt", "image_to_edit"],
+        ),
     )
+)
     function_name = schema.function.name
 
     def __init__(self, config: Config, ctx: commands.Context):

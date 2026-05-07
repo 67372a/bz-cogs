@@ -59,43 +59,54 @@ class GenerateImageToolCall(ToolCall):
         function=Function(
             name="generate_image",
             description=(
-                "Generates an AI image using a configured image generation model. "
-                "Use this when the user asks you to create, draw, or generate any kind of picture, "
-                "illustration, artwork, or visual representation."
+                "Executes a complete, one-shot AI image generation request. "
+                "Trigger this tool whenever the user expresses an intent to create, draw, "
+                "or visualize an image, illustration, diagram, or photograph. Structure the "
+                "request to be comprehensively detailed on the first attempt, capturing "
+                "the complete scope of the user's vision."
             ),
             parameters=Parameters(
                 properties={
                     "prompt": {
                         "type": "string",
                         "description": (
-                            "A detailed description of the image to generate. "
-                            "Include subject, style, colors, mood, and any other visual details."
+                            "A comprehensive, natural language narrative defining the exact image "
+                            "to be generated. Construct the prompt using cohesive paragraphs. "
+                            "Clearly state the overarching intent and context of the image. "
+                            "For complex compositions, utilize step-by-step spatial or temporal descriptions "
+                            "to place elements. Emphasize all desired elements using clear, affirmative phrasing. "
+                            "When textual elements are required, wrap the exact text in quotes and specify "
+                            "the typographic style. Dictate precise photographic terminology, camera setups, "
+                            "or artistic mediums to establish the definitive aesthetic, lighting, and mood."
                         ),
                     },
                     "aspect_ratio": {
                         "type": "string",
-                        "enum": [
+                        "enum":[
                             "1:1", "2:3", "3:2", "3:4", "4:3",
                             "4:5", "5:4", "9:16", "16:9", "21:9",
                             "1:4", "4:1", "1:8", "8:1"
                         ],
                         "description": (
-                            "The desired aspect ratio for the generated image. "
-                            "Use '16:9' for widescreen, '1:1' for square, '9:16' for portrait mobile, etc."
+                            "The optimal aspect ratio for the generated image. Select the configuration "
+                            "that perfectly aligns with the requested medium or spatial orientation. "
+                            "Options span standard dimensions such as '16:9' for widescreen or '1:1' for "
+                            "square, extending to specialized vertical or horizontal formats like '9:16', "
+                            "and extreme dimensions like '4:1' or '1:8'."
                         ),
                     },
                     "reference_messages": {
                         "type": "array",
                         "items": {"type": "string"},
                         "description": (
-                            "Direct image URLs (e.g. https://i.imgur.com/abc.png), "
+                            "An array of direct image URLs (e.g. https://example.com/image.png), "
                             "Discord message IDs, or Discord message links "
                             "(e.g. https://discord.com/channels/guild_id/channel_id/message_id) "
-                            "containing images to use as reference for image generation. "
-                            "Pass these when the user's request references or depends on images "
-                            "from specific Discord messages or external image URLs. "
-                            "Duplicate image URLs are automatically deduplicated. "
-                            "Up to 14 images total will be used."
+                            "providing visual references. Supply these when the requested generation "
+                            "relies on existing external imagery. Utilize these references to establish "
+                            "definitive object fidelity, structural parameters, or character consistency. "
+                            "The system automatically deduplicates URLs and processes up to 14 distinct "
+                            "reference images to guide the final generation."
                         ),
                     },
                 },

@@ -336,12 +336,11 @@ class LLMPipeline:
             ],
             "user": user_digest,
         })
-        kwargs['user'] = user_digest
 
         logger.info(f"Sending request to LLM (model: {self.model}) with {len(current_messages_json)} messages. Kwarg keys: {list(kwargs.keys())}")
 
         response: ChatCompletion = await self._create_completion_with_retry(
-            model=self.model, messages=current_messages_json, **kwargs
+            model=self.model, messages=current_messages_json, user=user_digest, **kwargs
         )
 
         self._store_pdf_annotations_from_response(response)
@@ -372,9 +371,9 @@ class LLMPipeline:
         retry=retry_if_exception_type((openai.RateLimitError, openai.APIConnectionError, openai.InternalServerError))
         or retry_if_result(is_response_unsatisfactory),
     )
-    async def _create_completion_with_retry(self, **kwargs) -> ChatCompletion:
+    async def _create_completion_with_retry(self, model = None, messages = None, user = None, stream=False, **kwargs) -> ChatCompletion:
         try:
-            result = await self.openai_client.chat.completions.create(**kwargs)
+            result = await self.openai_client.chat.completions.create(model=model, messages=messages, user=user, stream=stream, **kwargs)
             if not result.choices:
                 raise openai.APIError(f"API returned no choices: {result}")
             native_finish_reason = getattr(result.choices[0], "native_finish_reason", None) or result.choices[0].finish_reason
