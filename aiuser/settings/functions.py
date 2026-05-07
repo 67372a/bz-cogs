@@ -328,6 +328,51 @@ class FunctionCallingSettings(MixinMeta):
         tool_names = [GenerateImageToolCall.function_name]
         await self.toggle_function_helper(ctx, tool_names, "Generate Image")
 
+    @functions.command(name="generate_image_prompt")
+    async def config_generate_image_prompt(self, ctx: commands.Context, *, prompt: str = ""):
+        """ Set/show/reset the system prompt for image generation
+
+        This system prompt is sent to the image generation model alongside
+        the user's prompt. Useful for setting art style, quality expectations,
+        or behavioral guidelines. (Separate from the chat persona prompt.)
+
+        To view the current prompt, use without arguments.
+        To reset/clear, use `{ctx.clean_prefix}functions generate_image_prompt reset`
+        To set, provide the prompt text directly.
+
+        **Arguments**
+            - `prompt` The prompt text to set. Use "reset" to clear it.
+        """
+        if not prompt:
+            # Show current prompt
+            current = await self.config.guild(ctx.guild).direct_image_generation_system_prompt()
+            if current:
+                embed = discord.Embed(
+                    title="Image Generation System Prompt",
+                    description=current,
+                    color=await ctx.embed_color(),
+                )
+                embed.add_field(name="Reset", value=f"`{ctx.clean_prefix}functions generate_image_prompt reset`", inline=False)
+            else:
+                embed = discord.Embed(
+                    title="Image Generation System Prompt",
+                    description="*No custom system prompt set. The model will receive only the user's prompt.*",
+                    color=await ctx.embed_color(),
+                )
+            return await ctx.send(embed=embed)
+
+        if prompt.lower() in ("reset", "clear", "none"):
+            await self.config.guild(ctx.guild).direct_image_generation_system_prompt.set(None)
+            return await ctx.send("Image generation system prompt has been reset (cleared).")
+
+        await self.config.guild(ctx.guild).direct_image_generation_system_prompt.set(prompt)
+        embed = discord.Embed(
+            title="Image Generation System Prompt Updated",
+            description=prompt,
+            color=await ctx.embed_color(),
+        )
+        await ctx.send(embed=embed)
+
     @functions.command(name="generate_image_config")
     async def config_generate_image(self, ctx: commands.Context, *, json_block: str = ""):
         """ Configure direct image generation parameters using JSON
@@ -371,6 +416,52 @@ class FunctionCallingSettings(MixinMeta):
 
         tool_names = [EditImageToolCall.function_name]
         await self.toggle_function_helper(ctx, tool_names, "Edit Image")
+
+    @functions.command(name="edit_image_prompt")
+    async def config_edit_image_prompt(self, ctx: commands.Context, *, prompt: str = ""):
+        """ Set/show/reset the system prompt for image editing
+
+        This system prompt is sent to the image edit model alongside
+        the edit prompt. Useful for guiding how edits are applied,
+        preserving aspects of the original, or setting style constraints.
+        (Separate from the chat persona prompt.)
+
+        To view the current prompt, use without arguments.
+        To reset/clear, use `{ctx.clean_prefix}functions edit_image_prompt reset`
+        To set, provide the prompt text directly.
+
+        **Arguments**
+            - `prompt` The prompt text to set. Use "reset" to clear it.
+        """
+        if not prompt:
+            # Show current prompt
+            current = await self.config.guild(ctx.guild).direct_image_edit_system_prompt()
+            if current:
+                embed = discord.Embed(
+                    title="Image Edit System Prompt",
+                    description=current,
+                    color=await ctx.embed_color(),
+                )
+                embed.add_field(name="Reset", value=f"`{ctx.clean_prefix}functions edit_image_prompt reset`", inline=False)
+            else:
+                embed = discord.Embed(
+                    title="Image Edit System Prompt",
+                    description="*No custom system prompt set. The model will receive only the user's prompt.*",
+                    color=await ctx.embed_color(),
+                )
+            return await ctx.send(embed=embed)
+
+        if prompt.lower() in ("reset", "clear", "none"):
+            await self.config.guild(ctx.guild).direct_image_edit_system_prompt.set(None)
+            return await ctx.send("Image edit system prompt has been reset (cleared).")
+
+        await self.config.guild(ctx.guild).direct_image_edit_system_prompt.set(prompt)
+        embed = discord.Embed(
+            title="Image Edit System Prompt Updated",
+            description=prompt,
+            color=await ctx.embed_color(),
+        )
+        await ctx.send(embed=embed)
 
     @functions.command(name="edit_image_config")
     async def config_edit_image(self, ctx: commands.Context, *, json_block: str = ""):

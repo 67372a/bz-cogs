@@ -497,7 +497,15 @@ class EditImageToolCall(ToolCall):
                     f"for edit context"
                 )
 
+        # ---- Inject system prompt (optional) ----
+        system_prompt = await self.config.guild(self.ctx.guild).direct_image_edit_system_prompt()
+
         # ---- Build the request payload ----
+        messages: list = []
+
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+
         # Multimodal content: edit prompt + source image + optional reference images
         content: Any = [
             {"type": "text", "text": prompt},
@@ -506,12 +514,12 @@ class EditImageToolCall(ToolCall):
         if reference_content_parts:
             content.extend(reference_content_parts)
 
-        messages = [
+        messages.append(
             {
                 "role": "user",
                 "content": content,
             }
-        ]
+        )
 
         extra_body: Dict[str, Any] = {
             "modalities": ['image', 'text'],

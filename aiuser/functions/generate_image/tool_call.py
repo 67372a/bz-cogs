@@ -396,27 +396,35 @@ class GenerateImageToolCall(ToolCall):
                     f"for generation"
                 )
 
+        # ---- Inject system prompt (optional) ----
+        system_prompt = await self.config.guild(self.ctx.guild).direct_image_generation_system_prompt()
+
         # ---- Build the request payload ----
+        messages: list = []
+
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+
         if reference_content_parts:
             # Multimodal content: text prompt + reference images
             content: Any = [
                 {"type": "text", "text": prompt},
             ]
             content.extend(reference_content_parts)
-            messages = [
+            messages.append(
                 {
                     "role": "user",
                     "content": content,
                 }
-            ]
+            )
         else:
             # Simple text-only prompt
-            messages = [
+            messages.append(
                 {
                     "role": "user",
                     "content": prompt,
                 }
-            ]
+            )
 
         extra_body: Dict[str, Any] = {
             "modalities": ['image', 'text'],
