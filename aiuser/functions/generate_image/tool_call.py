@@ -448,6 +448,7 @@ class GenerateImageToolCall(ToolCall):
                 extra_body=extra_body,
                 user=user_digest,
                 stream=False,
+                reasoning_effort="high",
             )
         except Exception as e:
             logger.error(
