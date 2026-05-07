@@ -506,7 +506,7 @@ class EditImageToolCall(ToolCall):
         ]
 
         extra_body: Dict[str, Any] = {
-            "modalities": ["image"],
+            "modalities": ['image', 'text'],
         }
 
         image_config: Dict[str, str] = {}
