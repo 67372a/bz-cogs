@@ -54,6 +54,18 @@ class DirectImageGenerationParameters:
     image_size: Optional[str] = None  # "1K", "2K", "4K", "0.5K"
 
 
+@dataclass
+class DirectImageEditParameters:
+    """Preconfigured parameters for the local edit_image ToolCall.
+
+    These are set by server admins. The model and image_size are fixed
+    across all edits, while the LLM passes prompt, image_to_edit, and
+    aspect_ratio dynamically in the function call.
+    """
+    model: Optional[str] = None       # e.g. "google/gemini-3.1-flash-image-preview"
+    image_size: Optional[str] = None  # "1K", "2K", "4K", "0.5K"
+
+
 _PARAM_CLASS_MAP = {
     OpenRouterToolType.WEB_SEARCH: WebSearchParameters,
     OpenRouterToolType.WEB_FETCH: WebFetchParameters,
@@ -63,6 +75,7 @@ _PARAM_CLASS_MAP = {
 
 # Additional string-keyed entries for local ToolCalls that don't use OpenRouterToolType
 _PARAM_CLASS_MAP["direct_image_generation"] = DirectImageGenerationParameters
+_PARAM_CLASS_MAP["direct_image_edit"] = DirectImageEditParameters
 
 
 def build_openrouter_tool_dict(tool_type: OpenRouterToolType, parameters: dict) -> dict:

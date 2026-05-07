@@ -315,6 +315,50 @@ class FunctionCallingSettings(MixinMeta):
             json_block=json_block,
         )
 
+    @functions.command(name="edit_image")
+    async def toggle_edit_image(self, ctx: commands.Context):
+        """ Toggle direct image edit function calling
+
+        Enables/disables the local edit_image function call.
+        When enabled, the LLM can call this function to edit existing images
+        directly via the configured OpenRouter model.
+
+        Note: You must configure a model using `[p]aiuser functions edit_image_config`
+        before the function will work.
+        """
+        from aiuser.functions.edit_image.tool_call import EditImageToolCall
+
+        tool_names = [EditImageToolCall.function_name]
+        await self.toggle_function_helper(ctx, tool_names, "Edit Image")
+
+    @functions.command(name="edit_image_config")
+    async def config_edit_image(self, ctx: commands.Context, *, json_block: str = ""):
+        """ Configure direct image edit parameters using JSON
+
+        Sets the model and image_size that will be used for direct image editing.
+        The prompt and image_to_edit are passed by the LLM, everything else is
+        configured here.
+
+        To reset parameters to default, use `{ctx.clean_prefix}functions edit_image_config reset`
+        To show current parameters, use `{ctx.clean_prefix}functions edit_image_config show`
+
+        Example command:
+        `{ctx.clean_prefix}functions edit_image_config ```json\n{"model": "google/gemini-3.1-flash-image-preview", "image_size": "2K"}\n``` `
+
+        Valid fields: model, image_size
+        """
+        await self._handle_or_json_config(
+            ctx=ctx,
+            config_key="direct_image_edit_parameters",
+            tool_type="direct_image_edit",
+            param_display_name="Edit Image",
+            example_config={
+                "model": "google/gemini-3.1-flash-image-preview",
+                "image_size": "2K",
+            },
+            json_block=json_block,
+        )
+
     @functions.command(name="or_pdf_parsing")
     async def toggle_or_pdf_parsing(self, ctx: commands.Context):
         """ Toggle OpenRouter PDF parsing

@@ -115,6 +115,7 @@ DEFAULT_GUILD = {
     "openrouter_image_generation_enabled": False,
     "openrouter_image_generation_parameters": None,
     "direct_image_generation_parameters": None,
+    "direct_image_edit_parameters": None,
     "openrouter_pdf_parsing_enabled": False,
     "openrouter_pdf_parsing_parameters": None,
     "openrouter_image_parsing_enabled": False,

@@ -16,7 +16,7 @@ from redbot.core.bot import Red
 from aiuser.functions.tool_call import ToolCall
 from aiuser.functions.types import Function, Parameters, ToolCallSchema
 from aiuser.types.openrouter_types import (
-    DirectImageGenerationParameters,
+    DirectImageEditParameters,
     deserialize_parameters,
 )
 
@@ -40,36 +40,51 @@ IMAGE_EXTENSIONS = frozenset({
 MAX_IMAGE_DOWNLOAD_SIZE = 10 * 1024 * 1024
 
 
-class GenerateImageToolCall(ToolCall):
-    """Local ToolCall that generates images via direct OpenRouter API call.
+class EditImageToolCall(ToolCall):
+    """Local ToolCall that edits existing images via direct OpenRouter API call.
 
-    Unlike `OpenRouterImageGeneration` (a server-side tool handled entirely
-    by OpenRouter), this class makes the API call directly from the bot using
-    the existing AsyncOpenAI client, with preconfigured generation parameters
-    (model, image_size) while allowing the LLM to pass prompt and aspect_ratio.
+    Similar to GenerateImageToolCall but takes a dedicated `image_to_edit` field
+    — a single Discord message ID or link pointing to the image that should be
+    modified. The prompt is framed as edit instructions, encouraging the LLM to
+    describe *changes to make* rather than generating a new image from scratch.
 
     The model and image_size are configured server-side via settings commands.
-    The prompt and aspect_ratio are provided by the LLM in the function call.
+    The prompt, image_to_edit, and optionally aspect_ratio are provided by the
+    LLM in the function call.
 
-    Generated image data is stored in `self.generated_images` and is retrieved
+    Edited image data is stored in `self.generated_images` and is retrieved
     by the pipeline to be sent to Discord alongside the response text.
     """
 
     schema = ToolCallSchema(
         function=Function(
-            name="generate_image",
+            name="edit_image",
             description=(
-                "Generates an AI image using a configured image generation model. "
-                "Use this when the user asks you to create, draw, or generate any kind of picture, "
-                "illustration, artwork, or visual representation."
+                "Edits an existing image by modifying it based on natural language instructions. "
+                "Use this when the user asks you to modify, alter, adjust, change, or transform "
+                "something in an image — NOT to create a brand new image from scratch. "
+                "For entirely new images, use 'generate_image' instead. "
+                "Describe what to change about the image, not what the entire image should look like."
             ),
             parameters=Parameters(
                 properties={
                     "prompt": {
                         "type": "string",
                         "description": (
-                            "A detailed description of the image to generate. "
-                            "Include subject, style, colors, mood, and any other visual details."
+                            "A detailed description of the specific edits to apply to the image. "
+                            "Describe what to change or modify — for example "
+                            "'make the sky more colorful', 'add a dog in the background', "
+                            "'change the lighting to sunset', 'remove the text overlay'. "
+                            "Do NOT describe the entire image from scratch."
+                        ),
+                    },
+                    "image_to_edit": {
+                        "type": "string",
+                        "description": (
+                            "A Discord message ID or message link "
+                            "(e.g. https://discord.com/channels/guild_id/channel_id/message_id) "
+                            "containing the image to edit. This is the primary image that will be modified. "
+                            "Provide the message ID or link of the message that contains the image to edit."
                         ),
                     },
                     "aspect_ratio": {
@@ -80,8 +95,9 @@ class GenerateImageToolCall(ToolCall):
                             "1:4", "4:1", "1:8", "8:1"
                         ],
                         "description": (
-                            "The desired aspect ratio for the generated image. "
-                            "Use '16:9' for widescreen, '1:1' for square, '9:16' for portrait mobile, etc."
+                            "The desired aspect ratio for the edited image. "
+                            "Use '16:9' for widescreen, '1:1' for square, '9:16' for portrait mobile, etc. "
+                            "If not specified, the original image aspect ratio will be preserved."
                         ),
                     },
                     "reference_messages": {
@@ -90,14 +106,13 @@ class GenerateImageToolCall(ToolCall):
                         "description": (
                             "Discord message IDs or message links "
                             "(e.g. https://discord.com/channels/guild_id/channel_id/message_id) "
-                            "containing images to use as reference for image generation. "
-                            "Pass these when the user's request references or depends on images "
-                            "from specific Discord messages. "
-                            "Up to 14 images total will be extracted from the referenced messages."
+                            "containing additional images to use as style or context references for the edit. "
+                            "Up to 13 images total will be extracted from the referenced messages. "
+                            "(The primary image_to_edit counts toward the 14 image limit.)"
                         ),
                     },
                 },
-                required=["prompt"],
+                required=["prompt", "image_to_edit"],
             ),
         )
     )
@@ -128,12 +143,84 @@ class GenerateImageToolCall(ToolCall):
         self.generated_images.clear()
         return images
 
-    async def _get_generation_params(self) -> DirectImageGenerationParameters:
-        """Read the preconfigured generation parameters from guild config."""
+    async def _get_edit_params(self) -> DirectImageEditParameters:
+        """Read the preconfigured edit parameters from guild config."""
         params_json = await self.config.guild(
             self.ctx.guild
-        ).direct_image_generation_parameters()
-        return deserialize_parameters(params_json, "direct_image_generation")
+        ).direct_image_edit_parameters()
+        return deserialize_parameters(params_json, "direct_image_edit")
+
+    async def _resolve_single_reference(
+        self, ref: str
+    ) -> Optional[str]:
+        """Resolve a single Discord message ID/link to an image URL.
+
+        Args:
+            ref: A message ID or full Discord message link.
+
+        Returns:
+            The direct image URL, or None if it could not be resolved.
+        """
+        ref = ref.strip()
+        if not ref:
+            return None
+
+        channel = None
+        message_id = None
+
+        link_match = DISCORD_MESSAGE_LINK_PATTERN.search(ref)
+        if link_match:
+            guild_id = int(link_match.group("guild"))
+            channel_id = int(link_match.group("channel"))
+            message_id = int(link_match.group("message"))
+            guild = self.bot.get_guild(guild_id)
+            if guild:
+                channel = guild.get_channel(channel_id)
+            if channel is None:
+                channel = self.bot.get_channel(channel_id)
+        else:
+            try:
+                message_id = int(ref)
+                channel = self.ctx.channel
+            except (ValueError, TypeError):
+                logger.warning(
+                    f"[EditImage] Invalid reference message format: {ref}"
+                )
+                return None
+
+        if channel is None:
+            logger.warning(
+                f"[EditImage] Could not resolve channel for reference: {ref}"
+            )
+            return None
+
+        try:
+            message = await channel.fetch_message(message_id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException) as e:
+            logger.warning(
+                f"[EditImage] Failed to fetch message {message_id}: {e}"
+            )
+            return None
+
+        if not message:
+            return None
+
+        # Extract the first image URL from attachments
+        for attachment in message.attachments:
+            if attachment.content_type and attachment.content_type.startswith("image/"):
+                return attachment.url
+
+        # Fallback to embed images
+        for embed in message.embeds:
+            if embed.image and embed.image.url:
+                return embed.image.url
+            if embed.thumbnail and embed.thumbnail.url:
+                return embed.thumbnail.url
+
+        logger.warning(
+            f"[EditImage] No images found in message {message_id}"
+        )
+        return None
 
     async def _resolve_reference_images(
         self, reference_messages: List[str]
@@ -186,13 +273,13 @@ class GenerateImageToolCall(ToolCall):
                     channel = self.ctx.channel
                 except (ValueError, TypeError):
                     logger.warning(
-                        f"[DirectImageGen] Invalid reference message format: {ref}"
+                        f"[EditImage] Invalid reference message format: {ref}"
                     )
                     continue
 
             if channel is None:
                 logger.warning(
-                    f"[DirectImageGen] Could not resolve channel for reference: {ref}"
+                    f"[EditImage] Could not resolve channel for reference: {ref}"
                 )
                 continue
 
@@ -201,7 +288,7 @@ class GenerateImageToolCall(ToolCall):
                 message = await channel.fetch_message(message_id)
             except (discord.NotFound, discord.Forbidden, discord.HTTPException) as e:
                 logger.warning(
-                    f"[DirectImageGen] Failed to fetch message {message_id}: {e}"
+                    f"[EditImage] Failed to fetch message {message_id}: {e}"
                 )
                 continue
 
@@ -218,7 +305,7 @@ class GenerateImageToolCall(ToolCall):
                         seen.add(url)
                         image_urls.append(url)
                         logger.debug(
-                            f"[DirectImageGen] Found reference image from attachment: {url}"
+                            f"[EditImage] Found reference image from attachment: {url}"
                         )
 
             if len(image_urls) >= MAX_REFERENCE_IMAGES:
@@ -235,7 +322,7 @@ class GenerateImageToolCall(ToolCall):
                         seen.add(url)
                         image_urls.append(url)
                         logger.debug(
-                            f"[DirectImageGen] Found reference image from embed.image: {url}"
+                            f"[EditImage] Found reference image from embed.image: {url}"
                         )
                 # Embed thumbnail
                 if embed.thumbnail and embed.thumbnail.url:
@@ -244,11 +331,11 @@ class GenerateImageToolCall(ToolCall):
                         seen.add(url)
                         image_urls.append(url)
                         logger.debug(
-                            f"[DirectImageGen] Found reference image from embed.thumbnail: {url}"
+                            f"[EditImage] Found reference image from embed.thumbnail: {url}"
                         )
 
         logger.info(
-            f"[DirectImageGen] Resolved {len(image_urls)} reference image(s) "
+            f"[EditImage] Resolved {len(image_urls)} reference image(s) "
             f"from {len(reference_messages)} message reference(s)"
         )
         return image_urls
@@ -273,7 +360,7 @@ class GenerateImageToolCall(ToolCall):
                     ) as response:
                         if response.status != 200:
                             logger.warning(
-                                f"[DirectImageGen] Failed to download reference image "
+                                f"[EditImage] Failed to download reference image "
                                 f"from {url}: HTTP {response.status}"
                             )
                             continue
@@ -281,7 +368,7 @@ class GenerateImageToolCall(ToolCall):
                         content_type = response.headers.get("Content-Type", "")
                         if not content_type.startswith("image/"):
                             logger.warning(
-                                f"[DirectImageGen] URL {url} is not an image "
+                                f"[EditImage] URL {url} is not an image "
                                 f"(Content-Type: {content_type})"
                             )
                             continue
@@ -289,7 +376,7 @@ class GenerateImageToolCall(ToolCall):
                         data = await response.read()
                         if len(data) > MAX_IMAGE_DOWNLOAD_SIZE:
                             logger.warning(
-                                f"[DirectImageGen] Reference image from {url} exceeds "
+                                f"[EditImage] Reference image from {url} exceeds "
                                 f"max size ({len(data)} > {MAX_IMAGE_DOWNLOAD_SIZE} bytes)"
                             )
                             continue
@@ -301,60 +388,65 @@ class GenerateImageToolCall(ToolCall):
                             "image_url": {"url": data_url},
                         })
                         logger.info(
-                            f"[DirectImageGen] Downloaded and encoded reference image "
+                            f"[EditImage] Downloaded and encoded reference image "
                             f"from {url}: {len(data)} bytes"
                         )
             except aiohttp.ClientError as e:
                 logger.warning(
-                    f"[DirectImageGen] Network error downloading reference image "
+                    f"[EditImage] Network error downloading reference image "
                     f"from {url}: {e}"
                 )
             except asyncio.TimeoutError:
                 logger.warning(
-                    f"[DirectImageGen] Timeout downloading reference image from {url}"
+                    f"[EditImage] Timeout downloading reference image from {url}"
                 )
             except Exception as e:
                 logger.warning(
-                    f"[DirectImageGen] Unexpected error downloading reference image "
+                    f"[EditImage] Unexpected error downloading reference image "
                     f"from {url}: {e}"
                 )
 
         return content_parts
 
     async def _handle(self, arguments: Dict[str, Any]) -> str:
-        """Execute the image generation via direct OpenRouter API call.
+        """Execute the image edit via direct OpenRouter API call.
 
         Reads preconfigured model + image_size from guild config, uses the
-        LLM-provided prompt and aspect_ratio, optionally resolves reference
-        images from Discord messages, calls the OpenRouter API, and stores
-        the resulting image data for later sending to Discord.
+        LLM-provided prompt, image_to_edit, and aspect_ratio, resolves the
+        target image and optional reference images from Discord messages,
+        calls the OpenRouter API, and stores the resulting image data for
+        later sending to Discord.
 
         Args:
-            arguments: Dict with 'prompt' (required), 'aspect_ratio' (optional),
-                       and 'reference_messages' (optional).
+            arguments: Dict with 'prompt' (required), 'image_to_edit' (required),
+                       'aspect_ratio' (optional), and 'reference_messages' (optional).
 
         Returns:
-            A confirmation string for the LLM describing what was generated.
+            A confirmation string for the LLM describing what was edited.
         """
         prompt = arguments.get("prompt", "")
+        image_to_edit = arguments.get("image_to_edit", "")
         aspect_ratio = arguments.get("aspect_ratio")
         reference_messages = arguments.get("reference_messages", [])
 
         if not prompt or not prompt.strip():
-            return "Error: No prompt provided for image generation."
+            return "Error: No prompt provided for image edit."
+
+        if not image_to_edit or not image_to_edit.strip():
+            return "Error: No image_to_edit provided. Provide a Discord message ID or link containing the image to edit."
 
         # Read preconfigured parameters
-        params = await self._get_generation_params()
+        params = await self._get_edit_params()
         model = params.model
         image_size = params.image_size
 
         if not model:
             logger.error(
-                f"Image generation failed for guild {self.ctx.guild.name}: "
-                "no model configured. Use `[p]aiuser functions generate_image_config` to set one."
+                f"Image edit failed for guild {self.ctx.guild.name}: "
+                "no model configured. Use `[p]aiuser functions edit_image_config` to set one."
             )
             return (
-                "Error: Image generation model is not configured. "
+                "Error: Image edit model is not configured. "
                 "A server administrator needs to set a model using the bot's configuration commands."
             )
 
@@ -365,12 +457,27 @@ class GenerateImageToolCall(ToolCall):
 
         if not client:
             logger.error(
-                f"Image generation failed for guild {self.ctx.guild.name}: OpenAI client not available."
+                f"Image edit failed for guild {self.ctx.guild.name}: OpenAI client not available."
             )
             return "Error: OpenAI client is not available. The bot may not be properly configured."
 
-        # ---- Resolve and download reference images ----
-        reference_image_urls: List[str] = []
+        # ---- Resolve the primary image to edit ----
+        source_image_url = await self._resolve_single_reference(image_to_edit)
+        if not source_image_url:
+            return (
+                "Error: Could not find an image in the referenced message. "
+                "Make sure the message ID or link contains an image attachment."
+            )
+
+        # ---- Resolve and download the source image ----
+        source_content_parts = await self._download_and_encode_images([source_image_url])
+        if not source_content_parts:
+            return (
+                "Error: Could not download the image to edit. "
+                "The image may be too large or unavailable."
+            )
+
+        # ---- Resolve and download additional reference images ----
         reference_content_parts: List[dict] = []
 
         if reference_messages and isinstance(reference_messages, list):
@@ -378,31 +485,25 @@ class GenerateImageToolCall(ToolCall):
             if reference_image_urls:
                 reference_content_parts = await self._download_and_encode_images(reference_image_urls)
                 logger.info(
-                    f"[DirectImageGen] Using {len(reference_content_parts)} reference image(s) "
-                    f"for generation"
+                    f"[EditImage] Using {len(reference_content_parts)} additional reference image(s) "
+                    f"for edit context"
                 )
 
         # ---- Build the request payload ----
+        # Multimodal content: edit prompt + source image + optional reference images
+        content: Any = [
+            {"type": "text", "text": prompt},
+        ]
+        content.extend(source_content_parts)
         if reference_content_parts:
-            # Multimodal content: text prompt + reference images
-            content: Any = [
-                {"type": "text", "text": prompt},
-            ]
             content.extend(reference_content_parts)
-            messages = [
-                {
-                    "role": "user",
-                    "content": content,
-                }
-            ]
-        else:
-            # Simple text-only prompt
-            messages = [
-                {
-                    "role": "user",
-                    "content": prompt,
-                }
-            ]
+
+        messages = [
+            {
+                "role": "user",
+                "content": content,
+            }
+        ]
 
         extra_body: Dict[str, Any] = {
             "modalities": ["image", "text"],
@@ -435,9 +536,10 @@ class GenerateImageToolCall(ToolCall):
         })
 
         logger.info(
-            f"[DirectImageGen] Generating image for guild {self.ctx.guild.name}: "
+            f"[EditImage] Editing image for guild {self.ctx.guild.name}: "
             f"model={model}, prompt={prompt[:1000]}{'...' if len(prompt) > 1000 else ''}, "
             f"aspect_ratio={aspect_ratio}, image_size={image_size}, "
+            f"source_image={source_image_url[:80]}..., "
             f"reference_images={len(reference_content_parts)}"
         )
 
@@ -452,24 +554,24 @@ class GenerateImageToolCall(ToolCall):
             )
         except Exception as e:
             logger.error(
-                f"[DirectImageGen] API call failed for guild {self.ctx.guild.name}: {e}"
+                f"[EditImage] API call failed for guild {self.ctx.guild.name}: {e}"
             )
-            return f"Error: Image generation API call failed: {str(e)}"
+            return f"Error: Image edit API call failed: {str(e)}"
 
         # Extract images from the response
         images = self._extract_images_from_response(response)
 
         if not images:
             logger.warning(
-                f"[DirectImageGen] No images found in response for guild {self.ctx.guild.name}"
+                f"[EditImage] No images found in response for guild {self.ctx.guild.name}"
             )
             # Fallback: check if there's text content describing the issue
             if response.choices and response.choices[0].message.content:
                 content = response.choices[0].message.content
                 return (
-                    f"The image generation model returned: {content[:500]}"
+                    f"The image edit model returned: {content[:500]}"
                 )
-            return "Error: No image was generated. The model may not support image generation or returned an empty response."
+            return "Error: No image was generated after editing. The model may not support image editing or returned an empty response."
 
         # Decode and store images for later sending by the response layer
         for image_data_url in images:
@@ -479,27 +581,27 @@ class GenerateImageToolCall(ToolCall):
                     self.generated_images.append(decoded)
             except Exception as e:
                 logger.error(
-                    f"[DirectImageGen] Failed to process image data: {e}"
+                    f"[EditImage] Failed to process image data: {e}"
                 )
 
         if not self.generated_images:
             return (
-                "Error: Image was generated but could not be processed."
+                "Error: Image was edited but could not be processed."
             )
 
         logger.info(
-            f"[DirectImageGen] Successfully generated {len(self.generated_images)} image(s) "
+            f"[EditImage] Successfully edited image, generated {len(self.generated_images)} result(s) "
             f"for guild {self.ctx.guild.name}"
         )
 
         model_info = model.split("/")[-1] if "/" in model else model
-        ratio_info = aspect_ratio or "default"
+        ratio_info = aspect_ratio or "original"
         ref_info = f" with {len(reference_content_parts)} reference image(s)" if reference_content_parts else ""
         return (
-            f"Image generation successful. Generated {len(self.generated_images)} image(s) "
+            f"Image edit successful. Generated {len(self.generated_images)} edited version(s) "
             f"using model '{model_info}' at aspect ratio '{ratio_info}'{ref_info}. "
-            f"Prompt used: \"{prompt[:200]}{'...' if len(prompt) > 200 else ''}\". "
-            f"The image(s) have been sent to the Discord channel."
+            f"Edit prompt used: \"{prompt[:200]}{'...' if len(prompt) > 200 else ''}\". "
+            f"The edited image(s) have been sent to the Discord channel."
         )
 
     def _decode_image_data(self, image_data_url: str) -> Optional[Dict]:
@@ -520,7 +622,7 @@ class GenerateImageToolCall(ToolCall):
         )
         if not header_match:
             logger.warning(
-                "[DirectImageGen] Could not parse data URL header"
+                "[EditImage] Could not parse data URL header"
             )
             return None
 
@@ -530,7 +632,7 @@ class GenerateImageToolCall(ToolCall):
         try:
             image_bytes = base64.b64decode(encoded_data)
         except Exception as e:
-            logger.error(f"[DirectImageGen] Failed to decode base64 image data: {e}")
+            logger.error(f"[EditImage] Failed to decode base64 image data: {e}")
             return None
 
         # Map format to file extension
@@ -544,7 +646,7 @@ class GenerateImageToolCall(ToolCall):
             "avif": "avif",
         }
         ext = ext_map.get(fmt, "png")
-        filename = f"generated_{self.ctx.message.id}.{ext}"
+        filename = f"edited_{self.ctx.message.id}.{ext}"
 
         return {
             "bytes": image_bytes,

@@ -25,6 +25,7 @@ from aiuser.config.models import (
 from aiuser.functions.tool_call import ToolCall
 from aiuser.functions.types import ToolCallSchema
 from aiuser.functions.generate_image.tool_call import GenerateImageToolCall
+from aiuser.functions.edit_image.tool_call import EditImageToolCall
 from aiuser.messages_list.messages import MessagesList
 from aiuser.functions.openrouter import (
     OpenRouterWebSearch,
@@ -459,10 +460,12 @@ class LLMPipeline:
         if local_tool_calls:
             await self._process_and_add_tool_results(local_tool_calls)
 
-            # Collect generated images from tool executions
+            # Collect generated/edited images from tool executions
             for tc in local_tool_calls:
                 for tool_obj in self.enabled_tools:
-                    if tool_obj.function_name == tc.function.name and isinstance(tool_obj, GenerateImageToolCall):
+                    if tool_obj.function_name == tc.function.name and (
+                        isinstance(tool_obj, GenerateImageToolCall) or isinstance(tool_obj, EditImageToolCall)
+                    ):
                         tool_images = tool_obj.get_generated_images()
                         if tool_images:
                             self.collected_images.extend(tool_images)
