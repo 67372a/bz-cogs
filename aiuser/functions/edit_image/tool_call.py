@@ -506,7 +506,7 @@ class EditImageToolCall(ToolCall):
         ]
 
         extra_body: Dict[str, Any] = {
-            "modalities": ["image", "text"],
+            "modalities": ["image"],
         }
 
         image_config: Dict[str, str] = {}
@@ -548,7 +548,6 @@ class EditImageToolCall(ToolCall):
                 model=model,
                 messages=messages,
                 extra_body=extra_body,
-                tools=[{"google_search": {}}],
                 user=user_digest,
                 stream=False,
             )

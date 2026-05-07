@@ -405,7 +405,7 @@ class GenerateImageToolCall(ToolCall):
             ]
 
         extra_body: Dict[str, Any] = {
-            "modalities": ["image", "text"],
+            "modalities": ["image"],
         }
 
         image_config: Dict[str, str] = {}
@@ -432,6 +432,7 @@ class GenerateImageToolCall(ToolCall):
                 {"category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "BLOCK_NONE"},
             ],
             "user": user_digest,
+            "tools": [{"google_search": {}}],
         })
 
         logger.info(
@@ -446,7 +447,6 @@ class GenerateImageToolCall(ToolCall):
                 model=model,
                 messages=messages,
                 extra_body=extra_body,
-                tools=[{"google_search": {}}],
                 user=user_digest,
                 stream=False,
             )
