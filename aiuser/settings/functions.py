@@ -15,19 +15,60 @@ from aiuser.types.openrouter_types import (
     serialize_parameters,
     deserialize_parameters,
 )
+from aiuser.utils.utilities import get_enabled_tools
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
 
 class FunctionCallingSettings(MixinMeta):
-    @aiuser.group()
+    @aiuser.group(invoke_without_command=True)
     @checks.is_owner()
-    async def functions(self, _):
+    async def functions(self, ctx: commands.Context):
         """ Settings to manage function calling
 
             (All subcommands are per server)
         """
-        pass
+        enabled = await self.config.guild(ctx.guild).function_calling()
+        enabled_functions = await get_enabled_tools(self.config, ctx)
+
+        embed = discord.Embed(
+            title="Function Calling Settings",
+            color=await ctx.embed_color(),
+        )
+
+        embed.add_field(name="Enabled", value=f"`{enabled}`", inline=False)
+
+        if enabled_functions:
+            func_names = "\n".join(f"• `{t.function_name}`" for t in enabled_functions)
+            embed.add_field(name=f"Enabled Functions ({len(enabled_functions)})", value=func_names, inline=False)
+        else:
+            embed.add_field(name="Enabled Functions", value="*None*", inline=False)
+
+        # OpenRouter server tools
+        or_search = await self.config.guild(ctx.guild).openrouter_web_search_enabled()
+        or_fetch = await self.config.guild(ctx.guild).openrouter_web_fetch_enabled()
+        or_image = await self.config.guild(ctx.guild).openrouter_image_generation_enabled()
+        or_pdf = await self.config.guild(ctx.guild).openrouter_pdf_parsing_enabled()
+
+        or_tools = []
+        if or_search:
+            or_tools.append("Web Search")
+        if or_fetch:
+            or_tools.append("Web Fetch")
+        if or_image:
+            or_tools.append("Image Gen")
+        if or_pdf:
+            or_tools.append("PDF Parsing")
+        or_status = "\n".join(f"• `{t}`" for t in or_tools) if or_tools else "*None*"
+        embed.add_field(name="OpenRouter Server Tools", value=or_status, inline=False)
+
+        # Location
+        location = await self.config.guild(ctx.guild).function_calling_default_location()
+        if location:
+            embed.add_field(name="Location", value=f"`{location[0]}, {location[1]}`", inline=False)
+
+        embed.set_footer(text=f"Use {ctx.clean_prefix}aiuser functions --help to see all subcommands")
+        await ctx.send(embed=embed)
 
     @functions.command(name="toggle")
     async def toggle_function_calling(self, ctx: commands.Context):
