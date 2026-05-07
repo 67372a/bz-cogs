@@ -36,8 +36,8 @@ IMAGE_EXTENSIONS = frozenset({
     "png", "jpg", "jpeg", "gif", "webp", "bmp", "avif",
 })
 
-# Maximum image file size for reference image downloads (10 MB)
-MAX_IMAGE_DOWNLOAD_SIZE = 10 * 1024 * 1024
+# Maximum image file size for reference image downloads (20 MB)
+MAX_IMAGE_DOWNLOAD_SIZE = 20 * 1024 * 1024
 
 
 class GenerateImageToolCall(ToolCall):
