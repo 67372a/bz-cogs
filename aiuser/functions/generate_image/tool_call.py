@@ -88,12 +88,14 @@ class GenerateImageToolCall(ToolCall):
                         "type": "array",
                         "items": {"type": "string"},
                         "description": (
-                            "Discord message IDs or message links "
+                            "Direct image URLs (e.g. https://i.imgur.com/abc.png), "
+                            "Discord message IDs, or Discord message links "
                             "(e.g. https://discord.com/channels/guild_id/channel_id/message_id) "
                             "containing images to use as reference for image generation. "
                             "Pass these when the user's request references or depends on images "
-                            "from specific Discord messages. "
-                            "Up to 14 images total will be extracted from the referenced messages."
+                            "from specific Discord messages or external image URLs. "
+                            "Duplicate image URLs are automatically deduplicated. "
+                            "Up to 14 images total will be used."
                         ),
                     },
                 },
@@ -138,17 +140,19 @@ class GenerateImageToolCall(ToolCall):
     async def _resolve_reference_images(
         self, reference_messages: List[str]
     ) -> List[str]:
-        """Resolve Discord message IDs/links to a list of image URLs.
+        """Resolve Discord message IDs/links or direct image URLs to a list of image URLs.
 
         Each entry can be:
+        - A direct image URL (e.g. https://i.imgur.com/abc.png)
         - A raw numeric Discord message ID (searched in the current channel)
         - A full Discord message link (https://discord.com/channels/...)
 
-        Extracts image URLs from message attachments and embed images,
-        up to MAX_REFERENCE_IMAGES total.
+        Direct image URLs are added immediately with deduplication.
+        Discord references are resolved to extract image URLs from
+        message attachments and embed images, up to MAX_REFERENCE_IMAGES total.
 
         Args:
-            reference_messages: List of message IDs or message links.
+            reference_messages: List of message IDs, message links, or direct image URLs.
 
         Returns:
             List of direct image URLs (up to 14).
@@ -164,7 +168,17 @@ class GenerateImageToolCall(ToolCall):
             if not ref:
                 continue
 
-            # Determine channel and message ID
+            # --- Check for direct image URL ---
+            if ref.startswith(("http://", "https://")) and not DISCORD_MESSAGE_LINK_PATTERN.search(ref):
+                if ref not in seen:
+                    seen.add(ref)
+                    image_urls.append(ref)
+                    logger.debug(
+                        f"[DirectImageGen] Using direct image URL reference: {ref}"
+                    )
+                continue
+
+            # --- Discord message link resolution ---
             channel = None
             message_id = None
 
@@ -186,7 +200,7 @@ class GenerateImageToolCall(ToolCall):
                     channel = self.ctx.channel
                 except (ValueError, TypeError):
                     logger.warning(
-                        f"[DirectImageGen] Invalid reference message format: {ref}"
+                        f"[DirectImageGen] Invalid reference format: {ref}"
                     )
                     continue
 
@@ -249,7 +263,7 @@ class GenerateImageToolCall(ToolCall):
 
         logger.info(
             f"[DirectImageGen] Resolved {len(image_urls)} reference image(s) "
-            f"from {len(reference_messages)} message reference(s)"
+            f"from {len(reference_messages)} reference(s)"
         )
         return image_urls
 

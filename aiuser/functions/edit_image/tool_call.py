@@ -81,33 +81,23 @@ class EditImageToolCall(ToolCall):
                     "image_to_edit": {
                         "type": "string",
                         "description": (
-                            "A Discord message ID or message link "
+                            "A direct image URL (e.g. https://i.imgur.com/abc.png), "
+                            "Discord message ID, or message link "
                             "(e.g. https://discord.com/channels/guild_id/channel_id/message_id) "
                             "containing the image to edit. This is the primary image that will be modified. "
-                            "Provide the message ID or link of the message that contains the image to edit."
-                        ),
-                    },
-                    "aspect_ratio": {
-                        "type": "string",
-                        "enum": [
-                            "1:1", "2:3", "3:2", "3:4", "4:3",
-                            "4:5", "5:4", "9:16", "16:9", "21:9",
-                            "1:4", "4:1", "1:8", "8:1"
-                        ],
-                        "description": (
-                            "The desired aspect ratio for the edited image. "
-                            "Use '16:9' for widescreen, '1:1' for square, '9:16' for portrait mobile, etc. "
-                            "If not specified, the original image aspect ratio will be preserved."
+                            "Provide the image URL, message ID, or link of the message that contains the image to edit."
                         ),
                     },
                     "reference_messages": {
                         "type": "array",
                         "items": {"type": "string"},
                         "description": (
-                            "Discord message IDs or message links "
+                            "Direct image URLs (e.g. https://i.imgur.com/abc.png), "
+                            "Discord message IDs, or Discord message links "
                             "(e.g. https://discord.com/channels/guild_id/channel_id/message_id) "
                             "containing additional images to use as style or context references for the edit. "
-                            "Up to 13 images total will be extracted from the referenced messages. "
+                            "Duplicate image URLs are automatically deduplicated. "
+                            "Up to 13 images total will be used. "
                             "(The primary image_to_edit counts toward the 14 image limit.)"
                         ),
                     },
@@ -153,10 +143,10 @@ class EditImageToolCall(ToolCall):
     async def _resolve_single_reference(
         self, ref: str
     ) -> Optional[str]:
-        """Resolve a single Discord message ID/link to an image URL.
+        """Resolve a single Discord message ID/link or direct image URL to an image URL.
 
         Args:
-            ref: A message ID or full Discord message link.
+            ref: A direct image URL, message ID, or full Discord message link.
 
         Returns:
             The direct image URL, or None if it could not be resolved.
@@ -165,6 +155,14 @@ class EditImageToolCall(ToolCall):
         if not ref:
             return None
 
+        # --- Check for direct image URL ---
+        if ref.startswith(("http://", "https://")) and not DISCORD_MESSAGE_LINK_PATTERN.search(ref):
+            logger.debug(
+                f"[EditImage] Using direct image URL as image_to_edit: {ref}"
+            )
+            return ref
+
+        # --- Discord message link resolution ---
         channel = None
         message_id = None
 
@@ -184,7 +182,7 @@ class EditImageToolCall(ToolCall):
                 channel = self.ctx.channel
             except (ValueError, TypeError):
                 logger.warning(
-                    f"[EditImage] Invalid reference message format: {ref}"
+                    f"[EditImage] Invalid reference format: {ref}"
                 )
                 return None
 
@@ -225,17 +223,19 @@ class EditImageToolCall(ToolCall):
     async def _resolve_reference_images(
         self, reference_messages: List[str]
     ) -> List[str]:
-        """Resolve Discord message IDs/links to a list of image URLs.
+        """Resolve Discord message IDs/links or direct image URLs to a list of image URLs.
 
         Each entry can be:
+        - A direct image URL (e.g. https://i.imgur.com/abc.png)
         - A raw numeric Discord message ID (searched in the current channel)
         - A full Discord message link (https://discord.com/channels/...)
 
-        Extracts image URLs from message attachments and embed images,
-        up to MAX_REFERENCE_IMAGES total.
+        Direct image URLs are added immediately with deduplication.
+        Discord references are resolved to extract image URLs from
+        message attachments and embed images, up to MAX_REFERENCE_IMAGES total.
 
         Args:
-            reference_messages: List of message IDs or message links.
+            reference_messages: List of message IDs, message links, or direct image URLs.
 
         Returns:
             List of direct image URLs (up to 14).
@@ -251,7 +251,17 @@ class EditImageToolCall(ToolCall):
             if not ref:
                 continue
 
-            # Determine channel and message ID
+            # --- Check for direct image URL ---
+            if ref.startswith(("http://", "https://")) and not DISCORD_MESSAGE_LINK_PATTERN.search(ref):
+                if ref not in seen:
+                    seen.add(ref)
+                    image_urls.append(ref)
+                    logger.debug(
+                        f"[EditImage] Using direct image URL reference: {ref}"
+                    )
+                continue
+
+            # --- Discord message link resolution ---
             channel = None
             message_id = None
 
@@ -273,7 +283,7 @@ class EditImageToolCall(ToolCall):
                     channel = self.ctx.channel
                 except (ValueError, TypeError):
                     logger.warning(
-                        f"[EditImage] Invalid reference message format: {ref}"
+                        f"[EditImage] Invalid reference format: {ref}"
                     )
                     continue
 
@@ -336,7 +346,7 @@ class EditImageToolCall(ToolCall):
 
         logger.info(
             f"[EditImage] Resolved {len(image_urls)} reference image(s) "
-            f"from {len(reference_messages)} message reference(s)"
+            f"from {len(reference_messages)} reference(s)"
         )
         return image_urls
 
@@ -412,21 +422,19 @@ class EditImageToolCall(ToolCall):
         """Execute the image edit via direct OpenRouter API call.
 
         Reads preconfigured model + image_size from guild config, uses the
-        LLM-provided prompt, image_to_edit, and aspect_ratio, resolves the
+        LLM-provided prompt, and image_to_edit, resolves the
         target image and optional reference images from Discord messages,
         calls the OpenRouter API, and stores the resulting image data for
         later sending to Discord.
 
         Args:
-            arguments: Dict with 'prompt' (required), 'image_to_edit' (required),
-                       'aspect_ratio' (optional), and 'reference_messages' (optional).
+            arguments: Dict with 'prompt' (required), 'image_to_edit' (required), and 'reference_messages' (optional).
 
         Returns:
             A confirmation string for the LLM describing what was edited.
         """
         prompt = arguments.get("prompt", "")
         image_to_edit = arguments.get("image_to_edit", "")
-        aspect_ratio = arguments.get("aspect_ratio")
         reference_messages = arguments.get("reference_messages", [])
 
         if not prompt or not prompt.strip():
@@ -510,8 +518,7 @@ class EditImageToolCall(ToolCall):
         }
 
         image_config: Dict[str, str] = {}
-        if aspect_ratio:
-            image_config["aspect_ratio"] = aspect_ratio
+        image_config["aspect_ratio"] = "auto"
         if image_size:
             image_config["image_size"] = image_size
         if image_config:
@@ -538,7 +545,7 @@ class EditImageToolCall(ToolCall):
         logger.info(
             f"[EditImage] Editing image for guild {self.ctx.guild.name}: "
             f"model={model}, prompt={prompt[:1000]}{'...' if len(prompt) > 1000 else ''}, "
-            f"aspect_ratio={aspect_ratio}, image_size={image_size}, "
+            f"image_size={image_size}, "
             f"source_image={source_image_url[:80]}..., "
             f"reference_images={len(reference_content_parts)}"
         )
@@ -595,7 +602,7 @@ class EditImageToolCall(ToolCall):
         )
 
         model_info = model.split("/")[-1] if "/" in model else model
-        ratio_info = aspect_ratio or "original"
+        ratio_info = "original"
         ref_info = f" with {len(reference_content_parts)} reference image(s)" if reference_content_parts else ""
         return (
             f"Image edit successful. Generated {len(self.generated_images)} edited version(s) "
