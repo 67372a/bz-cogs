@@ -550,7 +550,7 @@ class EditImageToolCall(ToolCall):
                 extra_body=extra_body,
                 user=user_digest,
                 stream=False,
-                reasoning_effort="high",
+                reasoning_effort="medium",
             )
         except Exception as e:
             logger.error(
