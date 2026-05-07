@@ -28,6 +28,11 @@ class FunctionCallingSettings(MixinMeta):
 
             (All subcommands are per server)
         """
+        # Check for help flag: pass through to Red's help system
+        content = ctx.message.content.strip()
+        if content.endswith(('--help', 'help')):
+            return await ctx.send_help(ctx.command)
+
         enabled = await self.config.guild(ctx.guild).function_calling()
         enabled_functions = await get_enabled_tools(self.config, ctx)
 
