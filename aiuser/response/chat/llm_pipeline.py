@@ -326,18 +326,17 @@ class LLMPipeline:
         m.update(user.encode('utf-8'))
         user_digest = m.hexdigest()
 
-        kwargs['extra_body'].update({
-            "safetySettings": [
+        kwargs['extra_body']['safetySettings'] = [
                 {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
                 {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
                 {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
                 {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
                 {"category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "BLOCK_NONE"},
-            ],
-            "user": user_digest,
-            "session_id": user_digest,
-        })
-
+            ]
+        
+        kwargs['extra_body']['user'] = user_digest
+        kwargs['extra_body']['session_id'] = user_digest
+        
         logger.info(f"Sending request to LLM (model: {self.model}) with {len(current_messages_json)} messages. Kwarg keys: {list(kwargs.keys())}")
 
         response: ChatCompletion = await self._create_completion_with_retry(
