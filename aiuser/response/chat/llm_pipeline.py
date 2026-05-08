@@ -335,6 +335,7 @@ class LLMPipeline:
                 {"category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "BLOCK_NONE"},
             ],
             "user": user_digest,
+            "session_id": user_digest,
         })
 
         logger.info(f"Sending request to LLM (model: {self.model}) with {len(current_messages_json)} messages. Kwarg keys: {list(kwargs.keys())}")

@@ -14,8 +14,8 @@ IMAGE_URL_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# Maximum image file size for download (10 MB default)
-MAX_IMAGE_DOWNLOAD_SIZE = 10 * 1024 * 1024
+# Maximum image file size for download (20 MB default)
+MAX_IMAGE_DOWNLOAD_SIZE = 20 * 1024 * 1024
 
 
 class OpenRouterImageParsing:

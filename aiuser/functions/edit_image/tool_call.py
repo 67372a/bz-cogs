@@ -49,7 +49,7 @@ class EditImageToolCall(ToolCall):
     describe *changes to make* rather than generating a new image from scratch.
 
     The model and image_size are configured server-side via settings commands.
-    The prompt, image_to_edit, and optionally aspect_ratio are provided by the
+    The prompt, and image_to_edit are provided by the
     LLM in the function call.
 
     Edited image data is stored in `self.generated_images` and is retrieved
@@ -537,7 +537,6 @@ class EditImageToolCall(ToolCall):
         }
 
         image_config: Dict[str, str] = {}
-        image_config["aspect_ratio"] = "auto"
         if image_size:
             image_config["image_size"] = image_size
         if image_config:
@@ -559,6 +558,7 @@ class EditImageToolCall(ToolCall):
                 {"category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "BLOCK_NONE"},
             ],
             "user": user_digest,
+            "session_id": user_digest,
         })
 
         logger.info(
@@ -621,11 +621,10 @@ class EditImageToolCall(ToolCall):
         )
 
         model_info = model.split("/")[-1] if "/" in model else model
-        ratio_info = "original"
         ref_info = f" with {len(reference_content_parts)} reference image(s)" if reference_content_parts else ""
         return (
             f"Image edit successful. Generated {len(self.generated_images)} edited version(s) "
-            f"using model '{model_info}' at aspect ratio '{ratio_info}'{ref_info}. "
+            f"using model '{model_info}' {ref_info}. "
             f"Edit prompt used: \"{prompt[:200]}{'...' if len(prompt) > 200 else ''}\". "
             f"The edited image(s) have been sent to the Discord channel."
         )
