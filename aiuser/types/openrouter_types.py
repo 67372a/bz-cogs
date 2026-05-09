@@ -49,9 +49,14 @@ class DirectImageGenerationParameters:
     These are set by server admins. The model and image_size are fixed
     across all generations, while the LLM passes prompt and aspect_ratio
     dynamically in the function call.
+
+    Configurable via `[p]aiuser functions generate_image_config`.
     """
-    model: Optional[str] = None       # e.g. "google/gemini-3.1-flash-image-preview"
-    image_size: Optional[str] = None  # "1K", "2K", "4K", "0.5K"
+    model: Optional[str] = None            # e.g. "google/gemini-3.1-flash-image-preview"
+    image_size: Optional[str] = None       # "1K", "2K", "4K", "0.5K"
+    reasoning_effort: Optional[str] = "medium"  # "low", "medium", "high", or None (API default)
+    temperature: Optional[float] = None    # 0.0–2.0, controls randomness
+    top_p: Optional[float] = None          # 0.0–1.0, nucleus sampling
 
 
 @dataclass
@@ -61,9 +66,14 @@ class DirectImageEditParameters:
     These are set by server admins. The model and image_size are fixed
     across all edits, while the LLM passes prompt, image_to_edit, and
     aspect_ratio dynamically in the function call.
+
+    Configurable via `[p]aiuser functions edit_image_config`.
     """
-    model: Optional[str] = None       # e.g. "google/gemini-3.1-flash-image-preview"
-    image_size: Optional[str] = None  # "1K", "2K", "4K", "0.5K"
+    model: Optional[str] = None            # e.g. "google/gemini-3.1-flash-image-preview"
+    image_size: Optional[str] = None       # "1K", "2K", "4K", "0.5K"
+    reasoning_effort: Optional[str] = "medium"  # "low", "medium", "high", or None (API default)
+    temperature: Optional[float] = None    # 0.0–2.0, controls randomness
+    top_p: Optional[float] = None          # 0.0–1.0, nucleus sampling
 
 
 _PARAM_CLASS_MAP = {

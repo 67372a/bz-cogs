@@ -489,6 +489,9 @@ class EditImageToolCall(ToolCall):
         params = await self._get_edit_params()
         model = params.model
         image_size = params.image_size
+        reasoning_effort = params.reasoning_effort
+        temperature = params.temperature
+        top_p = params.top_p
 
         if not model:
             logger.error(
@@ -592,10 +595,21 @@ class EditImageToolCall(ToolCall):
             "session_id": user_digest,
         })
 
+        # Build API kwargs with only non-None parameters
+        api_kwargs: Dict[str, Any] = {}
+        if reasoning_effort is not None:
+            api_kwargs["reasoning_effort"] = reasoning_effort
+        if temperature is not None:
+            api_kwargs["temperature"] = temperature
+        if top_p is not None:
+            api_kwargs["top_p"] = top_p
+
         logger.info(
             f"[EditImage] Editing image for guild {self.ctx.guild.name}: "
             f"model={model}, prompt={prompt[:1000]}{'...' if len(prompt) > 1000 else ''}, "
             f"image_size={image_size}, "
+            f"reasoning_effort={reasoning_effort}, "
+            f"temperature={temperature}, top_p={top_p}, "
             f"source_image={source_image_url[:80]}..., "
             f"reference_images={len(reference_content_parts)}"
         )
@@ -607,7 +621,7 @@ class EditImageToolCall(ToolCall):
                 extra_body=extra_body,
                 user=user_digest,
                 stream=False,
-                reasoning_effort="medium",
+                **api_kwargs,
             )
         except Exception as e:
             logger.error(
