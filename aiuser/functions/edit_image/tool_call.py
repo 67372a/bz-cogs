@@ -19,6 +19,7 @@ from aiuser.types.openrouter_types import (
     DirectImageEditParameters,
     deserialize_parameters,
 )
+from aiuser.utils.image_cache import image_cache
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
@@ -364,6 +365,8 @@ class EditImageToolCall(ToolCall):
     async def _download_and_encode_images(self, image_urls: List[str]) -> List[dict]:
         """Download reference images and encode them as base64 data URLs.
 
+        Uses a global TTL cache keyed by SHA-256 of the URL for up to 30 minutes.
+
         Args:
             image_urls: List of image URLs to download.
 
@@ -373,6 +376,31 @@ class EditImageToolCall(ToolCall):
         content_parts: List[dict] = []
 
         for url in image_urls:
+            # Check cache first
+            cached = image_cache.get(url)
+            if cached is not None:
+                logger.info(
+                    f"[EditImage] Cache hit for reference image {url}"
+                )
+                # Re-encode from cached bytes — need content type from the URL extension
+                ext = url.rsplit(".", 1)[-1].split("?")[0].lower()
+                mime_map = {
+                    "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+                    "gif": "image/gif", "webp": "image/webp", "bmp": "image/bmp",
+                    "avif": "image/avif",
+                }
+                content_type = mime_map.get(ext, "image/png")
+                encoded = base64.b64encode(cached).decode("utf-8")
+                data_url = f"data:{content_type};base64,{encoded}"
+                content_parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": data_url},
+                })
+                logger.info(
+                    f"[EditImage] Re-encoded cached image from {url}: {len(cached)} bytes"
+                )
+                continue
+
             try:
                 timeout = aiohttp.ClientTimeout(total=30)
                 async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -401,6 +429,9 @@ class EditImageToolCall(ToolCall):
                                 f"max size ({len(data)} > {MAX_IMAGE_DOWNLOAD_SIZE} bytes)"
                             )
                             continue
+
+                        # Store in cache before encoding
+                        image_cache.set(url, data, content_type)
 
                         encoded = base64.b64encode(data).decode("utf-8")
                         data_url = f"data:{content_type};base64,{encoded}"

@@ -56,7 +56,10 @@ class OpenRouterImageParsing:
 
     @classmethod
     async def fetch_image(cls, url: str, max_size: int = MAX_IMAGE_DOWNLOAD_SIZE) -> Optional[bytes]:
-        """Download an image from a URL.
+        """Download an image from a URL, using a global TTL cache.
+
+        Images are cached by SHA-256 of the URL for up to 30 minutes,
+        avoiding redundant downloads of the same image across messages.
 
         Args:
             url: The URL of the image to download.
@@ -65,6 +68,14 @@ class OpenRouterImageParsing:
         Returns:
             Raw bytes of the image, or None if download fails.
         """
+        from aiuser.utils.image_cache import image_cache
+
+        # Check cache first
+        cached = image_cache.get(url)
+        if cached is not None:
+            logger.info(f"Cache hit for image {url}")
+            return cached
+
         try:
             timeout = aiohttp.ClientTimeout(total=30)
             async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -93,6 +104,9 @@ class OpenRouterImageParsing:
                     logger.info(
                         f"Downloaded image from {url}: {len(data)} bytes, type: {content_type}"
                     )
+
+                    # Store in cache
+                    image_cache.set(url, data, content_type)
                     return data
         except aiohttp.ClientError as e:
             logger.warning(f"Error downloading image from {url}: {e}")

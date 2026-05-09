@@ -107,8 +107,9 @@ class OpenRouterImageGeneration:
 
     @staticmethod
     async def _download_image(url: str) -> Optional[bytes]:
-        """Download image data from a URL.
+        """Download image data from a URL, using a global TTL cache.
 
+        Images are cached by SHA-256 of the URL for up to 30 minutes.
         Uses aiohttp with a 30-second timeout and 10MB size limit.
 
         Args:
@@ -117,6 +118,14 @@ class OpenRouterImageGeneration:
         Returns:
             Raw image bytes, or None if download failed.
         """
+        from aiuser.utils.image_cache import image_cache
+
+        # Check cache first
+        cached = image_cache.get(url)
+        if cached is not None:
+            logger.info(f"[ImageGen] Cache hit for image {url}")
+            return cached
+
         try:
             timeout = aiohttp.ClientTimeout(total=30)
             async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -145,6 +154,9 @@ class OpenRouterImageGeneration:
                     logger.info(
                         f"Downloaded image from {url}: {len(data)} bytes, Content-Type: {content_type}"
                     )
+
+                    # Store in cache
+                    image_cache.set(url, data, content_type)
                     return data
 
         except aiohttp.ClientError as e:
