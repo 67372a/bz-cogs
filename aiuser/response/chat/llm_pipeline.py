@@ -4,6 +4,7 @@ import logging
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 import hashlib
+import copy
 
 import httpx
 import openai
@@ -312,21 +313,23 @@ class LLMPipeline:
         current_messages_json = self.msg_list.get_json(annotations_for_assistant=injected_annotations)
         plugins = await self._build_plugins()
 
-        if 'extra_body' in kwargs:
-            if isinstance(kwargs['extra_body'], dict):
-                existing = kwargs['extra_body'].get("plugins", [])
-                kwargs['extra_body']["plugins"] = existing + plugins
+        localKwargs = copy.deepcopy(kwargs)
+
+        if 'extra_body' in localKwargs:
+            if isinstance(localKwargs['extra_body'], dict):
+                existing = localKwargs['extra_body'].get("plugins", [])
+                localKwargs['extra_body']["plugins"] = existing + plugins
             else:
-                kwargs['extra_body'] = {"plugins": plugins}
+                localKwargs['extra_body'] = {"plugins": plugins}
         else:
-            kwargs['extra_body'] = {"plugins": plugins}
+            localKwargs['extra_body'] = {"plugins": plugins}
 
         user = f"{self.ctx.me.id}-{self.ctx.channel.id}"
         m = hashlib.sha256()
         m.update(user.encode('utf-8'))
         user_digest = m.hexdigest()
 
-        kwargs['extra_body']['safetySettings'] = [
+        localKwargs['extra_body']['safetySettings'] = [
                 {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
                 {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
                 {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
@@ -334,13 +337,16 @@ class LLMPipeline:
                 {"category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "BLOCK_NONE"},
             ]
         
-        kwargs['extra_body']['user'] = user_digest
-        kwargs['extra_body']['session_id'] = user_digest
+        localKwargs['extra_body']['session_id'] = user_digest
+
+        # Make sure we aren't passing in some other user value
+        del localKwargs['user']
+        del localKwargs['extra_body']['user']
         
-        logger.info(f"Sending request to LLM (model: {self.model}) with {len(current_messages_json)} messages. Kwarg keys: {list(kwargs.keys())}")
+        logger.info(f"Sending request to LLM (model: {self.model}) with {len(current_messages_json)} messages. Kwarg keys: {list(localKwargs.keys())}")
 
         response: ChatCompletion = await self._create_completion_with_retry(
-            model=self.model, messages=current_messages_json, user=user_digest, **kwargs
+            model=self.model, messages=current_messages_json, user=user_digest, **localKwargs
         )
 
         self._store_pdf_annotations_from_response(response)
@@ -399,7 +405,7 @@ class LLMPipeline:
         self.response_parts = []
         self.collected_images = []
 
-        kwargs1 = custom_kwargs.copy()
+        kwargs1 = copy.deepcopy(custom_kwargs)
 
         if self.available_tools_schemas or self.openrouter_tools:
             kwargs1["tools"] = [asdict(schema) for schema in self.available_tools_schemas] + self.openrouter_tools
@@ -489,7 +495,7 @@ class LLMPipeline:
                 )
 
         # Phase 2 LLM call
-        kwargs2 = custom_kwargs.copy()
+        kwargs2 = copy.deepcopy(custom_kwargs)
         kwargs2["tools"] = [asdict(schema) for schema in self.available_tools_schemas] + self.openrouter_tools
         kwargs2["tool_choice"] = "none"
         kwargs2['extra_body']['modalities'] = ['text']
@@ -605,7 +611,7 @@ class LLMPipeline:
         for tool_obj in self.enabled_tools:
             if tool_obj.function_name == tool_name:
                 logger.info(f'Executing tool: "{tool_name}" with args: {arguments}')
-                arguments_for_tool = arguments.copy()
+                arguments_for_tool = copy.deepcopy(arguments)
                 arguments_for_tool["request"] = self
                 try:
                     tool_output = await tool_obj.run(arguments_for_tool)

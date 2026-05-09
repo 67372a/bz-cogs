@@ -498,7 +498,6 @@ class GenerateImageToolCall(ToolCall):
                 {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
                 {"category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "BLOCK_NONE"},
             ],
-            "user": user_digest,
             "session_id": user_digest,
         })
 
