@@ -96,7 +96,9 @@ async def log_request_prompt(request: httpx.Request) -> None:
             session_id_in_extra = extra_body.get("session_id", "<NOT_PRESENT>")
         else:
             session_id_in_extra = "<NO_EXTRA_BODY>"
-        logger.info(f"DEBUG[HTTP_BODY]: user='{user_in_body}', session_id(extra_body)='{session_id_in_extra}', has_extra_body={extra_body is not None}")
+        # Log all top-level keys to see what's in the actual body
+        all_keys = list(request_data.keys())
+        logger.info(f"DEBUG[HTTP_BODY]: user='{user_in_body}', session_id(top_level)='{session_id_in_body}', session_id(extra_body)='{session_id_in_extra}', has_extra_body={extra_body is not None}, all_top_level_keys={all_keys}")
         
         if not logger.isEnabledFor(logging.DEBUG):
             return
