@@ -339,6 +339,11 @@ class LLMPipeline:
         
         localKwargs['extra_body']['session_id'] = user_digest
         
+        # DEBUG: Log user_digest computation details
+        logger.info(f"DEBUG[call_client]: ctx.me.id={self.ctx.me.id}, ctx.channel.id={self.ctx.channel.id}, raw_user='{user}', user_digest='{user_digest}'")
+        logger.info(f"DEBUG[call_client]: session_id in extra_body='{localKwargs['extra_body'].get('session_id')}', keys in localKwargs={list(localKwargs.keys())}")
+        logger.info(f"DEBUG[call_client]: 'user' key in localKwargs={'user' in localKwargs}, 'extra_body' keys={list(localKwargs.get('extra_body', {}).keys())}")
+        
         logger.info(f"Sending request to LLM (model: {self.model}) with {len(current_messages_json)} messages. Kwarg keys: {list(localKwargs.keys())}")
 
         response: ChatCompletion = await self._create_completion_with_retry(
@@ -375,6 +380,11 @@ class LLMPipeline:
     )
     async def _create_completion_with_retry(self, model = None, messages = None, user = None, stream=False, **kwargs) -> ChatCompletion:
         try:
+            # DEBUG: Log user parameter received after tenacity wrapping
+            logger.info(f"DEBUG[_create_completion_with_retry]: user param='{user}', has extra_body={'extra_body' in kwargs}")
+            logger.info(f"DEBUG[_create_completion_with_retry]: kwargs keys={list(kwargs.keys())}")
+            if 'extra_body' in kwargs:
+                logger.info(f"DEBUG[_create_completion_with_retry]: extra_body.session_id='{kwargs['extra_body'].get('session_id')}'")
             result = await self.openai_client.chat.completions.create(model=model, messages=messages, user=user, stream=stream, **kwargs)
             if not result.choices:
                 raise openai.APIError(f"API returned no choices: {result}")

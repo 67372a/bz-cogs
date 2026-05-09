@@ -489,6 +489,10 @@ class GenerateImageToolCall(ToolCall):
         m.update(user.encode('utf-8'))
         user_digest = m.hexdigest()
 
+        # DEBUG: Log user_digest for comparison with chat path
+        logger.info(f"DEBUG[GenerateImage]: ctx.me.id={self.ctx.me.id}, ctx.channel.id={self.ctx.channel.id}, raw_user='{user}', user_digest='{user_digest}'")
+        logger.info(f"DEBUG[GenerateImage]: session_id='{user_digest}', user param='{user_digest}'")
+
         # Inject safety settings and user identifier (same as LLMPipeline.call_client)
         extra_body.update({
             "safetySettings": [
