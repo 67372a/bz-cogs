@@ -338,10 +338,6 @@ class LLMPipeline:
             ]
         
         localKwargs['extra_body']['session_id'] = user_digest
-
-        # Make sure we aren't passing in some other user value
-        del localKwargs['user']
-        del localKwargs['extra_body']['user']
         
         logger.info(f"Sending request to LLM (model: {self.model}) with {len(current_messages_json)} messages. Kwarg keys: {list(localKwargs.keys())}")
 
