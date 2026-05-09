@@ -80,9 +80,6 @@ async def setup_openai_client(
 
 async def log_request_prompt(request: httpx.Request) -> None:
     """Log the request prompt for debugging purposes."""
-    if not logger.isEnabledFor(logging.DEBUG):
-        return
-
     endpoint = request.url.path.split("/")[-1]
     if endpoint != "completions":
         return
@@ -90,6 +87,20 @@ async def log_request_prompt(request: httpx.Request) -> None:
     try:
         bytes = await request.aread()
         request_data = json.loads(bytes.decode('utf-8'))
+        
+        # DEBUG: Log user field and session_id from the actual HTTP request body
+        user_in_body = request_data.get("user", "<NOT_PRESENT>")
+        session_id_in_body = request_data.get("session_id", "<NOT_PRESENT>")
+        extra_body = request_data.get("extra_body", None)
+        if extra_body:
+            session_id_in_extra = extra_body.get("session_id", "<NOT_PRESENT>")
+        else:
+            session_id_in_extra = "<NO_EXTRA_BODY>"
+        logger.info(f"DEBUG[HTTP_BODY]: user='{user_in_body}', session_id(extra_body)='{session_id_in_extra}', has_extra_body={extra_body is not None}")
+        
+        if not logger.isEnabledFor(logging.DEBUG):
+            return
+        
         messages = request_data.get("messages", {})
         if not messages:
             return
