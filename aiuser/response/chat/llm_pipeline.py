@@ -58,9 +58,12 @@ def is_response_unsatisfactory(response: ChatCompletion) -> bool:
     Check if the OpenAI response is unsatisfactory and should be retried.
 
     An unsatisfactory response is one that:
-    1. Is not None and has choices.
-    2. Has a finish_reason of 'stop', 'length', or 'content_filter'.
-    3. The message content is None or empty.
+    1. Is None or has no choices.
+    2. Has empty message content AND no tool_calls (the model produced nothing useful).
+
+    Previously this only retried for finish_reason 'error'/'content_filter',
+    which allowed empty responses with finish_reason 'stop' to silently pass through,
+    causing the bot to not reply.
 
     Args:
         response: The ChatCompletion object from the OpenAI API call.
@@ -75,13 +78,17 @@ def is_response_unsatisfactory(response: ChatCompletion) -> bool:
     choice = response.choices[0]
     finish_reason = choice.finish_reason
     content = choice.message.content
+    tool_calls = choice.message.tool_calls or []
 
-    retryable_reasons = {'error', 'content_filter'}
-    
-    if finish_reason in retryable_reasons:
-        if not content or not content.strip():
-            logging.warning(f"Retry triggered: Empty content with finish_reason '{finish_reason}'.")
-            return True
+    # Empty content with no tool_calls means the model produced nothing useful.
+    # This can happen with Gemini models returning finish_reason 'stop' but empty
+    # content, especially after a tool-call cycle. Retry to get a real response.
+    if (not content or not content.strip()) and not tool_calls:
+        logging.warning(
+            f"Retry triggered: Empty content with finish_reason '{finish_reason}' "
+            f"and no tool_calls."
+        )
+        return True
 
     return False
 
@@ -457,19 +464,30 @@ class LLMPipeline:
         if not self._phase1_done:
             raise RuntimeError("phase2() called before phase1()")
 
+        logger.info("DEBUG[phase2]: Entering phase2")
+
         custom_kwargs = await self.get_custom_parameters()
         response_text = self._phase1_pre_text
         reasoning_text = self._phase1_reasoning
         response_tool_calls = self._phase1_tool_calls
         first_call_model_extra = self._phase1_model_extra
 
+        logger.info(f"DEBUG[phase2]: phase1_pre_text length={len(response_text or '')}, "
+                     f"num_tool_calls={len(response_tool_calls)}, "
+                     f"tool_call_names={[tc.function.name for tc in response_tool_calls]}")
+
         # Filter tool calls
         local_tool_calls = [tc for tc in response_tool_calls if not self._is_openrouter_tool_name(tc.function.name)]
         openrouter_tool_calls = [tc for tc in response_tool_calls if self._is_openrouter_tool_name(tc.function.name)]
 
+        logger.info(f"DEBUG[phase2]: local_tool_calls={[tc.function.name for tc in local_tool_calls]}, "
+                     f"openrouter_tool_calls={[tc.function.name for tc in openrouter_tool_calls]}")
+
         # Execute local tools
         if local_tool_calls:
+            logger.info(f"DEBUG[phase2]: Executing {len(local_tool_calls)} local tool(s)...")
             await self._process_and_add_tool_results(local_tool_calls)
+            logger.info("DEBUG[phase2]: Local tool execution completed")
 
             # Collect generated/edited images from tool executions
             for tc in local_tool_calls:
@@ -480,6 +498,23 @@ class LLMPipeline:
                         tool_images = tool_obj.get_generated_images()
                         if tool_images:
                             self.collected_images.extend(tool_images)
+        else:
+            logger.info("DEBUG[phase2]: No local tools to execute")
+
+        # Add synthetic tool results for OpenRouter server-side tools.
+        # Without these, the second LLM call would see an assistant message
+        # with unanswered tool_calls — an invalid conversation state that
+        # causes some models (especially Gemini) to return empty content.
+        if openrouter_tool_calls:
+            logger.info(f"DEBUG[phase2]: Adding synthetic tool results for {len(openrouter_tool_calls)} OpenRouter server tool(s)")
+            for tc in openrouter_tool_calls:
+                await self.msg_list.add_tool_result(
+                    name=tc.function.name,
+                    tool_call_id=tc.id,
+                    content=f"OpenRouter server-side tool '{tc.function.name}' was executed. "
+                            f"The results have been incorporated into the conversation history by OpenRouter.",
+                    index=len(self.msg_list) + 1
+                )
 
         # Inject generated images into msg_list for same-turn vision context
         # This lets the LLM "see" what it just generated in phase 2
@@ -501,6 +536,7 @@ class LLMPipeline:
                 )
 
         # Phase 2 LLM call
+        logger.info(f"DEBUG[phase2]: Starting second LLM call with {len(self.msg_list)} messages in history")
         kwargs2 = copy.deepcopy(custom_kwargs)
         kwargs2["tools"] = [asdict(schema) for schema in self.available_tools_schemas] + self.openrouter_tools
         kwargs2["tool_choice"] = "none"
@@ -511,6 +547,11 @@ class LLMPipeline:
             kwargs2["parallel_tool_calls"] = True
 
         tool_response_text, tool_reasoning_text, _, tool_response_reasoning_details, tool_response_model_extra = await self.call_client(kwargs2)
+
+        logger.info(f"DEBUG[phase2]: Second LLM call completed. "
+                     f"response_text length={len(tool_response_text or '')}, "
+                     f"has_reasoning={bool(tool_reasoning_text)}, "
+                     f"has_model_extra={bool(tool_response_model_extra)}")
 
         await self.msg_list.add_assistant(
             content=tool_response_text,
@@ -564,6 +605,13 @@ class LLMPipeline:
             )
             self.response_parts = [part] if part else []
 
+        logger.info(f"DEBUG[phase2]: Response parts built. "
+                     f"num_parts={len(self.response_parts)}, "
+                     f"is_incomplete={is_incomplete}, "
+                     f"final_text length={len(final_text or '')}, "
+                     f"collected_images={len(self.collected_images)}, "
+                     f"first_part_content length={len(self.response_parts[0].content or '') if self.response_parts else 'N/A'}")
+
         self.completion = final_text
         self.reasoning = final_reasoning
         self._phase2_done = True
@@ -603,11 +651,15 @@ class LLMPipeline:
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse JSON arguments for tool {tool_function_name}: {e}")
                 return tool_call_id, tool_function_name, f"Error: Invalid JSON arguments for '{tool_function_name}'."
+            logger.info(f"DEBUG[_process_tool]: Calling run_tool for '{tool_function_name}' with args: {arguments}")
             result = await self.run_tool(tool_function_name, arguments)
+            logger.info(f"DEBUG[_process_tool]: run_tool for '{tool_function_name}' completed. Result length={len(str(result))}")
             return tool_call_id, tool_function_name, result
 
+        logger.info(f"DEBUG[_process_and_add_tool_results]: Starting asyncio.gather for {len(tool_calls)} tool(s)")
         tasks = [process_single_tool(tc) for tc in tool_calls]
         results = await asyncio.gather(*tasks, return_exceptions=True)
+        logger.info(f"DEBUG[_process_and_add_tool_results]: asyncio.gather completed. Results count={len(results)}")
         for tool_call_id, tool_function_name, tool_result_content in results:
             await self.msg_list.add_tool_result(
                 name=tool_function_name, tool_call_id=tool_call_id, content=tool_result_content, index=len(self.msg_list) + 1

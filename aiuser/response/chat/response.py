@@ -177,6 +177,12 @@ async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_l
     # ---- Phase 2: tools + second LLM call ----
     final_text, final_reasoning, images = await pipeline.phase2()
 
+    logger.info(f"DEBUG[create_chat_response]: phase2 returned. "
+                 f"final_text length={len(final_text or '')}, "
+                 f"images count={len(images)}, "
+                 f"response_parts count={len(pipeline.response_parts)}, "
+                 f"sent_early={sent_early}")
+
     # If there's a combined final text or images, send them together
     text_to_send = final_text
     if pipeline.response_parts and pipeline.response_parts[0].type == "text_and_images":
@@ -184,7 +190,12 @@ async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_l
         if not images and pipeline.response_parts[0].images:
             images = pipeline.response_parts[0].images
 
+    logger.info(f"DEBUG[create_chat_response]: text_to_send length={len(text_to_send or '')}, "
+                 f"images count={len(images)}, "
+                 f"will_send={bool(text_to_send or images)}")
+
     if not text_to_send and not images:
+        logger.warning("DEBUG[create_chat_response]: No text or images to send — bot will not reply!")
         return sent_early or False
 
     await send_single_combined_message(ctx, cog, text_to_send, images, messages_list.can_reply, recent_authors)
