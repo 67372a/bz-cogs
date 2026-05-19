@@ -46,7 +46,7 @@ DEFAULT_IMAGE_UPLOAD_LIMIT = 25 * (1024 * 1024)  # 25 MB
 DEFAULT_VIDEO_UPLOAD_LIMIT = 10 * (1024 * 1024)  # 10 MB
 DEFAULT_DOCUMENT_UPLOAD_LIMIT = 10 * (1024 * 1024)  # 10 MB
 DEFAULT_AUDIO_UPLOAD_LIMIT = 10 * (1024 * 1024)  # 10 MB
-DEFAULT_LLM_MODEL = "google/gemini-2.5-flash"
+DEFAULT_LLM_MODEL = "google/gemini-3.5-flash"
 
 DEFAULT_GLOBAL = {
             "custom_openai_endpoint": None,
