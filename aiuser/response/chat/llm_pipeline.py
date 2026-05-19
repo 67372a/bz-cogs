@@ -358,12 +358,16 @@ class LLMPipeline:
             ]
         
         localKwargs['extra_body']['session_id'] = user_digest
-        
+
+        # Also inject service_tier into extra_body for endpoints that expect it there
+        if localKwargs.get('service_tier'):
+            localKwargs['extra_body']['service_tier'] = localKwargs['service_tier']
+
         # DEBUG: Log user_digest computation details
         logger.info(f"DEBUG[call_client]: ctx.me.id={self.ctx.me.id}, ctx.channel.id={self.ctx.channel.id}, raw_user='{user}', user_digest='{user_digest}'")
         logger.info(f"DEBUG[call_client]: session_id in extra_body='{localKwargs['extra_body'].get('session_id')}', keys in localKwargs={list(localKwargs.keys())}")
         logger.info(f"DEBUG[call_client]: 'user' key in localKwargs={'user' in localKwargs}, 'extra_body' keys={list(localKwargs.get('extra_body', {}).keys())}")
-        
+
         logger.info(f"Sending request to LLM (model: {self.model}) with {len(current_messages_json)} messages. Kwarg keys: {list(localKwargs.keys())}")
 
         response: ChatCompletion = await self._create_completion_with_retry(
