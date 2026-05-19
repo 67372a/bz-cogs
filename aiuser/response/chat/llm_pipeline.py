@@ -439,6 +439,8 @@ class LLMPipeline:
             if "gemini-3" in self.model.lower():
                 kwargs1["parallel_tool_calls"] = True
 
+        if 'extra_body' not in kwargs1 or not isinstance(kwargs1.get('extra_body'), dict):
+            kwargs1['extra_body'] = {}
         kwargs1['extra_body']['modalities'] = ['text']
         if 'openrouter:image_generation' in kwargs1.get("tools", []):
             kwargs1['extra_body']['modalities'].append('image')
@@ -553,6 +555,8 @@ class LLMPipeline:
         kwargs2 = copy.deepcopy(custom_kwargs)
         kwargs2["tools"] = [asdict(schema) for schema in self.available_tools_schemas] + self.openrouter_tools
         kwargs2["tool_choice"] = "none"
+        if 'extra_body' not in kwargs2 or not isinstance(kwargs2.get('extra_body'), dict):
+            kwargs2['extra_body'] = {}
         kwargs2['extra_body']['modalities'] = ['text']
         if 'openrouter:image_generation' in kwargs2.get("tools", []):
             kwargs2['extra_body']['modalities'].append('image')
