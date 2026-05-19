@@ -181,6 +181,13 @@ class Settings(
             value=f"Search: `{or_web_search}`\nFetch: `{or_web_fetch}`\nImage: `{or_image_gen}`",
         )
 
+        service_tier_val = config.get("service_tier")
+        main_embed.add_field(
+            name="Service Tier",
+            inline=True,
+            value=f"`{service_tier_val if service_tier_val else 'default (API decides)'}`",
+        )
+
         main_embed.add_field(
             name="",
             inline=True,

@@ -12,6 +12,7 @@ from redbot.core.utils.predicates import ReactionPredicate
 
 from aiuser.config.defaults import DEFAULT_REMOVE_PATTERNS
 from aiuser.types.abc import MixinMeta, aiuser
+from aiuser.types.enums import ServiceTier
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
@@ -337,3 +338,72 @@ class ResponseSettings(MixinMeta):
                 embed.add_field(name=key, value=f"```{json.dumps(value, indent=4)}```", inline=False)
 
         await ctx.send(embed=embed)
+
+    @response.command(name="service_tier")
+    @checks.is_owner()
+    async def set_service_tier(self, ctx: commands.Context, tier: Optional[str] = None):
+        """Set the service tier for API requests to control cost/latency tradeoffs.
+
+        Supported values:
+        - `flex` — lower cost, higher latency
+        - `priority` — faster, higher cost
+        - `default` or `none` — resets to default (no tier specified, API decides)
+
+        See: https://openrouter.ai/docs/features/service-tiers
+
+        (Setting is per server)
+        """
+        if tier is None:
+            current = await self.config.guild(ctx.guild).service_tier()
+            display = current if current else "default (API decides)"
+            embed = discord.Embed(
+                title="Current service tier for this server:",
+                description=f"`{display}`",
+                color=await ctx.embed_color(),
+            )
+            embed.add_field(
+                name="Usage",
+                value=f"`{ctx.prefix}aiuser response service_tier flex` — lower cost, higher latency\n"
+                      f"`{ctx.prefix}aiuser response service_tier priority` — faster, higher cost\n"
+                      f"`{ctx.prefix}aiuser response service_tier default` — reset to default",
+                inline=False,
+            )
+            return await ctx.send(embed=embed)
+
+        tier_lower = tier.lower()
+        if tier_lower in ("default", "none", "reset"):
+            await self.config.guild(ctx.guild).service_tier.set(None)
+            embed = discord.Embed(
+                title="Service tier reset to default (API decides the tier)",
+                color=await ctx.embed_color(),
+            )
+            return await ctx.send(embed=embed)
+
+        try:
+            service_tier = ServiceTier(tier_lower)
+        except ValueError:
+            valid_values = [t.value for t in ServiceTier if t.value is not None]
+            return await ctx.send(
+                f":warning: Invalid service tier `{tier}`. "
+                f"Valid options: `{', '.join(valid_values)}`, or `default`/`none` to reset."
+            )
+
+        if service_tier == ServiceTier.DEFAULT:
+            await self.config.guild(ctx.guild).service_tier.set(None)
+            embed = discord.Embed(
+                title="Service tier reset to default (API decides the tier)",
+                color=await ctx.embed_color(),
+            )
+        else:
+            await self.config.guild(ctx.guild).service_tier.set(service_tier.value)
+            embed = discord.Embed(
+                title="Service tier set to:",
+                description=f"`{service_tier.value}`",
+                color=await ctx.embed_color(),
+            )
+            if service_tier == ServiceTier.FLEX:
+                embed.set_footer(text="💸 Lower cost, higher latency — may have lower availability")
+            elif service_tier == ServiceTier.PRIORITY:
+                embed.set_footer(text="⚡ Faster responses, higher cost")
+
+        return await ctx.send(embed=embed)

@@ -178,6 +178,10 @@ class LLMPipeline:
     # ------------------------------------------------------------------    
     # Setup & configuration
     # ------------------------------------------------------------------
+    async def get_service_tier(self) -> Optional[str]:
+        """Return the configured service_tier for this guild, or None if not set."""
+        return await self.config.guild(self.ctx.guild).service_tier()
+
     async def get_custom_parameters(self) -> Dict[str, Any]:
         custom_parameters = await self.config.guild(self.ctx.guild).parameters()
         kwargs = json.loads(custom_parameters) if custom_parameters else {}
@@ -200,6 +204,15 @@ class LLMPipeline:
         ):
             logger.warning(f"logit_bias is not supported for model {self.model}, removing...")
             del kwargs["logit_bias"]
+
+        # Apply service_tier from dedicated config (takes precedence over any
+        # service_tier value that may have been set in custom_parameters JSON)
+        service_tier = await self.get_service_tier()
+        if service_tier is not None:
+            kwargs["service_tier"] = service_tier
+        elif "service_tier" in kwargs:
+            # Allow service_tier in custom_parameters JSON as a fallback
+            pass
 
         return kwargs
 

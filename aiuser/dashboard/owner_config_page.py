@@ -37,6 +37,14 @@ async def bot_owner_server_config(self: MixinMeta, guild: discord.Guild, **kwarg
         scan_images = wtforms.BooleanField("Read Images (Increases 💵 usage)")
         function_calling = wtforms.BooleanField("Enable Function Calling (⚠️ Ensure selected model supports function calling)")
         random_messages = wtforms.BooleanField("Randomly Send Messages (Send random messages at random intervals)")
+        service_tier = wtforms.SelectField(
+            "Service Tier (Control cost/latency tradeoffs)",
+            choices=[
+                ("default", "default (API decides)"),
+                ("flex", "flex — lower cost, higher latency"),
+                ("priority", "priority — faster, higher cost"),
+            ],
+            description="Only supported on OpenRouter and certain providers (OpenAI, Google).")
 
         submit: wtforms.SubmitField = wtforms.SubmitField("Save Changes")
 
@@ -60,6 +68,9 @@ async def bot_owner_server_config(self: MixinMeta, guild: discord.Guild, **kwarg
     random_messages_val = await self.config.guild(guild).random_messages_enabled()
     form.random_messages.default = form.random_messages.checked = random_messages_val
 
+    service_tier_val = await self.config.guild(guild).service_tier()
+    form.service_tier.default = service_tier_val if service_tier_val else "default"
+
     if form.validate_on_submit():
         pecentage = form.percent.data
         model = form.model.data
@@ -70,6 +81,7 @@ async def bot_owner_server_config(self: MixinMeta, guild: discord.Guild, **kwarg
         scan_images = form.scan_images.data
         function_calling = form.function_calling.data
         random_messages = form.random_messages.data
+        service_tier = form.service_tier.data
         try:
             await self.config.guild(guild).reply_percent.set(pecentage / 100)
             await self.config.guild(guild).model.set(model)
@@ -80,6 +92,9 @@ async def bot_owner_server_config(self: MixinMeta, guild: discord.Guild, **kwarg
             await self.config.guild(guild).scan_images.set(scan_images)
             await self.config.guild(guild).function_calling.set(function_calling)
             await self.config.guild(guild).random_messages_enabled.set(random_messages)
+            await self.config.guild(guild).service_tier.set(
+                service_tier if service_tier != "default" else None
+            )
             self.channels_whitelist[guild.id] = new_whitelist
         except Exception:
             return {

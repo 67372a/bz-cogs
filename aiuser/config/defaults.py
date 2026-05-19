@@ -122,6 +122,7 @@ DEFAULT_GUILD = {
     "openrouter_pdf_parsing_parameters": None,
     "openrouter_image_parsing_enabled": False,
     "openrouter_image_parsing_max_size": 10 * 1024 * 1024,
+    "service_tier": None,
 }
 
 DEFAULT_CHANNEL = {
