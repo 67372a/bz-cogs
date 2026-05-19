@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import re
+from typing import Optional
 
 import discord
 import tiktoken
