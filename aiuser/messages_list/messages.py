@@ -560,16 +560,16 @@ class MessagesList:
             return str(content)[:max_text_len]
 
     def log_messages(self):
-        """Log the entire built context and message list at DEBUG level.
+        """Log the entire built context and message list at INFO level.
 
         Logs a summary line at INFO level and the full per-message detail
         (role, content preview, tool_calls, etc.) at DEBUG level so operators
         can inspect exactly what is being sent to the LLM.
         """
-        if not logger.isEnabledFor(logging.DEBUG):
+        if not logger.isEnabledFor(logging.INFO):
             return
 
-        logger.debug(
+        logger.info(
             "=== Message List Start === channel=%s guild=%s model=%s tokens=%d/%d messages=%d prefill=%s ===",
             self.ctx.channel.id,
             self.ctx.guild.id if self.ctx.guild else "DM",
@@ -608,7 +608,7 @@ class MessagesList:
             prefill_summary = self._summarize_content(self.prefill)
             logger.debug("  [prefill] role=assistant content=%s", prefill_summary)
 
-        logger.debug(
+        logger.info(
             "=== Message List End === channel=%s guild=%s ===",
             self.ctx.channel.id,
             self.ctx.guild.id if self.ctx.guild else "DM",
