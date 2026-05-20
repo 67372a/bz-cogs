@@ -4,6 +4,7 @@ import random
 from datetime import datetime, timedelta
 from typing import List, Optional, Union
 import re
+import time as _time
 
 import discord
 import tiktoken
@@ -17,12 +18,17 @@ from aiuser.messages_list.entry import MessageEntry
 from aiuser.messages_list.opt_view import OptView
 from aiuser.types.abc import MixinMeta
 from aiuser.types.enums import ScanImageMode
-from aiuser.utils.utilities import format_variables
+from aiuser.utils.utilities import format_variables, format_stable_variables, build_dynamic_context_message
 from aiuser.config.constants import XML_SYSTEM_PROMPT_APPENDIX, OPENROUTER_CITATION_INSTRUCTIONS
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
 OPTIN_EMBED_TITLE = ":information_source: AI User Opt-In / Opt-Out"
+
+# When a channel was last processed within this many seconds, the
+# token limit is expanded to the model's full context size so that
+# already-cached messages are not prematurely dropped.
+CACHE_WINDOW_SECONDS = 180  # 3 minutes
 THOUGHTS_EMBED_TITLE_REGEX = re.compile(r'^.*\'s Thoughts$')
 
 
@@ -38,11 +44,13 @@ async def create_messages_list(
         await thread._init(prompt=prompt, skip_init_msg=True)
         if history:
             await thread.add_backfill_history(backfill_anchor)
+        thread._append_dynamic_context()
         return thread
 
     await thread._init(prompt=prompt)
     if history:
         await thread.add_history()
+    thread._append_dynamic_context()
     return thread
 
 
@@ -52,6 +60,7 @@ class MessagesList:
         cog: MixinMeta,
         ctx: commands.Context,
     ):
+        self._cog = cog
         self.bot = cog.bot
         self.config = cog.config
         self.ctx = ctx
@@ -67,6 +76,9 @@ class MessagesList:
         self.model = None
         self.can_reply = True
         self.prefill: Optional[str] = None
+        self._dynamic_context: Optional[str] = None
+        self._raw_persona: Optional[str] = None
+        self._cache_window_active: bool = False
 
     def __len__(self):
         return len(self.messages)
@@ -82,14 +94,33 @@ class MessagesList:
         except KeyError:
             self._encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
 
+        # Check if this channel was recently processed — if so, expand
+        # limits to load more history for a longer shared cache prefix.
+        channel_id = self.ctx.channel.id
+        last_at = self._cog.last_response_at.get(channel_id)
+        if last_at is not None and (_time.monotonic() - last_at) < CACHE_WINDOW_SECONDS:
+            self._cache_window_active = True
+            # Expand token limit to the model's full context (no buffer)
+            model_limit = self._get_token_limit_raw(self.model)
+            if model_limit > self.token_limit:
+                logger.info(
+                    f"Cache window active for channel {channel_id} — "
+                    f"expanding token limit {self.token_limit} → {model_limit}"
+                )
+                self.token_limit = model_limit
+
         if not prompt and not skip_init_msg:
             await self.add_msg(self.init_message)
 
         # 1. Get the user-defined persona (e.g., "You are a helpful assistant...")
         raw_persona = prompt or await self._pick_prompt()
-        
-        # 2. Format variables (e.g., replace {botname})
-        formatted_persona = await format_variables(self.ctx, raw_persona)
+        self._raw_persona = raw_persona
+
+        # 2. Format only stable variables for the system prompt.
+        #    Dynamic variables (time, author, random) are deferred to a
+        #    trailing user message to preserve Gemini implicit caching and
+        #    OpenRouter provider sticky routing.
+        formatted_persona = await format_stable_variables(self.ctx, raw_persona)
 
         # 3. Combine Persona + XML Protocol
         # We add a double newline to separate the personality from the technical instructions
@@ -110,8 +141,34 @@ class MessagesList:
         # 4. Add the combined system prompt
         await self.add_system(final_system_prompt)
 
+        # 5. Build dynamic context (time, author, etc.) for later insertion
+        #    as a trailing user message after history is loaded.
+        self._dynamic_context = await build_dynamic_context_message(
+            self.ctx, raw_persona
+        )
+
         if await self._check_if_inital_img():
             self.model = await self.config.guild(self.guild).scan_images_model()
+
+    def _append_dynamic_context(self):
+        """Append dynamic per-request context as a trailing user message.
+
+        This is called after history loading to place time-varying and
+        user-varying variables (currenttime, authorname, etc.) at the end
+        of the message list rather than in the system prompt.  This
+        preserves Gemini implicit caching and OpenRouter provider sticky
+        routing by keeping the system prompt immutable.
+
+        The context is added as a ``user`` role message, per OpenRouter
+        guidance: "move dynamic content into a later user message."
+        """
+        if not self._dynamic_context:
+            return
+        entry = MessageEntry("user", self._dynamic_context)
+        self.messages.append(entry)
+        # Count tokens for the dynamic context
+        if isinstance(self._dynamic_context, str):
+            self.tokens += len(self._encoding.encode(self._dynamic_context, disallowed_special=()))
 
     async def _check_if_inital_img(self) -> bool:
         if (
@@ -276,6 +333,7 @@ class MessagesList:
     async def add_history(self):
         limit = await self.config.guild(self.guild).messages_backread()
         max_seconds_gap = await self.config.guild(self.guild).messages_backread_seconds()
+
         start_time: datetime = (
             self.start_time - timedelta(seconds=1) if self.start_time else None
         )
@@ -484,6 +542,19 @@ class MessagesList:
         if model in MODELS_LIMITS:
             limit = MODELS_LIMITS.get(model, limit) - 1000 # 1000 token buffer
 
+        return limit
+
+    @staticmethod
+    def _get_token_limit_raw(model) -> int:
+        """Return the model's full token limit without any buffer.
+
+        Used during the cache window to maximize the prefix length
+        for Gemini implicit caching.
+        """
+        limit = 7000
+        model = model.split("/")[-1].split(":")[0]
+        if model in MODELS_LIMITS:
+            limit = MODELS_LIMITS.get(model, limit)
         return limit
 
     @staticmethod

@@ -378,6 +378,17 @@ class LLMPipeline:
 
         if response.usage:
             logger.info(f"LLM usage: P{response.usage.prompt_tokens} C{response.usage.completion_tokens} T{response.usage.total_tokens}.")
+            # Log Gemini implicit cache hit metrics (available via OpenRouter)
+            try:
+                cached = getattr(response.usage, 'cached_tokens', None)
+                if cached is None:
+                    details = getattr(response.usage, 'prompt_tokens_details', None)
+                    if details:
+                        cached = getattr(details, 'cached_tokens', None)
+                if cached and cached > 0:
+                    logger.info(f"Cache hit: {cached}/{response.usage.prompt_tokens} prompt tokens served from cache.")
+            except Exception:
+                pass  # Non-critical; don't let cache logging break the pipeline
 
         logger.info(f"Raw LLM response (truncated): id={response.id}, finish_reason={response.choices[0].finish_reason}")
 

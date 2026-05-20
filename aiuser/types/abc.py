@@ -33,8 +33,9 @@ class MixinMeta(ABC):
         self.ignore_regex: dict[int, re.Pattern]
         self.channels_whitelist: dict[int, list[int]]
         self.openai_client: AsyncOpenAI
-        self.optindefault: dict[int, bool] 
+        self.optindefault: dict[int, bool]
         self.generating_channels: set[int]
         self.message_queues: dict[int, Queue]
         self.processing_tasks: dict[int, Task]
         self.backfill_anchors: dict[int, discord.Message]
+        self.last_response_at: dict[int, float]

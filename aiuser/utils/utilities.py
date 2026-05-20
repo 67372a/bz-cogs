@@ -119,6 +119,129 @@ async def format_variables(ctx: commands.Context, text: str):
         return text
 
 
+# Variables that are stable per-channel and rarely change.
+# These are safe to include in the system prompt without breaking
+# Gemini implicit caching or OpenRouter sticky routing.
+_STABLE_VARIABLES = frozenset({
+    'botname', 'botdisplayname', 'botowner',
+    'servername', 'channelname',
+    'serveremojis', 'channeltopic',
+})
+
+# Variables that change per-request (time, user, randomness).
+# These must NOT be in the system prompt — they are appended as
+# a trailing user message to preserve the stable prefix.
+_DYNAMIC_VARIABLES = frozenset({
+    'currenttime', 'currentdate', 'currentweekday',
+    'randomnumber',
+    'authorname', 'authordisplayname', 'authortoprole', 'authormention',
+})
+
+
+async def format_stable_variables(ctx: commands.Context, text: str) -> str:
+    """Substitute only stable (per-channel) variables into *text*.
+
+    This is used for the system prompt so that its content is identical
+    across requests in the same channel, enabling Gemini implicit caching
+    and OpenRouter provider sticky routing.
+
+    Dynamic variables like ``{currenttime}``, ``{authorname}``, etc. are
+    left as literal ``{…}`` placeholders — callers should pass the result
+    through ``format_variables()`` or ``build_dynamic_context_message()``
+    if those placeholders still need to be resolved for a different part
+    of the prompt.
+    """
+    botname = ctx.message.guild.me.name or ctx.bot.user.name
+    botdisplayname = ctx.message.guild.me.display_name or ctx.bot.user.display_name
+    app_info = await ctx.bot.application_info()
+    botowner = app_info.owner.name
+    servername = ctx.guild.name
+    channelname = ctx.message.channel.name
+
+    if isinstance(ctx.message.channel, discord.Thread):
+        channeltopic = ctx.message.channel.parent.topic or ""
+    else:
+        channeltopic = ctx.message.channel.topic or ""
+
+    try:
+        serveremojis = ' '.join(f":{e}:" for e in await get_guild_emoji_map(ctx))
+    except Exception:
+        serveremojis = ""
+
+    stable_kwargs = dict(
+        botname=botname,
+        botdisplayname=botdisplayname,
+        botowner=botowner,
+        servername=servername,
+        channelname=channelname,
+        serveremojis=serveremojis,
+        channeltopic=channeltopic,
+    )
+
+    try:
+        return text.format(**stable_kwargs)
+    except KeyError:
+        # If the text contains dynamic placeholders that we intentionally
+        # skip here, Python's str.format() will raise KeyError.  Use a
+        # safe formatter that leaves unknown placeholders intact.
+        import string
+        class _SafeFormatter(string.Formatter):
+            def get_field(self, field_name, *args, **kwargs):
+                try:
+                    return super().get_field(field_name, *args, **kwargs)
+                except (KeyError, AttributeError):
+                    return '{' + field_name + '}', field_name
+            def format_field(self, value, format_spec):
+                try:
+                    return super().format_field(value, format_spec)
+                except (ValueError, KeyError):
+                    return '{' + str(value) + '}'
+        return _SafeFormatter().format(text, **stable_kwargs)
+
+
+async def build_dynamic_context_message(ctx: commands.Context, text: str = None) -> str | None:
+    """Build a concise context string with all dynamic (per-request) values.
+
+    Returns a short, machine-readable summary of dynamic variables that
+    should be appended as a **user** message at the end of the message
+    list — per OpenRouter guidance, dynamic content must be in a later
+    user message rather than the system prompt.
+
+    If *text* is provided, only builds context if the text references
+    at least one dynamic variable.  If *text* is ``None``, always builds
+    context (used when the caller wants an unconditional context message).
+
+    Returns ``None`` if no dynamic context is needed.
+    """
+    # If a template is given and it doesn't use any dynamic variables,
+    # there is no need for a trailing context message.
+    if text is not None:
+        has_dynamic = any('{' + var + '}' in text for var in _DYNAMIC_VARIABLES)
+        if not has_dynamic:
+            return None
+
+    authorname = ctx.message.author.name
+    authordisplayname = ctx.message.author.display_name
+    authortoprole = ctx.message.author.top_role.name
+    authormention = ctx.message.author.mention
+    currentdate = datetime.today().strftime("%Y/%m/%d")
+    currentweekday = datetime.today().strftime("%A")
+    currenttime = datetime.today().strftime("%H:%M")
+    randomnumber = random.randint(0, 100)
+
+    parts = [
+        f"date={currentdate}",
+        f"day={currentweekday}",
+        f"time={currenttime}",
+        f"author={authordisplayname} (@{authorname})",
+        f"author_top_role={authortoprole}",
+        f"author_mention={authormention}",
+        f"random={randomnumber}",
+    ]
+
+    return " | ".join(parts)
+
+
 def is_embed_valid(message: Message):
     if (
         (len(message.embeds) == 0)

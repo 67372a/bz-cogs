@@ -2,6 +2,7 @@ import logging
 import asyncio
 import re
 from datetime import datetime
+import time as _time
 
 import discord
 from openai import AsyncOpenAI
@@ -54,6 +55,8 @@ class AIUser(
         self.cached_messages: Cache[int, MessageEntry] = Cache(limit=100)
         self.message_queues: dict[int, asyncio.Queue] = {}
         self.processing_tasks: dict[int, asyncio.Task] = {}
+        # Track when each channel last had a response processed (for cache window)
+        self.last_response_at: dict[int, float] = {}
         # PDF annotation cache: (channel_id, originating_user_message_id) -> list[dict]
         self.pdf_annotations: dict[tuple[int, int], list[dict]] = {}
         # Backfill anchors: channel_id -> anchor message for the next trigger
@@ -147,11 +150,13 @@ class AIUser(
             try:
                 ctx, messages_list = await queue.get()
                 await dispatch_response(self, ctx, messages_list)
+                # Record timestamp for cache-window optimization
+                self.last_response_at[channel_id] = _time.monotonic()
             except Exception:
                 logger.exception(f"Error processing queue for channel {channel_id}")
             finally:
                 # Small buffer between messages to ensure order and prevent rate-limit bursts
-                await asyncio.sleep(1) 
+                await asyncio.sleep(1)
         
         del self.processing_tasks[channel_id]
         if queue.empty():
