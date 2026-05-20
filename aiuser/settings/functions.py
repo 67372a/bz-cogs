@@ -49,6 +49,21 @@ class FunctionCallingSettings(MixinMeta):
         else:
             embed.add_field(name="Enabled Functions", value="*None*", inline=False)
 
+        # Generic web function backends
+        web_search_backend = await self.config.guild(ctx.guild).web_search_backend()
+        web_fetch_backend = await self.config.guild(ctx.guild).web_fetch_backend()
+        web_answer_backend = await self.config.guild(ctx.guild).web_answer_backend()
+
+        web_info_parts = []
+        if web_search_backend:
+            web_info_parts.append(f"Web Search: `{web_search_backend}`")
+        if web_fetch_backend:
+            web_info_parts.append(f"Web Fetch: `{web_fetch_backend}`")
+        if web_answer_backend:
+            web_info_parts.append(f"Web Answer: `{web_answer_backend}`")
+        if web_info_parts:
+            embed.add_field(name="Web Function Backends", value="\n".join(web_info_parts), inline=False)
+
         # OpenRouter server tools
         or_search = await self.config.guild(ctx.guild).openrouter_web_search_enabled()
         or_fetch = await self.config.guild(ctx.guild).openrouter_web_fetch_enabled()
@@ -57,9 +72,9 @@ class FunctionCallingSettings(MixinMeta):
 
         or_tools = []
         if or_search:
-            or_tools.append("Web Search")
+            or_tools.append("Web Search (server)")
         if or_fetch:
-            or_tools.append("Web Fetch")
+            or_tools.append("Web Fetch (server)")
         if or_image:
             or_tools.append("Image Gen")
         if or_pdf:
@@ -133,40 +148,31 @@ class FunctionCallingSettings(MixinMeta):
         )
         await ctx.send(embed=embed)
 
+    # ─── Deprecated: legacy search command ─────────────────────────────────
+
     @functions.command(name="search")
     async def toggle_search_function(self, ctx: commands.Context):
-        """ Enable/disable searching/scraping the Internet using Serper.dev """
-        if (not (await self.bot.get_shared_api_tokens("serper")).get("api_key")):
-            return await ctx.send(f"Serper.dev key not set! Set it using `{ctx.clean_prefix}set api serper api_key,APIKEY`.")
+        """⚠️ DEPRECATED — use `web_search` instead.
 
-        from aiuser.functions.search.tool_call import SearchToolCall
+        This command will auto-migrate your settings to the new generic web_search
+        system using the Serper.dev backend. No data is lost.
+        """
+        await ctx.send("⚠️ The `search` command is deprecated. Migrating to generic `web_search` with `serper` backend...")
+        await self.config.guild(ctx.guild).web_search_backend.set("serper")
+        return await self._toggle_generic_web_function(ctx, "web_search", "Web Search")
 
-        # Check mutual exclusivity: if OpenRouter web search is enabled, disable it
-        if await self.config.guild(ctx.guild).openrouter_web_search_enabled():
-            await self.config.guild(ctx.guild).openrouter_web_search_enabled.set(False)
-            await ctx.send("⚠️ OpenRouter web search has been disabled (mutual exclusivity with local Serper.dev search).")
-
-        tool_names = [SearchToolCall.function_name]
-
-        await self.toggle_function_helper(ctx, tool_names, "Search")
+    # ─── Deprecated: legacy scrape command ─────────────────────────────────
 
     @functions.command(name="scrape")
     async def toggle_scrape_function(self, ctx: commands.Context):
+        """⚠️ DEPRECATED — use `web_fetch` instead.
+
+        This command will auto-migrate your settings to the new generic web_fetch
+        system using the scrape backend. No data is lost.
         """
-        Enable/disable the functionality for the LLM to open URLs in messages
-
-        (May not be called if the link generated an Discord embed)
-        """
-        from aiuser.functions.scrape.tool_call import ScrapeToolCall
-
-        # Check mutual exclusivity: if OpenRouter web fetch is enabled, disable it
-        if await self.config.guild(ctx.guild).openrouter_web_fetch_enabled():
-            await self.config.guild(ctx.guild).openrouter_web_fetch_enabled.set(False)
-            await ctx.send("⚠️ OpenRouter web fetch has been disabled (mutual exclusivity with local scrape).")
-
-        tool_names = [ScrapeToolCall.function_name]
-
-        await self.toggle_function_helper(ctx, tool_names, "Scrape")
+        await ctx.send("⚠️ The `scrape` command is deprecated. Migrating to generic `web_fetch` with `scrape` backend...")
+        await self.config.guild(ctx.guild).web_fetch_backend.set("scrape")
+        return await self._toggle_generic_web_function(ctx, "web_fetch", "Web Fetch")
 
     @functions.command(name="weather")
     async def toggle_weather_function(self, ctx: commands.Context):
@@ -270,43 +276,27 @@ class FunctionCallingSettings(MixinMeta):
 
     @functions.command(name="or_web_search")
     async def toggle_or_web_search(self, ctx: commands.Context):
-        """ Toggle OpenRouter web search server tool
+        """⚠️ DEPRECATED — use `web_search` with `web_search_backend exa` instead.
 
-        Enables/disables the openrouter:web_search server tool.
-        Mutual exclusive with local Serper.dev search - enabling this
-        will disable the local search function.
+        This command will auto-migrate your settings to the new generic web_search
+        system using the Exa backend. No data is lost.
         """
-        currently_enabled = await self.config.guild(ctx.guild).openrouter_web_search_enabled()
-        if not currently_enabled:
-            # Check mutual exclusivity: disable local Serper.dev search if enabling
-            from aiuser.functions.search.tool_call import SearchToolCall
-            enabled_tools = await self.config.guild(ctx.guild).function_calling_functions()
-            if SearchToolCall.function_name in enabled_tools:
-                enabled_tools.remove(SearchToolCall.function_name)
-                await self.config.guild(ctx.guild).function_calling_functions.set(enabled_tools)
-                await ctx.send("⚠️ Local Serper.dev search has been disabled (mutual exclusivity with OpenRouter web search).")
-
-        await self._toggle_openrouter_boolean(ctx, "openrouter_web_search_enabled", "Web Search")
+        await ctx.send("⚠️ The `or_web_search` command is deprecated. Migrating to generic `web_search` with `exa` backend...")
+        await self.config.guild(ctx.guild).openrouter_web_search_enabled.set(False)
+        await self.config.guild(ctx.guild).web_search_backend.set("exa")
+        return await self._toggle_generic_web_function(ctx, "web_search", "Web Search (Exa)")
 
     @functions.command(name="or_web_fetch")
     async def toggle_or_web_fetch(self, ctx: commands.Context):
-        """ Toggle OpenRouter web fetch server tool
+        """⚠️ DEPRECATED — use `web_fetch` with `web_fetch_backend exa` instead.
 
-        Enables/disables the openrouter:web_fetch server tool.
-        Mutual exclusive with local scrape - enabling this
-        will disable the local scrape function.
+        This command will auto-migrate your settings to the new generic web_fetch
+        system using the Exa backend. No data is lost.
         """
-        currently_enabled = await self.config.guild(ctx.guild).openrouter_web_fetch_enabled()
-        if not currently_enabled:
-            # Check mutual exclusivity: disable local scrape if enabling
-            from aiuser.functions.scrape.tool_call import ScrapeToolCall
-            enabled_tools = await self.config.guild(ctx.guild).function_calling_functions()
-            if ScrapeToolCall.function_name in enabled_tools:
-                enabled_tools.remove(ScrapeToolCall.function_name)
-                await self.config.guild(ctx.guild).function_calling_functions.set(enabled_tools)
-                await ctx.send("⚠️ Local scrape function has been disabled (mutual exclusivity with OpenRouter web fetch).")
-
-        await self._toggle_openrouter_boolean(ctx, "openrouter_web_fetch_enabled", "Web Fetch")
+        await ctx.send("⚠️ The `or_web_fetch` command is deprecated. Migrating to generic `web_fetch` with `exa` backend...")
+        await self.config.guild(ctx.guild).openrouter_web_fetch_enabled.set(False)
+        await self.config.guild(ctx.guild).web_fetch_backend.set("exa")
+        return await self._toggle_generic_web_function(ctx, "web_fetch", "Web Fetch (Exa)")
 
     @functions.command(name="or_image_gen")
     async def toggle_or_image_gen(self, ctx: commands.Context):
@@ -732,3 +722,355 @@ class FunctionCallingSettings(MixinMeta):
             extra_help="Available engines: `cloudflare-ai` (free), `mistral-ocr` (paid), `native` (model-native only)",
         )
 
+    # ─── Generic Web Function Helpers ────────────────────────────────────────
+
+    async def _toggle_generic_web_function(self, ctx: commands.Context, function_name: str, display_name: str):
+        """Toggle a generic web function in the function_calling_functions list."""
+        from aiuser.functions.web_search.tool_call import WebSearchToolCall
+        from aiuser.functions.web_fetch.tool_call import WebFetchToolCall
+        from aiuser.functions.web_answer.tool_call import WebAnswerToolCall
+
+        name_to_class = {
+            "web_search": WebSearchToolCall,
+            "web_fetch": WebFetchToolCall,
+            "web_answer": WebAnswerToolCall,
+        }
+        tool_class = name_to_class.get(function_name)
+        if not tool_class:
+            return await ctx.send(f":warning: Unknown function: `{function_name}`")
+
+        tool_names = [tool_class.function_name]
+        await self.toggle_function_helper(ctx, tool_names, display_name)
+
+    async def _handle_web_config(
+        self,
+        ctx: commands.Context,
+        config_key: str,
+        param_display_name: str,
+        valid_keys: list,
+        example_config: dict,
+        *,
+        json_block: str,
+    ):
+        """Shared helper for web_*_config commands.
+
+        - No args or 'show'/'list' → shows current config + example
+        - 'reset'/'clear' → resets to defaults
+        - JSON code block → sets config (validated against valid_keys)
+        """
+        if not json_block or json_block in ("show", "list"):
+            current_json = await getattr(self.config.guild(ctx.guild), config_key)()
+            current = json.loads(current_json) if current_json else {}
+
+            embed = discord.Embed(
+                title=f"Web {param_display_name} Configuration",
+                color=await ctx.embed_color(),
+            )
+
+            if current:
+                for k, v in current.items():
+                    embed.add_field(name=k, value=f"`{v}`", inline=True)
+            else:
+                embed.add_field(name="Current", value="No custom parameters set. Using defaults.", inline=False)
+
+            example_json = json.dumps(example_config, indent=2)
+            embed.add_field(
+                name="Reference Example (JSON)",
+                value=f"```json\n{example_json}\n```",
+                inline=False,
+            )
+
+            config_cmd = config_key.replace("_", " ")
+            usage = (
+                f"• Set: `{ctx.clean_prefix}functions {config_cmd} "
+                f"```json\n{{...}}\n``` `\n"
+                f"• Reset: `{ctx.clean_prefix}functions {config_cmd} reset`"
+            )
+            embed.add_field(name="Usage", value=usage, inline=False)
+            return await ctx.send(embed=embed)
+
+        if json_block in ("reset", "clear"):
+            await getattr(self.config.guild(ctx.guild), config_key).set(None)
+            return await ctx.send(f"Web {param_display_name} configuration reset to defaults.")
+
+        # Parse JSON block
+        raw = json_block
+        if raw.startswith("```"):
+            raw = raw.replace("```json", "").replace("```", "").strip()
+
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return await ctx.send(":warning: Invalid JSON format!")
+
+        if not isinstance(data, dict):
+            return await ctx.send(":warning: Expected a JSON object.")
+
+        unknown_keys = [k for k in data if k not in valid_keys]
+        if unknown_keys:
+            await ctx.send(
+                f":warning: Unknown key(s): {', '.join(f'`{k}`' for k in unknown_keys)}. "
+                f"Valid keys: {', '.join(f'`{k}`' for k in valid_keys)}."
+            )
+            data = {k: v for k, v in data.items() if k in valid_keys}
+
+        serialized = json.dumps(data)
+        await getattr(self.config.guild(ctx.guild), config_key).set(serialized)
+
+        embed = discord.Embed(
+            title=f"Web {param_display_name} Configuration Updated",
+            description=f"Parameters saved: {serialized}",
+            color=await ctx.embed_color(),
+        )
+        await ctx.send(embed=embed)
+
+    # ─── Generic Web Search ──────────────────────────────────────────────────
+
+    @functions.command(name="web_search")
+    async def toggle_web_search(self, ctx: commands.Context):
+        """Toggle the generic web_search function.
+
+        Before enabling, set a backend with `web_search_backend` (exa/serper).
+        The LLM will only pass a query; all other parameters are owner-configured.
+        """
+        await self._toggle_generic_web_function(ctx, "web_search", "Web Search")
+
+    @functions.command(name="web_search_backend")
+    async def set_web_search_backend(self, ctx: commands.Context, backend: str = ""):
+        """Set the web_search backend provider.
+
+        **Arguments**
+        - `backend`: `exa` (requires Exa API key), `serper` (requires Serper.dev key)
+
+        Example: `{ctx.clean_prefix}functions web_search_backend exa`
+        """
+        valid_backends = ["exa", "serper"]
+        if not backend or backend not in valid_backends:
+            return await ctx.send(
+                f"Please specify a backend: {', '.join(f'`{b}`' for b in valid_backends)}.\n"
+                f"Example: `{ctx.clean_prefix}functions web_search_backend exa`"
+            )
+
+        if backend == "exa":
+            if not (await self.bot.get_shared_api_tokens("exa")).get("api_key"):
+                return await ctx.send(
+                    f"Exa API key not set! Set it using `{ctx.clean_prefix}set api exa api_key,YOUR_KEY`."
+                )
+        elif backend == "serper":
+            if not (await self.bot.get_shared_api_tokens("serper")).get("api_key"):
+                return await ctx.send(
+                    f"Serper.dev key not set! Set it using `{ctx.clean_prefix}set api serper api_key,APIKEY`."
+                )
+
+        # Disable OpenRouter web search if switching to local backend
+        if await self.config.guild(ctx.guild).openrouter_web_search_enabled():
+            await self.config.guild(ctx.guild).openrouter_web_search_enabled.set(False)
+            await ctx.send("⚠️ OpenRouter web search has been disabled.")
+
+        await self.config.guild(ctx.guild).web_search_backend.set(backend)
+        embed = discord.Embed(
+            title="Web Search Backend",
+            description=f"Now set to: `{backend}`",
+            color=await ctx.embed_color(),
+        )
+        embed.add_field(
+            name="Next Step",
+            value=f"Enable with `{ctx.clean_prefix}functions web_search`",
+            inline=False,
+        )
+        await ctx.send(embed=embed)
+
+    @functions.command(name="web_search_config")
+    async def config_web_search(self, ctx: commands.Context, *, json_block: str = ""):
+        """Configure web_search backend parameters using JSON.
+
+        **Exa valid keys**: `num_results` (int), `type` (auto/fast/deep-lite/deep/deep-reasoning),
+        `include_domains` (list), `exclude_domains` (list),
+        `start_published_date` (str YYYY-MM-DD), `end_published_date` (str YYYY-MM-DD)
+
+        **Serper valid keys**: *(none — no configurable parameters)*
+
+        Example: `{ctx.clean_prefix}functions web_search_config ```json\n{"num_results": 10, "type": "auto"}\n``` `
+        """
+        await self._handle_web_config(
+            ctx=ctx,
+            config_key="web_search_config",
+            param_display_name="Search",
+            valid_keys=["num_results", "type", "include_domains", "exclude_domains",
+                        "start_published_date", "end_published_date"],
+            example_config={"num_results": 10, "type": "auto"},
+            json_block=json_block,
+        )
+
+    # ─── Generic Web Fetch ───────────────────────────────────────────────────
+
+    @functions.command(name="web_fetch")
+    async def toggle_web_fetch(self, ctx: commands.Context):
+        """Toggle the generic web_fetch function.
+
+        Before enabling, set a backend with `web_fetch_backend` (exa/scrape).
+        The LLM will only pass URLs; all other parameters are owner-configured.
+        """
+        await self._toggle_generic_web_function(ctx, "web_fetch", "Web Fetch")
+
+    @functions.command(name="web_fetch_backend")
+    async def set_web_fetch_backend(self, ctx: commands.Context, backend: str = ""):
+        """Set the web_fetch backend provider.
+
+        **Arguments**
+        - `backend`: `exa` (requires Exa API key), `scrape` (direct scraping, no API key needed)
+
+        Example: `{ctx.clean_prefix}functions web_fetch_backend exa`
+        """
+        valid_backends = ["exa", "scrape"]
+        if not backend or backend not in valid_backends:
+            return await ctx.send(
+                f"Please specify a backend: {', '.join(f'`{b}`' for b in valid_backends)}.\n"
+                f"Example: `{ctx.clean_prefix}functions web_fetch_backend exa`"
+            )
+
+        if backend == "exa":
+            if not (await self.bot.get_shared_api_tokens("exa")).get("api_key"):
+                return await ctx.send(
+                    f"Exa API key not set! Set it using `{ctx.clean_prefix}set api exa api_key,YOUR_KEY`."
+                )
+
+        # Disable OpenRouter web fetch if switching to local backend
+        if await self.config.guild(ctx.guild).openrouter_web_fetch_enabled():
+            await self.config.guild(ctx.guild).openrouter_web_fetch_enabled.set(False)
+            await ctx.send("⚠️ OpenRouter web fetch has been disabled.")
+
+        await self.config.guild(ctx.guild).web_fetch_backend.set(backend)
+        embed = discord.Embed(
+            title="Web Fetch Backend",
+            description=f"Now set to: `{backend}`",
+            color=await ctx.embed_color(),
+        )
+        embed.add_field(
+            name="Next Step",
+            value=f"Enable with `{ctx.clean_prefix}functions web_fetch`",
+            inline=False,
+        )
+        await ctx.send(embed=embed)
+
+    @functions.command(name="web_fetch_config")
+    async def config_web_fetch(self, ctx: commands.Context, *, json_block: str = ""):
+        """Configure web_fetch backend parameters using JSON.
+
+        **Exa valid keys**: `text` (bool), `summary` (bool)
+
+        **Scrape valid keys**: *(none — no configurable parameters)*
+
+        Example: `{ctx.clean_prefix}functions web_fetch_config ```json\n{"text": true}\n``` `
+        """
+        await self._handle_web_config(
+            ctx=ctx,
+            config_key="web_fetch_config",
+            param_display_name="Fetch",
+            valid_keys=["text", "summary"],
+            example_config={"text": True},
+            json_block=json_block,
+        )
+
+    # ─── Generic Web Answer ──────────────────────────────────────────────────
+
+    @functions.command(name="web_answer")
+    async def toggle_web_answer(self, ctx: commands.Context):
+        """Toggle the generic web_answer function.
+
+        Before enabling, set a backend with `web_answer_backend` (only `exa` currently).
+        The LLM will only pass a question; all other parameters are owner-configured.
+        """
+        await self._toggle_generic_web_function(ctx, "web_answer", "Web Answer")
+
+    @functions.command(name="web_answer_backend")
+    async def set_web_answer_backend(self, ctx: commands.Context, backend: str = ""):
+        """Set the web_answer backend provider.
+
+        **Arguments**
+        - `backend`: `exa` (requires Exa API key)
+
+        Example: `{ctx.clean_prefix}functions web_answer_backend exa`
+        """
+        valid_backends = ["exa"]
+        if not backend or backend not in valid_backends:
+            return await ctx.send(
+                f"Please specify a backend: {', '.join(f'`{b}`' for b in valid_backends)}.\n"
+                f"Example: `{ctx.clean_prefix}functions web_answer_backend exa`"
+            )
+
+        if backend == "exa":
+            if not (await self.bot.get_shared_api_tokens("exa")).get("api_key"):
+                return await ctx.send(
+                    f"Exa API key not set! Set it using `{ctx.clean_prefix}set api exa api_key,YOUR_KEY`."
+                )
+
+        await self.config.guild(ctx.guild).web_answer_backend.set(backend)
+        embed = discord.Embed(
+            title="Web Answer Backend",
+            description=f"Now set to: `{backend}`",
+            color=await ctx.embed_color(),
+        )
+        embed.add_field(
+            name="Next Step",
+            value=f"Enable with `{ctx.clean_prefix}functions web_answer`",
+            inline=False,
+        )
+        await ctx.send(embed=embed)
+
+    @functions.command(name="web_answer_config")
+    async def config_web_answer(self, ctx: commands.Context, *, json_block: str = ""):
+        """Configure web_answer backend parameters using JSON.
+
+        **Exa valid keys**: `text` (bool — include full citation text)
+
+        Example: `{ctx.clean_prefix}functions web_answer_config ```json\n{"text": false}\n``` `
+        """
+        await self._handle_web_config(
+            ctx=ctx,
+            config_key="web_answer_config",
+            param_display_name="Answer",
+            valid_keys=["text"],
+            example_config={"text": False},
+            json_block=json_block,
+        )
+
+    # ─── Legacy Migration ────────────────────────────────────────────────────
+
+    async def _migrate_legacy_function_names(self):
+        """Migrate legacy function_calling_functions entries to generic names.
+
+        Called during cog load. Converts old function names and enables
+        appropriate backends so existing setups continue working.
+        """
+        for guild_id in await self.config.all_guilds():
+            guild_config = self.config.guild_from_id(guild_id)
+            enabled = await guild_config.function_calling_functions()
+            if not enabled:
+                continue
+
+            modified = False
+
+            # Migrate search_google → web_search + serper backend
+            if "search_google" in enabled:
+                enabled.remove("search_google")
+                if "web_search" not in enabled:
+                    enabled.append("web_search")
+                modified = True
+                backend = await guild_config.web_search_backend()
+                if not backend:
+                    await guild_config.web_search_backend.set("serper")
+
+            # Migrate open_url → web_fetch + scrape backend
+            if "open_url" in enabled:
+                enabled.remove("open_url")
+                if "web_fetch" not in enabled:
+                    enabled.append("web_fetch")
+                modified = True
+                backend = await guild_config.web_fetch_backend()
+                if not backend:
+                    await guild_config.web_fetch_backend.set("scrape")
+
+            if modified:
+                await guild_config.function_calling_functions.set(enabled)
+                logger.info("Migrated legacy function names for guild %s to generic web_* functions", guild_id)

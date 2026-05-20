@@ -123,6 +123,12 @@ DEFAULT_GUILD = {
     "openrouter_image_parsing_enabled": False,
     "openrouter_image_parsing_max_size": 10 * 1024 * 1024,
     "service_tier": None,
+    "web_search_backend": None,
+    "web_search_config": None,
+    "web_fetch_backend": None,
+    "web_fetch_config": None,
+    "web_answer_backend": None,
+    "web_answer_config": None,
 }
 
 DEFAULT_CHANNEL = {

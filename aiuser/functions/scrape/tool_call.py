@@ -1,5 +1,12 @@
 
 
+# DEPRECATED: This file is kept for backward compatibility.
+# The open_url function has been superseded by the generic web_fetch
+# ToolCall in aiuser/functions/web_fetch/tool_call.py.
+# Existing configs using "open_url" will be auto-migrated on cog load.
+# New setups should use: [p]aiuser functions web_fetch
+
+
 import logging
 
 from aiuser.functions.scrape.scrape import scrape_page

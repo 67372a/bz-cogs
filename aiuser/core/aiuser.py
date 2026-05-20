@@ -82,6 +82,10 @@ class AIUser(
             test_guild = 744802856074346556
             self.override_prompt_start_time[test_guild] = datetime.now()
 
+        # Migrate legacy function names to new generic web_* system
+        from aiuser.settings.functions import FunctionCallingSettings
+        await FunctionCallingSettings._migrate_legacy_function_names(self)
+
         self.random_message_trigger.start()
 
     async def cog_unload(self):

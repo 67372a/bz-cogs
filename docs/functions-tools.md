@@ -75,13 +75,38 @@ Tool results are added to message history via [`add_tool_result()`](../aiuser/me
 
 ### 2.3 Utility & Searches
 
-#### `open_url`
+#### `web_search` (generic)
+- **File**: [`functions/web_search/tool_call.py`](../aiuser/functions/web_search/tool_call.py)
+- **Schema**: Takes only `query` (string). All other parameters configured by owner.
+- **Backends**:
+  - `exa` — Uses [`exa-py`](https://pypi.org/project/exa-py/) SDK. Owner-configurable: `num_results`, `type` (auto/fast/deep-lite/deep/deep-reasoning), `include_domains`, `exclude_domains`, date filters. Requires `[p]set api exa api_key,YOUR_KEY`.
+  - `serper` — Serper.dev Google search (existing backend, no configurable params). Requires `[p]set api serper api_key,APIKEY`.
+- **Commands**: `[p]aiuser functions web_search` (toggle), `web_search_backend <exa|serper>`, `web_search_config <json>`
+
+#### `web_fetch` (generic)
+- **File**: [`functions/web_fetch/tool_call.py`](../aiuser/functions/web_fetch/tool_call.py)
+- **Schema**: Takes only `urls` (array of strings). All other parameters configured by owner.
+- **Backends**:
+  - `exa` — Uses `exa-py` SDK's `exa.get_contents()`. Owner-configurable: `text` (bool), `summary` (bool). Requires Exa API key.
+  - `scrape` — Direct scraping via `trafilatura` (existing backend, no configurable params).
+- **Commands**: `[p]aiuser functions web_fetch` (toggle), `web_fetch_backend <exa|scrape>`, `web_fetch_config <json>`
+
+#### `web_answer` (generic)
+- **File**: [`functions/web_answer/tool_call.py`](../aiuser/functions/web_answer/tool_call.py)
+- **Schema**: Takes only `question` (string). All other parameters configured by owner.
+- **Backends**:
+  - `exa` — Uses `exa-py` SDK's `exa.answer()`. Returns answer with numbered citations. Owner-configurable: `text` (bool — include full citation text). Requires Exa API key.
+- **Commands**: `[p]aiuser functions web_answer` (toggle), `web_answer_backend <exa>`, `web_answer_config <json>`
+
+#### `open_url` ⚠️ DEPRECATED
 - **Files**: [`functions/scrape/tool_call.py`](../aiuser/functions/scrape/tool_call.py), [`functions/scrape/scrape.py`](../aiuser/functions/scrape/scrape.py)
 - **Backend**: `trafilatura` + `BeautifulSoup` for web scraping
+- **Superseded by**: [`web_fetch`](#web_fetch-generic) with `scrape` backend
 
-#### `search_google`
+#### `search_google` ⚠️ DEPRECATED
 - **Files**: [`functions/search/tool_call.py`](../aiuser/functions/search/tool_call.py), [`functions/search/query.py`](../aiuser/functions/search/query.py)
 - **Backend**: Serper API
+- **Superseded by**: [`web_search`](#web_search-generic) with `serper` backend
 
 #### `get_weather`
 - **Files**: [`functions/weather/tool_call.py`](../aiuser/functions/weather/tool_call.py), [`functions/weather/query.py`](../aiuser/functions/weather/query.py)
@@ -108,9 +133,11 @@ These are NOT `ToolCall` subclasses. They are dict structures passed to the LLM 
 | Tool | File | Type Value | Config Flag |
 |------|------|------------|-------------|
 | [`OpenRouterWebSearch`](../aiuser/functions/openrouter/web_search.py) | `"openrouter:web_search"` | `openrouter_web_search_enabled` |
-| [`OpenRouterWebFetch`](../aiuser/functions/openrouter/web_fetch.py) | `"openrouter:web_fetch"` | `openrouter_web_fetch_enabled` |
+| [`OpenRouterWebFetch`](../aiuser/functions/openrouter/web_fetch.py) ⚠️ | `"openrouter:web_fetch"` | `openrouter_web_fetch_enabled` |
 | [`OpenRouterImageGeneration`](../aiuser/functions/openrouter/image_generation.py:21) | `"openrouter:image_generation"` | `openrouter_image_generation_enabled` |
 | [`OpenRouterPdfParsing`](../aiuser/functions/openrouter/pdf_parsing.py) | PDF parsing plugins | `openrouter_pdf_parsing_enabled` |
+
+> ⚠️ **Deprecated**: `or_web_search` and `or_web_fetch` are deprecated in favor of the generic [`web_search`](#web_search-generic) and [`web_fetch`](#web_fetch-generic) functions which support both OpenRouter server-side execution (via `exa` backend) and local backends. The old toggle commands auto-migrate settings to the new system on cog load.
 | [`OpenRouterImageParsing`](../aiuser/functions/openrouter/image_parsing.py) | Server-side image analysis | `openrouter_image_parsing_enabled` |
 
 ### 3.1 OpenRouter Tool Structure
@@ -151,6 +178,22 @@ When web search/fetch are enabled, the system appends [`OPENROUTER_CITATION_INST
 | `add` | Enable specific functions |
 | `remove` | Disable specific functions |
 | `location` | Set default lat/lng for weather tool |
+| `web_search` | Toggle generic web search |
+| `web_search_backend <exa\|serper>` | Set web search backend |
+| `web_search_config <json>` | Configure web search parameters |
+| `web_fetch` | Toggle generic web fetch |
+| `web_fetch_backend <exa\|scrape>` | Set web fetch backend |
+| `web_fetch_config <json>` | Configure web fetch parameters |
+| `web_answer` | Toggle generic web answer |
+| `web_answer_backend <exa>` | Set web answer backend |
+| `web_answer_config <json>` | Configure web answer parameters |
+| `search` ⚠️ | Deprecated — auto-migrates to `web_search` with `serper` backend |
+| `scrape` ⚠️ | Deprecated — auto-migrates to `web_fetch` with `scrape` backend |
+| `or_web_search` ⚠️ | Deprecated — auto-migrates to `web_search` with `exa` backend |
+| `or_web_fetch` ⚠️ | Deprecated — auto-migrates to `web_fetch` with `exa` backend |
 | OpenRouter subcommands | Configure web search, web fetch, image gen, PDF parsing parameters |
+
+> **API Key Setup**: For Exa backends, set your API key with `[p]set api exa api_key,YOUR_KEY`
+> For Serper.dev, use `[p]set api serper api_key,APIKEY`
 
 Default location: `[49.24966, -123.11934]` (Vancouver, BC)
