@@ -487,45 +487,13 @@ class MessagesList:
         embed.description = f"{users}\nPlease choose whether to allow a subset of your Discord messages from any server with the bot, to be sent to OpenAI or an external party.\nThis will allow the bot to reply to your messages or use your messages.\nThis message will disappear if all current chatters have made a choice."
         await self.init_message.channel.send(embed=embed, view=view)
 
-    def _last_system_prefix_index(self) -> int:
-        """Return the index of the last contiguous system message at the
-        start of the message list, or -1 if there are none."""
-        last = -1
-        for i, msg in enumerate(self.messages):
-            if msg.role == "system":
-                last = i
-            else:
-                break
-        return last
-
     def get_json(self, annotations_for_assistant: list = None):
-        # Determine which system message (if any) should carry the
-        # cache_control breakpoint — only the last contiguous system
-        # message at the start of the conversation.
-        cache_idx = self._last_system_prefix_index()
-
         messages_as_dict = []
         for i, message in enumerate(self.messages):
             msg_dict = {
                 "role": message.role,
                 "content": message.content,
             }
-
-            # Add cache_control to the stable system instruction for prompt
-            # caching (Anthropic, Alibaba, etc.).  Only the last system
-            # message in the leading contiguous block gets the breakpoint —
-            # this is the largest cacheable prefix and avoids wasting one
-            # of the provider's limited breakpoint slots on smaller
-            # fragments.  Providers that don't recognise the field (OpenAI,
-            # Gemini with implicit caching) simply ignore it.
-            if i == cache_idx and isinstance(message.content, str):
-                msg_dict["content"] = [
-                    {
-                        "type": "text",
-                        "text": message.content,
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ]
 
             if hasattr(message, 'name') and message.name:
                 msg_dict["name"] = message.name
