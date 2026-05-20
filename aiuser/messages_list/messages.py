@@ -2,7 +2,7 @@ import json
 import logging
 import random
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import List, Optional, Union
 import re
 
 import discord
@@ -255,12 +255,23 @@ class MessagesList:
         else:
             await self._add_tokens(content)
 
-    async def add_tool_result(self, content: str,  tool_call_id: int, name: str = None, index: int = None):
+    async def add_tool_result(self, content: Union[str, list], tool_call_id: int, name: str = None, index: int = None):
+        """Add a tool result message. Content may be a plain string or a list
+        of content parts (text + image_url) for multimodal function responses."""
         if self.tokens > self.token_limit:
             return
-        entry = MessageEntry("tool", content, tool_call_id=tool_call_id, name = name)
+        entry = MessageEntry("tool", content, tool_call_id=tool_call_id, name=name)
         self.messages.insert(index or 0, entry)
-        await self._add_tokens(content)
+        if isinstance(content, list):
+            for item in content:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("type") == "text":
+                    await self._add_tokens(item.get("text"))
+                elif item.get("type") == "image_url":
+                    self.tokens += 756  # matches estimate in add_assistant()
+        else:
+            await self._add_tokens(content)
 
     async def add_history(self):
         limit = await self.config.guild(self.guild).messages_backread()

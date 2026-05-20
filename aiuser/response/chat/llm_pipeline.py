@@ -502,21 +502,16 @@ class LLMPipeline:
         logger.info(f"DEBUG[phase2]: local_tool_calls={[tc.function.name for tc in local_tool_calls]}, "
                      f"openrouter_tool_calls={[tc.function.name for tc in openrouter_tool_calls]}")
 
-        # Execute local tools
+        # Execute local tools.
+        # Images from image-generating tools are collected and embedded
+        # directly in tool results as multimodal content parts inside
+        # _process_and_add_tool_results (per Gemini 3.5 Flash guidance:
+        # "include multimodal content inside the function response, not
+        # outside it").
         if local_tool_calls:
             logger.info(f"DEBUG[phase2]: Executing {len(local_tool_calls)} local tool(s)...")
             await self._process_and_add_tool_results(local_tool_calls)
             logger.info("DEBUG[phase2]: Local tool execution completed")
-
-            # Collect generated/edited images from tool executions
-            for tc in local_tool_calls:
-                for tool_obj in self.enabled_tools:
-                    if tool_obj.function_name == tc.function.name and (
-                        isinstance(tool_obj, GenerateImageToolCall) or isinstance(tool_obj, EditImageToolCall)
-                    ):
-                        tool_images = tool_obj.get_generated_images()
-                        if tool_images:
-                            self.collected_images.extend(tool_images)
         else:
             logger.info("DEBUG[phase2]: No local tools to execute")
 
@@ -532,25 +527,6 @@ class LLMPipeline:
                     tool_call_id=tc.id,
                     content=f"OpenRouter server-side tool '{tc.function.name}' was executed. "
                             f"The results have been incorporated into the conversation history by OpenRouter.",
-                    index=len(self.msg_list) + 1
-                )
-
-        # Inject generated images into msg_list for same-turn vision context
-        # This lets the LLM "see" what it just generated in phase 2
-        if self.collected_images and self.model in VISION_SUPPORTED_MODELS:
-            image_content_parts = []
-            for img_data in self.collected_images:
-                data_url = img_data.get("data_url")
-                if data_url:
-                    image_content_parts.append({"type": "image_url", "image_url": {"url": data_url}})
-            if image_content_parts:
-                # Add a text part describing the image generation
-                image_content_parts.append({
-                    "type": "text",
-                    "text": "System: Above are the image(s) I just generated and sent to the user.",
-                })
-                await self.msg_list.add_assistant(
-                    content=image_content_parts,
                     index=len(self.msg_list) + 1
                 )
 
@@ -662,6 +638,19 @@ class LLMPipeline:
         final_text, final_reasoning, images = await self.phase2()
         return self.completion, self.reasoning
 
+    def _collect_images_from_tool(self, tool_function_name: str) -> List[Dict]:
+        """Collect generated/edited images from an image-producing tool.
+
+        Returns the list of image dicts (and clears the tool's internal list),
+        or an empty list if the tool is not an image-producing tool.
+        """
+        for tool_obj in self.enabled_tools:
+            if tool_obj.function_name == tool_function_name and (
+                isinstance(tool_obj, GenerateImageToolCall) or isinstance(tool_obj, EditImageToolCall)
+            ):
+                return tool_obj.get_generated_images()
+        return []
+
     async def _process_and_add_tool_results(self, tool_calls: List[ChatCompletionMessageToolCall]):
         async def process_single_tool(tool_call):
             tool_function_name = tool_call.function.name
@@ -682,6 +671,21 @@ class LLMPipeline:
         results = await asyncio.gather(*tasks, return_exceptions=True)
         logger.info(f"DEBUG[_process_and_add_tool_results]: asyncio.gather completed. Results count={len(results)}")
         for tool_call_id, tool_function_name, tool_result_content in results:
+            # Collect images from image-generating tools and embed them
+            # directly in the tool result (multimodal function response).
+            # Per Gemini 3.5 Flash guidance: "include multimodal content
+            # inside the function response, not outside it."
+            tool_images = self._collect_images_from_tool(tool_function_name)
+            if tool_images:
+                content_parts = []
+                for img in tool_images:
+                    data_url = img.get("data_url")
+                    if data_url:
+                        content_parts.append({"type": "image_url", "image_url": {"url": data_url}})
+                        self.collected_images.append(img)
+                content_parts.append({"type": "text", "text": tool_result_content})
+                tool_result_content = content_parts
+                logger.info(f"Embedded {len(tool_images)} image(s) in tool result for '{tool_function_name}'")
             await self.msg_list.add_tool_result(
                 name=tool_function_name, tool_call_id=tool_call_id, content=tool_result_content, index=len(self.msg_list) + 1
             )
