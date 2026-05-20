@@ -111,9 +111,6 @@ class MessagesList:
                 )
                 self.token_limit = model_limit
 
-        if not prompt and not skip_init_msg:
-            await self.add_msg(self.init_message)
-
         # 1. Get the user-defined persona (e.g., "You are a helpful assistant...")
         raw_persona = prompt or await self._pick_prompt()
         self._raw_persona = raw_persona
@@ -140,10 +137,14 @@ class MessagesList:
         if self.prefill:
             await self._add_tokens(self.prefill)
 
-        # 4. Add the combined system prompt
+        # 4. Add the combined system prompt FIRST — always at index 0
         await self.add_system(final_system_prompt)
 
-        # 5. Build dynamic context (time, author, etc.) for later insertion
+        # 5. Add the init (triggering) message AFTER the system prompt
+        if not prompt and not skip_init_msg:
+            await self.add_msg(self.init_message, index=1)
+
+        # 6. Build dynamic context (time, author, etc.) for later insertion
         #    as a trailing user message after history is loaded.
         self._dynamic_context = await build_dynamic_context_message(
             self.ctx, raw_persona
@@ -269,11 +270,13 @@ class MessagesList:
         if not converted:
             return
 
+        insert_at = 0 if index is None else index
+
         for entry in converted:
             if self.tokens > self.token_limit:
                 return
 
-            self.messages.insert(index or 0, entry)
+            self.messages.insert(insert_at, entry)
             self.messages_ids.add(message.id)
 
             if isinstance(entry.content, list):
@@ -289,20 +292,22 @@ class MessagesList:
 
         # TODO: proper reply chaining
         if message.reference and isinstance(message.reference.resolved, discord.Message) and message.author.id != self.bot.user.id:
-            await self.add_msg(message.reference.resolved, index=0)
+            await self.add_msg(message.reference.resolved, index=insert_at)
 
     async def add_system(self, content: str, index: int = None):
         if self.tokens > self.token_limit:
             return
         entry = MessageEntry("system", content)
-        self.messages.insert(index or 0, entry)
+        insert_at = 0 if index is None else index
+        self.messages.insert(insert_at, entry)
         await self._add_tokens(content)
 
     async def add_assistant(self, content: str, index: int = None, tool_calls: list = [], reasoning_details: list = None):
         if self.tokens > self.token_limit:
             return
         entry = MessageEntry("assistant", content, tool_calls=tool_calls, reasoning_details=reasoning_details)
-        self.messages.insert(index or 0, entry)
+        insert_at = 0 if index is None else index
+        self.messages.insert(insert_at, entry)
         if isinstance(content, list):
             for item in content:
                 if not isinstance(item, dict):
@@ -320,7 +325,8 @@ class MessagesList:
         if self.tokens > self.token_limit:
             return
         entry = MessageEntry("tool", content, tool_call_id=tool_call_id, name=name)
-        self.messages.insert(index or 0, entry)
+        insert_at = 0 if index is None else index
+        self.messages.insert(insert_at, entry)
         if isinstance(content, list):
             for item in content:
                 if not isinstance(item, dict):

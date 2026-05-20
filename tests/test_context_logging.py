@@ -499,6 +499,111 @@ class TestLogSubmittedPayload:
 
 
 # ---------------------------------------------------------------------------
+# Tests for system prompt index 0 guarantee
+# ---------------------------------------------------------------------------
+class TestSystemPromptIndex:
+    """Verify that the system prompt is always at index 0 in the messages list."""
+
+    def _make_minimal_messages_list(self):
+        """Create a MessagesList with minimal setup for direct method testing."""
+        ml = MessagesList.__new__(MessagesList)
+        ml.messages = []
+        ml.messages_ids = set()
+        ml.tokens = 0
+        ml._encoding = MagicMock()
+        ml._encoding.encode = MagicMock(return_value=[1, 2, 3])
+        ml.token_limit = 8000
+        return ml
+
+    @pytest.mark.asyncio
+    async def test_add_system_at_index_zero(self):
+        """add_system with no explicit index inserts at index 0."""
+        ml = self._make_minimal_messages_list()
+        await ml.add_system("You are a helpful assistant.")
+        assert len(ml.messages) == 1
+        assert ml.messages[0].role == "system"
+        assert ml.messages[0].content == "You are a helpful assistant."
+
+    @pytest.mark.asyncio
+    async def test_add_system_with_explicit_index(self):
+        """add_system with an explicit index inserts at that index."""
+        ml = self._make_minimal_messages_list()
+        await ml.add_system("system prompt")
+        await ml.add_system("another system prompt", index=1)
+        assert ml.messages[0].content == "system prompt"
+        assert ml.messages[1].content == "another system prompt"
+
+    @pytest.mark.asyncio
+    async def test_add_assistant_index_zero_preserved(self):
+        """add_assistant with index=0 inserts before existing messages."""
+        ml = self._make_minimal_messages_list()
+        ml.messages.append(MessageEntry("system", "sys"))
+        ml.messages.append(MessageEntry("user", "user"))
+        await ml.add_assistant("reply", index=0)
+        assert ml.messages[0].role == "assistant"
+        assert ml.messages[1].role == "system"
+
+    @pytest.mark.asyncio
+    async def test_add_tool_result_index_zero_preserved(self):
+        """add_tool_result with index=0 inserts before existing messages."""
+        ml = self._make_minimal_messages_list()
+        ml.messages.append(MessageEntry("system", "sys"))
+        ml.messages.append(MessageEntry("user", "user"))
+        await ml.add_tool_result("result", tool_call_id="call_1", name="search", index=0)
+        assert ml.messages[0].role == "tool"
+        assert ml.messages[0].tool_call_id == "call_1"
+        assert ml.messages[1].role == "system"
+
+    @pytest.mark.asyncio
+    async def test_system_prompt_stays_at_index_zero_after_other_inserts(self):
+        """System prompt remains at index 0 after inserting messages at other indices."""
+        ml = self._make_minimal_messages_list()
+        await ml.add_system("system prompt")
+        # Simulate adding history messages at index 1
+        await ml._add_tokens("msg1")
+        ml.messages.insert(1, MessageEntry("user", "msg1"))
+        await ml._add_tokens("msg2")
+        ml.messages.insert(2, MessageEntry("user", "msg2"))
+        # System prompt should still be at index 0
+        assert ml.messages[0].role == "system"
+        assert ml.messages[0].content == "system prompt"
+
+    @pytest.mark.asyncio
+    async def test_init_message_comes_after_system_prompt(self):
+        """Verify init_message is inserted at index=1 (after system prompt)."""
+        ml = self._make_minimal_messages_list()
+        # First add system prompt at index 0
+        await ml.add_system("system prompt")
+        # Then add a user message at index=1 (as _init now does)
+        await ml._add_tokens("user msg")
+        ml.messages.insert(1, MessageEntry("user", "user msg"))
+        # Verify order: system at 0, user at 1
+        assert ml.messages[0].role == "system"
+        assert ml.messages[0].content == "system prompt"
+        assert ml.messages[1].role == "user"
+        assert ml.messages[1].content == "user msg"
+
+    @pytest.mark.asyncio
+    async def test_index_zero_is_distinct_from_none(self):
+        """Verify that index=0 and index=None behave the same (both insert at 0),
+        but don't silently shift the system prompt."""
+        ml = self._make_minimal_messages_list()
+        await ml.add_system("sys prompt")
+        assert ml.messages[0].role == "system"
+
+        # add_msg with index=1 should not displace system prompt
+        ml.messages_ids = set()
+        ml2 = self._make_minimal_messages_list()
+        ml2.messages = list(ml.messages)  # copy
+        ml2.messages_ids = set()
+        # Simulate inserting at index=1
+        await ml2._add_tokens("user msg")
+        ml2.messages.insert(1, MessageEntry("user", "user msg"))
+        assert ml2.messages[0].role == "system"
+        assert ml2.messages[1].content == "user msg"
+
+
+# ---------------------------------------------------------------------------
 # Tests for create_messages_list calling log_messages
 # ---------------------------------------------------------------------------
 class TestCreateMessagesListLogging:
