@@ -326,6 +326,93 @@ class LLMPipeline:
     # ------------------------------------------------------------------    
     # API call
     # ------------------------------------------------------------------
+    @staticmethod
+    def _summarize_content_for_log(content, max_text_len: int = 500) -> str:
+        """Return a truncated/summarized representation of message content for logging."""
+        if isinstance(content, str):
+            if len(content) <= max_text_len:
+                return content
+            return content[:max_text_len] + f"... [truncated, {len(content)} chars total]"
+        elif isinstance(content, list):
+            parts = []
+            for item in content:
+                if not isinstance(item, dict):
+                    parts.append(str(item))
+                    continue
+                item_type = item.get("type", "unknown")
+                if item_type == "text":
+                    text = item.get("text", "")
+                    if len(text) > max_text_len:
+                        text = text[:max_text_len] + f"... [{len(text)} chars]"
+                    parts.append(f"text: {text!r}")
+                elif item_type == "image_url":
+                    url = item.get("image_url", {}).get("url", "")
+                    if url.startswith("data:"):
+                        parts.append(f"image_url: <base64 data, {len(url)} chars>")
+                    else:
+                        parts.append(f"image_url: {url!r}")
+                else:
+                    parts.append(f"{item_type}: {str(item)[:200]}")
+            return "[" + ", ".join(parts) + "]"
+        else:
+            return str(content)[:max_text_len]
+
+    def _log_submitted_payload(self, model: str, messages_json: list, user_digest: str, localKwargs: dict):
+        """Log the full submitted payload (messages + kwargs) at DEBUG level.
+
+        Logs a summary at INFO level and the complete per-message detail
+        at DEBUG level so operators can inspect the exact data sent to the LLM API.
+        """
+        channel_id = self.ctx.channel.id
+        guild_id = self.ctx.guild.id if self.ctx.guild else "DM"
+
+        # Sanitize kwargs for logging: remove large/sensitive extra_body fields
+        kwargs_for_log = copy.deepcopy(localKwargs)
+        if 'extra_body' in kwargs_for_log and isinstance(kwargs_for_log['extra_body'], dict):
+            extra = kwargs_for_log['extra_body']
+            # Don't log safetySettings or session_id — they are boilerplate
+            extra.pop('safetySettings', None)
+            extra.pop('session_id', None)
+
+        # Sanitize messages for logging: truncate large image data URLs
+        messages_for_log = []
+        for msg in messages_json:
+            msg_copy = {}
+            for k, v in msg.items():
+                if k == "content":
+                    msg_copy[k] = self._summarize_content_for_log(v)
+                else:
+                    msg_copy[k] = v
+            messages_for_log.append(msg_copy)
+
+        logger.info(
+            "=== Submitted Payload Start === model=%s channel=%s guild=%s user=%s messages=%d kwargs=%s ===",
+            model, channel_id, guild_id, user_digest[:12],
+            len(messages_json),
+            json.dumps(kwargs_for_log, default=str, ensure_ascii=False),
+        )
+
+        if logger.isEnabledFor(logging.DEBUG):
+            for i, msg in enumerate(messages_for_log):
+                extra_parts = []
+                if "tool_calls" in msg:
+                    tc_names = []
+                    for tc in msg["tool_calls"]:
+                        if isinstance(tc, dict):
+                            tc_names.append(tc.get("function", {}).get("name", "?"))
+                        else:
+                            tc_names.append(str(tc))
+                    extra_parts.append(f"tool_calls={tc_names}")
+                if "tool_call_id" in msg:
+                    extra_parts.append(f"tool_call_id={msg['tool_call_id']}")
+                if "name" in msg:
+                    extra_parts.append(f"name={msg['name']}")
+
+                extras = f" ({', '.join(extra_parts)})" if extra_parts else ""
+                logger.debug("  [%d] role=%s%s content=%s", i, msg.get("role"), extras, msg.get("content"))
+
+        logger.debug("=== Submitted Payload End === model=%s channel=%s ===", model, channel_id)
+
     async def call_client(
         self, kwargs: Dict[str, Any]
     ) -> Tuple[Optional[str], Optional[str], List[ChatCompletionMessageToolCall], Optional[List[Dict]], Optional[Dict]]:
@@ -363,10 +450,8 @@ class LLMPipeline:
         if localKwargs.get('service_tier'):
             localKwargs['extra_body']['service_tier'] = localKwargs['service_tier']
 
-        # DEBUG: Log user_digest computation details
-        logger.info(f"DEBUG[call_client]: ctx.me.id={self.ctx.me.id}, ctx.channel.id={self.ctx.channel.id}, raw_user='{user}', user_digest='{user_digest}'")
-        logger.info(f"DEBUG[call_client]: session_id in extra_body='{localKwargs['extra_body'].get('session_id')}', keys in localKwargs={list(localKwargs.keys())}")
-        logger.info(f"DEBUG[call_client]: 'user' key in localKwargs={'user' in localKwargs}, 'extra_body' keys={list(localKwargs.get('extra_body', {}).keys())}")
+        # Log the full submitted payload (context, messages, kwargs)
+        self._log_submitted_payload(self.model, current_messages_json, user_digest, localKwargs)
 
         logger.info(f"Sending request to LLM (model: {self.model}) with {len(current_messages_json)} messages. Kwarg keys: {list(localKwargs.keys())}")
 

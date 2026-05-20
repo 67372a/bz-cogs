@@ -45,12 +45,14 @@ async def create_messages_list(
         if history:
             await thread.add_backfill_history(backfill_anchor)
         thread._append_dynamic_context()
+        thread.log_messages()
         return thread
 
     await thread._init(prompt=prompt)
     if history:
         await thread.add_history()
     thread._append_dynamic_context()
+    thread.log_messages()
     return thread
 
 
@@ -526,6 +528,91 @@ class MessagesList:
             messages_as_dict.append(prefill_message)
 
         return messages_as_dict
+
+    def _summarize_content(self, content, max_text_len: int = 500) -> str:
+        """Return a truncated/summarized representation of message content for logging."""
+        if isinstance(content, str):
+            if len(content) <= max_text_len:
+                return content
+            return content[:max_text_len] + f"... [truncated, {len(content)} chars total]"
+        elif isinstance(content, list):
+            parts = []
+            for item in content:
+                if not isinstance(item, dict):
+                    parts.append(str(item))
+                    continue
+                item_type = item.get("type", "unknown")
+                if item_type == "text":
+                    text = item.get("text", "")
+                    if len(text) > max_text_len:
+                        text = text[:max_text_len] + f"... [{len(text)} chars]"
+                    parts.append(f"text: {text!r}")
+                elif item_type == "image_url":
+                    url = item.get("image_url", {}).get("url", "")
+                    if url.startswith("data:"):
+                        parts.append(f"image_url: <base64 data, {len(url)} chars>")
+                    else:
+                        parts.append(f"image_url: {url!r}")
+                else:
+                    parts.append(f"{item_type}: {str(item)[:200]}")
+            return "[" + ", ".join(parts) + "]"
+        else:
+            return str(content)[:max_text_len]
+
+    def log_messages(self):
+        """Log the entire built context and message list at DEBUG level.
+
+        Logs a summary line at INFO level and the full per-message detail
+        (role, content preview, tool_calls, etc.) at DEBUG level so operators
+        can inspect exactly what is being sent to the LLM.
+        """
+        if not logger.isEnabledFor(logging.DEBUG):
+            return
+
+        logger.debug(
+            "=== Message List Start === channel=%s guild=%s model=%s tokens=%d/%d messages=%d prefill=%s ===",
+            self.ctx.channel.id,
+            self.ctx.guild.id if self.ctx.guild else "DM",
+            self.model,
+            self.tokens,
+            self.token_limit,
+            len(self.messages),
+            bool(self.prefill),
+        )
+
+        for i, entry in enumerate(self.messages):
+            content_summary = self._summarize_content(entry.content)
+            extra_parts = []
+            if entry.tool_calls:
+                tc_names = []
+                for tc in entry.tool_calls:
+                    name = getattr(tc, "function", None)
+                    if name:
+                        tc_names.append(getattr(name, "name", "?"))
+                    elif isinstance(tc, dict):
+                        tc_names.append(tc.get("function", {}).get("name", "?"))
+                    else:
+                        tc_names.append(str(tc))
+                extra_parts.append(f"tool_calls={tc_names}")
+            if entry.tool_call_id:
+                extra_parts.append(f"tool_call_id={entry.tool_call_id}")
+            if hasattr(entry, "name") and entry.name:
+                extra_parts.append(f"name={entry.name}")
+            if entry.reasoning_details:
+                extra_parts.append(f"reasoning_details={len(entry.reasoning_details)} items")
+
+            extras = f" ({', '.join(extra_parts)})" if extra_parts else ""
+            logger.debug("  [%d] role=%s%s content=%s", i, entry.role, extras, content_summary)
+
+        if self.prefill:
+            prefill_summary = self._summarize_content(self.prefill)
+            logger.debug("  [prefill] role=assistant content=%s", prefill_summary)
+
+        logger.debug(
+            "=== Message List End === channel=%s guild=%s ===",
+            self.ctx.channel.id,
+            self.ctx.guild.id if self.ctx.guild else "DM",
+        )
 
     async def _add_tokens(self, content):
         if not self._encoding:
