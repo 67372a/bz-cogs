@@ -57,6 +57,7 @@ class DirectImageGenerationParameters:
     reasoning_effort: Optional[str] = "medium"  # "low", "medium", "high", or None (API default)
     temperature: Optional[float] = None    # 0.0–2.0, controls randomness
     top_p: Optional[float] = None          # 0.0–1.0, nucleus sampling
+    service_tier: Optional[str] = None     # "flex", "priority", or None (uses dedicated config or API default)
 
 
 @dataclass
@@ -74,6 +75,7 @@ class DirectImageEditParameters:
     reasoning_effort: Optional[str] = "medium"  # "low", "medium", "high", or None (API default)
     temperature: Optional[float] = None    # 0.0–2.0, controls randomness
     top_p: Optional[float] = None          # 0.0–1.0, nucleus sampling
+    service_tier: Optional[str] = None     # "flex", "priority", or None (uses dedicated config or API default)
 
 
 _PARAM_CLASS_MAP = {

@@ -492,6 +492,7 @@ class EditImageToolCall(ToolCall):
         reasoning_effort = params.reasoning_effort
         temperature = params.temperature
         top_p = params.top_p
+        service_tier = params.service_tier
 
         if not model:
             logger.error(
@@ -603,12 +604,22 @@ class EditImageToolCall(ToolCall):
         if top_p is not None:
             api_kwargs["top_p"] = top_p
 
+        # Apply service_tier. Dedicated config takes precedence over per-function
+        # params, matching the pattern in LLMPipeline.get_custom_parameters().
+        dedicated_service_tier = await self.config.guild(self.ctx.guild).service_tier()
+        if dedicated_service_tier is not None:
+            service_tier = dedicated_service_tier
+        if service_tier is not None:
+            api_kwargs["service_tier"] = service_tier
+            extra_body["service_tier"] = service_tier
+
         logger.info(
             f"[EditImage] Editing image for guild {self.ctx.guild.name}: "
             f"model={model}, prompt={prompt[:1000]}{'...' if len(prompt) > 1000 else ''}, "
             f"image_size={image_size}, "
             f"reasoning_effort={reasoning_effort}, "
             f"temperature={temperature}, top_p={top_p}, "
+            f"service_tier={service_tier}, "
             f"source_image={source_image_url[:80]}..., "
             f"reference_images={len(reference_content_parts)}"
         )

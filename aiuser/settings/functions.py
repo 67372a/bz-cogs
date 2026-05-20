@@ -380,9 +380,9 @@ class FunctionCallingSettings(MixinMeta):
         To show current parameters, use `{ctx.clean_prefix}functions generate_image_config show`
 
         Example command:
-        `{ctx.clean_prefix}functions generate_image_config ```json\n{"model": "google/gemini-3.1-flash-image-preview", "image_size": "2K", "reasoning_effort": "medium", "temperature": 0.8, "top_p": 0.95}\n``` `
+        `{ctx.clean_prefix}functions generate_image_config ```json\n{"model": "google/gemini-3.1-flash-image-preview", "image_size": "2K", "reasoning_effort": "medium", "temperature": 0.8, "top_p": 0.95, "service_tier": "flex"}\n``` `
 
-        Valid fields: model, image_size, reasoning_effort, temperature, top_p
+        Valid fields: model, image_size, reasoning_effort, temperature, top_p, service_tier
         """
         await self._handle_or_json_config(
             ctx=ctx,
@@ -395,6 +395,7 @@ class FunctionCallingSettings(MixinMeta):
                 "reasoning_effort": "medium",
                 "temperature": 0.8,
                 "top_p": 0.95,
+                "service_tier": "flex",
             },
             json_block=json_block,
         )
@@ -473,9 +474,9 @@ class FunctionCallingSettings(MixinMeta):
         To show current parameters, use `{ctx.clean_prefix}functions edit_image_config show`
 
         Example command:
-        `{ctx.clean_prefix}functions edit_image_config ```json\n{"model": "google/gemini-3.1-flash-image-preview", "image_size": "2K", "reasoning_effort": "medium", "temperature": 0.8, "top_p": 0.95}\n``` `
+        `{ctx.clean_prefix}functions edit_image_config ```json\n{"model": "google/gemini-3.1-flash-image-preview", "image_size": "2K", "reasoning_effort": "medium", "temperature": 0.8, "top_p": 0.95, "service_tier": "flex"}\n``` `
 
-        Valid fields: model, image_size, reasoning_effort, temperature, top_p
+        Valid fields: model, image_size, reasoning_effort, temperature, top_p, service_tier
         """
         await self._handle_or_json_config(
             ctx=ctx,
@@ -488,6 +489,7 @@ class FunctionCallingSettings(MixinMeta):
                 "reasoning_effort": "medium",
                 "temperature": 0.8,
                 "top_p": 0.95,
+                "service_tier": "flex",
             },
             json_block=json_block,
         )
