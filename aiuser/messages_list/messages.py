@@ -602,11 +602,11 @@ class MessagesList:
                 extra_parts.append(f"reasoning_details={len(entry.reasoning_details)} items")
 
             extras = f" ({', '.join(extra_parts)})" if extra_parts else ""
-            logger.debug("  [%d] role=%s%s content=%s", i, entry.role, extras, content_summary)
+            logger.info("  [%d] role=%s%s content=%s", i, entry.role, extras, content_summary)
 
         if self.prefill:
             prefill_summary = self._summarize_content(self.prefill)
-            logger.debug("  [prefill] role=assistant content=%s", prefill_summary)
+            logger.info("  [prefill] role=assistant content=%s", prefill_summary)
 
         logger.info(
             "=== Message List End === channel=%s guild=%s ===",
