@@ -500,11 +500,6 @@ class LLMPipeline:
     )
     async def _create_completion_with_retry(self, model = None, messages = None, user = None, stream=False, **kwargs) -> ChatCompletion:
         try:
-            # DEBUG: Log user parameter received after tenacity wrapping
-            logger.info(f"DEBUG[_create_completion_with_retry]: user param='{user}', has extra_body={'extra_body' in kwargs}")
-            logger.info(f"DEBUG[_create_completion_with_retry]: kwargs keys={list(kwargs.keys())}")
-            if 'extra_body' in kwargs:
-                logger.info(f"DEBUG[_create_completion_with_retry]: extra_body.session_id='{kwargs['extra_body'].get('session_id')}'")
             result = await self.openai_client.chat.completions.create(model=model, messages=messages, user=user, stream=stream, **kwargs)
             if not result.choices:
                 raise openai.APIError(f"API returned no choices: {result}")
@@ -512,7 +507,7 @@ class LLMPipeline:
             logger.info(f"Finish reason: {result.choices[0].finish_reason}. Native finish reason: {native_finish_reason}")
             return result
         except Exception as e:
-            logging.error(f"Error calling LLM API: {e}")
+            logger.error(f"Error calling LLM API: {e}")
             raise
 
     # ------------------------------------------------------------------    
@@ -552,13 +547,41 @@ class LLMPipeline:
         self._phase1_tool_calls = response_tool_calls
         self._phase1_model_extra = response_model_extra
 
-        # Add to message history
+        # Log phase 1 tool calls with structured detail (id, name, args)
+        if response_tool_calls:
+            logger.info(
+                "Phase 1: Received %d tool call(s) from LLM", len(response_tool_calls)
+            )
+            for tc in response_tool_calls:
+                logger.info(
+                    "Phase 1 tool call: id=%s name=%s args=%s",
+                    tc.id, tc.function.name, tc.function.arguments[:200]
+                )
+        else:
+            logger.info("Phase 1: No tool calls in LLM response")
+
+        # Add to message history — this becomes the "model" turn with functionCalls
         await self.msg_list.add_assistant(
             content=response_text,
             tool_calls=response_tool_calls,
             reasoning_details=response_reasoning_details,
             index=len(self.msg_list) + 1
         )
+
+        # Verify the assistant message was added with correct tool_calls
+        if response_tool_calls:
+            last_entry = self.msg_list.messages[-1] if self.msg_list.messages else None
+            if last_entry and last_entry.tool_calls:
+                for tc in last_entry.tool_calls:
+                    tc_id = getattr(tc, 'id', tc.get('id') if isinstance(tc, dict) else '?')
+                    tc_name = getattr(tc, 'function', None)
+                    tc_name = getattr(tc_name, 'name', '?') if tc_name else (tc.get('function', {}).get('name', '?') if isinstance(tc, dict) else '?')
+                    logger.info(
+                        "Phase 1 context verification: assistant message stores tool_call id=%s name=%s",
+                        tc_id, tc_name
+                    )
+            else:
+                logger.warning("Phase 1 context verification FAILED: assistant message has no tool_calls after add_assistant()")
 
         has_tools = bool(response_tool_calls)
         is_incomplete = self._is_text_incomplete(response_text or "") if has_tools else False
@@ -579,7 +602,7 @@ class LLMPipeline:
         if not self._phase1_done:
             raise RuntimeError("phase2() called before phase1()")
 
-        logger.info("DEBUG[phase2]: Entering phase2")
+        logger.info("Phase 2: Starting tool execution and second LLM call")
 
         custom_kwargs = await self.get_custom_parameters()
         response_text = self._phase1_pre_text
@@ -587,16 +610,21 @@ class LLMPipeline:
         response_tool_calls = self._phase1_tool_calls
         first_call_model_extra = self._phase1_model_extra
 
-        logger.info(f"DEBUG[phase2]: phase1_pre_text length={len(response_text or '')}, "
-                     f"num_tool_calls={len(response_tool_calls)}, "
-                     f"tool_call_names={[tc.function.name for tc in response_tool_calls]}")
+        logger.info(
+            "Phase 2: phase1 pre_text length=%d, num_tool_calls=%d, tool_call_ids=%s",
+            len(response_text or ''), len(response_tool_calls),
+            [(tc.id, tc.function.name) for tc in response_tool_calls]
+        )
 
         # Filter tool calls
         local_tool_calls = [tc for tc in response_tool_calls if not self._is_openrouter_tool_name(tc.function.name)]
         openrouter_tool_calls = [tc for tc in response_tool_calls if self._is_openrouter_tool_name(tc.function.name)]
 
-        logger.info(f"DEBUG[phase2]: local_tool_calls={[tc.function.name for tc in local_tool_calls]}, "
-                     f"openrouter_tool_calls={[tc.function.name for tc in openrouter_tool_calls]}")
+        logger.info(
+            "Phase 2: local_tools=%s, openrouter_tools=%s",
+            [tc.function.name for tc in local_tool_calls],
+            [tc.function.name for tc in openrouter_tool_calls]
+        )
 
         # Execute local tools.
         # Images from image-generating tools are collected and embedded
@@ -605,19 +633,23 @@ class LLMPipeline:
         # "include multimodal content inside the function response, not
         # outside it").
         if local_tool_calls:
-            logger.info(f"DEBUG[phase2]: Executing {len(local_tool_calls)} local tool(s)...")
+            logger.info("Phase 2: Executing %d local tool(s)", len(local_tool_calls))
             await self._process_and_add_tool_results(local_tool_calls)
-            logger.info("DEBUG[phase2]: Local tool execution completed")
+            logger.info("Phase 2: Local tool execution completed")
         else:
-            logger.info("DEBUG[phase2]: No local tools to execute")
+            logger.info("Phase 2: No local tools to execute")
 
         # Add synthetic tool results for OpenRouter server-side tools.
         # Without these, the second LLM call would see an assistant message
         # with unanswered tool_calls — an invalid conversation state that
         # causes some models (especially Gemini) to return empty content.
         if openrouter_tool_calls:
-            logger.info(f"DEBUG[phase2]: Adding synthetic tool results for {len(openrouter_tool_calls)} OpenRouter server tool(s)")
+            logger.info("Phase 2: Adding synthetic tool results for %d OpenRouter server tool(s)", len(openrouter_tool_calls))
             for tc in openrouter_tool_calls:
+                logger.info(
+                    "Phase 2: Adding OpenRouter synthetic result: id=%s name=%s",
+                    tc.id, tc.function.name
+                )
                 await self.msg_list.add_tool_result(
                     name=tc.function.name,
                     tool_call_id=tc.id,
@@ -627,7 +659,7 @@ class LLMPipeline:
                 )
 
         # Phase 2 LLM call
-        logger.info(f"DEBUG[phase2]: Starting second LLM call with {len(self.msg_list)} messages in history")
+        logger.info("Phase 2: Starting second LLM call with %d messages in history", len(self.msg_list))
         kwargs2 = copy.deepcopy(custom_kwargs)
         kwargs2["tools"] = [asdict(schema) for schema in self.available_tools_schemas] + self.openrouter_tools
         kwargs2["tool_choice"] = "none"
@@ -641,10 +673,10 @@ class LLMPipeline:
 
         tool_response_text, tool_reasoning_text, _, tool_response_reasoning_details, tool_response_model_extra = await self.call_client(kwargs2)
 
-        logger.info(f"DEBUG[phase2]: Second LLM call completed. "
-                     f"response_text length={len(tool_response_text or '')}, "
-                     f"has_reasoning={bool(tool_reasoning_text)}, "
-                     f"has_model_extra={bool(tool_response_model_extra)}")
+        logger.info(
+            "Phase 2: Second LLM call completed. response_text length=%d, has_reasoning=%s",
+            len(tool_response_text or ''), bool(tool_reasoning_text)
+        )
 
         await self.msg_list.add_assistant(
             content=tool_response_text,
@@ -698,12 +730,11 @@ class LLMPipeline:
             )
             self.response_parts = [part] if part else []
 
-        logger.info(f"DEBUG[phase2]: Response parts built. "
-                     f"num_parts={len(self.response_parts)}, "
-                     f"is_incomplete={is_incomplete}, "
-                     f"final_text length={len(final_text or '')}, "
-                     f"collected_images={len(self.collected_images)}, "
-                     f"first_part_content length={len(self.response_parts[0].content or '') if self.response_parts else 'N/A'}")
+        logger.info(
+            "Phase 2 complete: num_parts=%d, is_incomplete=%s, final_text_length=%d, images=%d",
+            len(self.response_parts), is_incomplete, len(final_text or ''),
+            len(self.collected_images)
+        )
 
         self.completion = final_text
         self.reasoning = final_reasoning
@@ -751,22 +782,30 @@ class LLMPipeline:
         async def process_single_tool(tool_call):
             tool_function_name = tool_call.function.name
             tool_call_id = tool_call.id
-            logger.info(f"Processing tool call ID {tool_call_id} for function '{tool_function_name}'.")
+            logger.info("Processing tool call: id=%s name=%s", tool_call_id, tool_function_name)
             try:
                 arguments = json.loads(tool_call.function.arguments)
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse JSON arguments for tool {tool_function_name}: {e}")
                 return tool_call_id, tool_function_name, f"Error: Invalid JSON arguments for '{tool_function_name}'."
-            logger.info(f"DEBUG[_process_tool]: Calling run_tool for '{tool_function_name}' with args: {arguments}")
+            logger.info(
+                "Executing tool: id=%s name=%s args=%s",
+                tool_call_id, tool_function_name, json.dumps(arguments, default=str)[:500]
+            )
             result = await self.run_tool(tool_function_name, arguments)
-            logger.info(f"DEBUG[_process_tool]: run_tool for '{tool_function_name}' completed. Result length={len(str(result))}")
+            logger.info("Tool result: id=%s name=%s result_length=%d", tool_call_id, tool_function_name, len(str(result)))
             return tool_call_id, tool_function_name, result
 
-        logger.info(f"DEBUG[_process_and_add_tool_results]: Starting asyncio.gather for {len(tool_calls)} tool(s)")
+        logger.info("Processing %d local tool call(s) in parallel", len(tool_calls))
         tasks = [process_single_tool(tc) for tc in tool_calls]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        logger.info(f"DEBUG[_process_and_add_tool_results]: asyncio.gather completed. Results count={len(results)}")
-        for tool_call_id, tool_function_name, tool_result_content in results:
+        for result in results:
+            # Handle exceptions from asyncio.gather (return_exceptions=True)
+            if isinstance(result, Exception):
+                logger.error("Tool execution raised an unhandled exception: %s", result, exc_info=result)
+                continue
+            tool_call_id, tool_function_name, tool_result_content = result
+
             # Collect images from image-generating tools and embed them
             # directly in the tool result (multimodal function response).
             # Per Gemini 3.5 Flash guidance: "include multimodal content
@@ -782,9 +821,75 @@ class LLMPipeline:
                 content_parts.append({"type": "text", "text": tool_result_content})
                 tool_result_content = content_parts
                 logger.info(f"Embedded {len(tool_images)} image(s) in tool result for '{tool_function_name}'")
+
+            # Add tool result to context — this is the "user" turn with functionResponse
+            # Per Gemini 3.5 Flash: id and name MUST match the preceding functionCall
+            logger.info(
+                "Adding tool result to context: id=%s name=%s content_preview=%s",
+                tool_call_id, tool_function_name,
+                str(tool_result_content)[:200] if isinstance(tool_result_content, str) else f"[{len(tool_result_content)} parts]"
+            )
             await self.msg_list.add_tool_result(
                 name=tool_function_name, tool_call_id=tool_call_id, content=tool_result_content, index=len(self.msg_list) + 1
             )
+
+        # Verify all function calls have matching function responses in context
+        self._verify_tool_call_response_matching()
+
+    def _verify_tool_call_response_matching(self):
+        """Verify that every functionCall has a matching functionResponse in context.
+
+        Per Gemini 3.5 Flash doc:
+        - Every FunctionResponse must include the id from the corresponding FunctionCall
+        - The name in the response must match the name in the call
+        - Return exactly one FunctionResponse for each FunctionCall received
+
+        Logs warnings if any mismatches are found.
+        """
+        messages = self.msg_list.messages
+        # Build maps of tool_calls (from assistant messages) and tool_results (from tool messages)
+        tool_calls_map = {}  # id -> name
+        tool_results_map = {}  # id -> name
+
+        for entry in messages:
+            if entry.role == "assistant" and entry.tool_calls:
+                for tc in entry.tool_calls:
+                    tc_id = getattr(tc, 'id', None)
+                    tc_func = getattr(tc, 'function', None)
+                    tc_name = getattr(tc_func, 'name', None) if tc_func else None
+                    if tc_id and tc_name:
+                        tool_calls_map[tc_id] = tc_name
+            elif entry.role == "tool" and entry.tool_call_id:
+                tool_results_map[entry.tool_call_id] = entry.name
+
+        if not tool_calls_map:
+            return
+
+        # Check 1: Every tool_call has a matching tool_result
+        for tc_id, tc_name in tool_calls_map.items():
+            if tc_id not in tool_results_map:
+                logger.warning(
+                    "Context verification FAILED: tool_call id=%s name=%s has NO matching functionResponse",
+                    tc_id, tc_name
+                )
+            elif tool_results_map[tc_id] != tc_name:
+                logger.warning(
+                    "Context verification FAILED: tool_call id=%s name=%s does NOT match functionResponse name=%s",
+                    tc_id, tc_name, tool_results_map[tc_id]
+                )
+            else:
+                logger.info(
+                    "Context verification OK: tool_call id=%s name=%s has matching functionResponse",
+                    tc_id, tc_name
+                )
+
+        # Check 2: No orphaned tool_results without a matching tool_call
+        for tr_id, tr_name in tool_results_map.items():
+            if tr_id not in tool_calls_map:
+                logger.warning(
+                    "Context verification WARNING: orphaned functionResponse id=%s name=%s with no matching tool_call",
+                    tr_id, tr_name
+                )
 
     async def run_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
         for tool_obj in self.enabled_tools:

@@ -569,8 +569,12 @@ class MessagesList:
         """Log the entire built context and message list at INFO level.
 
         Logs a summary line at INFO level and the full per-message detail
-        (role, content preview, tool_calls, etc.) at DEBUG level so operators
-        can inspect exactly what is being sent to the LLM.
+        (role, content preview, tool_calls, tool_call_id, name) at INFO level
+        so operators can inspect exactly what is being sent to the LLM.
+
+        Also logs tool call → tool result pairing verification per the
+        Gemini 3.5 Flash requirement: every FunctionCall must have a matching
+        FunctionResponse with the same id and name.
         """
         if not logger.isEnabledFor(logging.INFO):
             return
@@ -586,22 +590,26 @@ class MessagesList:
             bool(self.prefill),
         )
 
+        # Track tool_calls and tool_results for pairing verification
+        tool_calls_seen = {}  # id -> (name, index)
+        tool_results_seen = {}  # id -> (name, index)
+
         for i, entry in enumerate(self.messages):
             content_summary = self._summarize_content(entry.content)
             extra_parts = []
             if entry.tool_calls:
-                tc_names = []
+                tc_details = []
                 for tc in entry.tool_calls:
-                    name = getattr(tc, "function", None)
-                    if name:
-                        tc_names.append(getattr(name, "name", "?"))
-                    elif isinstance(tc, dict):
-                        tc_names.append(tc.get("function", {}).get("name", "?"))
-                    else:
-                        tc_names.append(str(tc))
-                extra_parts.append(f"tool_calls={tc_names}")
+                    tc_id = getattr(tc, 'id', None)
+                    tc_func = getattr(tc, "function", None)
+                    tc_name = getattr(tc_func, "name", "?") if tc_func else (tc.get("function", {}).get("name", "?") if isinstance(tc, dict) else "?")
+                    tc_details.append(f"{tc_name}(id={tc_id})")
+                    if tc_id:
+                        tool_calls_seen[tc_id] = (tc_name, i)
+                extra_parts.append(f"tool_calls={tc_details}")
             if entry.tool_call_id:
                 extra_parts.append(f"tool_call_id={entry.tool_call_id}")
+                tool_results_seen[entry.tool_call_id] = (entry.name, i)
             if hasattr(entry, "name") and entry.name:
                 extra_parts.append(f"name={entry.name}")
             if entry.reasoning_details:
@@ -613,6 +621,40 @@ class MessagesList:
         if self.prefill:
             prefill_summary = self._summarize_content(self.prefill)
             logger.info("  [prefill] role=assistant content=%s", prefill_summary)
+
+        # Verify tool call → tool result pairing
+        if tool_calls_seen:
+            logger.info("=== Tool Call/Result Pairing Verification ===")
+            all_matched = True
+            for tc_id, (tc_name, tc_idx) in tool_calls_seen.items():
+                if tc_id in tool_results_seen:
+                    tr_name, tr_idx = tool_results_seen[tc_id]
+                    if tr_name == tc_name:
+                        logger.info(
+                            "  MATCH: tool_call[%d] id=%s name=%s → tool_result[%d] id=%s name=%s",
+                            tc_idx, tc_id, tc_name, tr_idx, tc_id, tr_name
+                        )
+                    else:
+                        all_matched = False
+                        logger.warning(
+                            "  MISMATCH: tool_call[%d] id=%s name=%s → tool_result[%d] id=%s name=%s (NAMES DIFFER!)",
+                            tc_idx, tc_id, tc_name, tr_idx, tc_id, tr_name
+                        )
+                else:
+                    all_matched = False
+                    logger.warning(
+                        "  MISSING: tool_call[%d] id=%s name=%s has NO matching tool_result",
+                        tc_idx, tc_id, tc_name
+                    )
+            for tr_id, (tr_name, tr_idx) in tool_results_seen.items():
+                if tr_id not in tool_calls_seen:
+                    all_matched = False
+                    logger.warning(
+                        "  ORPHAN: tool_result[%d] id=%s name=%s has NO matching tool_call",
+                        tr_idx, tr_id, tr_name
+                    )
+            if all_matched:
+                logger.info("  All tool calls have matching tool results with correct id and name")
 
         logger.info(
             "=== Message List End === channel=%s guild=%s ===",
