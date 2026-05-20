@@ -572,6 +572,89 @@ class TestMultimodalToolResultIntegration:
         assert "15°C" in result[3]["content"]
 
 
+# ===================================================================
+# Tests for cache_control on system messages
+# ===================================================================
+
+class TestCacheControlSystemMessage:
+    """get_json() should add cache_control to system messages for prompt caching."""
+
+    @pytest.mark.asyncio
+    async def test_system_message_has_cache_control(self):
+        ml = _make_messages_list()
+        await ml.add_system("You are a helpful assistant.", index=1)
+        result = ml.get_json()
+        assert len(result) == 1
+        msg = result[0]
+        assert msg["role"] == "system"
+        assert isinstance(msg["content"], list)
+        assert len(msg["content"]) == 1
+        part = msg["content"][0]
+        assert part["type"] == "text"
+        assert part["text"] == "You are a helpful assistant."
+        assert part["cache_control"] == {"type": "ephemeral"}
+
+    @pytest.mark.asyncio
+    async def test_system_message_content_wrapped_in_list(self):
+        """System content should be converted from str to list-of-parts."""
+        ml = _make_messages_list()
+        await ml.add_system("System prompt here.", index=1)
+        result = ml.get_json()
+        # Original string content is now wrapped in a content-parts array
+        assert isinstance(result[0]["content"], list)
+        assert result[0]["content"][0]["text"] == "System prompt here."
+
+    @pytest.mark.asyncio
+    async def test_non_system_messages_unchanged(self):
+        """User and assistant messages should NOT get cache_control."""
+        ml = _make_messages_list()
+        await ml.add_system("System.", index=1)
+        await ml.add_msg_result_simulation("user", "Hello", index=2)
+        await ml.add_assistant(content="Hi there!", index=3)
+        result = ml.get_json()
+        # System has cache_control
+        assert result[0]["role"] == "system"
+        assert isinstance(result[0]["content"], list)
+        assert result[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
+        # User and assistant do NOT
+        assert result[1]["role"] == "user"
+        assert isinstance(result[1]["content"], str)
+        assert result[2]["role"] == "assistant"
+        assert isinstance(result[2]["content"], str)
+
+    @pytest.mark.asyncio
+    async def test_only_last_contiguous_system_gets_cache_control(self):
+        """Only the last system message in the leading contiguous block gets cache_control."""
+        ml = _make_messages_list()
+        # Insert in order: [system1, system2] at the start
+        await ml.add_system("First system prompt.", index=1)
+        await ml.add_system("Second system prompt.", index=1)
+        result = ml.get_json()
+        # The first system message (index 0) should NOT have cache_control
+        assert result[0]["role"] == "system"
+        assert isinstance(result[0]["content"], str)
+        # The second system message (index 1, last contiguous) SHOULD have it
+        assert result[1]["role"] == "system"
+        assert isinstance(result[1]["content"], list)
+        assert result[1]["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+    @pytest.mark.asyncio
+    async def test_later_system_messages_no_cache_control(self):
+        """System messages after non-system messages should NOT get cache_control."""
+        ml = _make_messages_list()
+        await ml.add_system("System prompt.", index=1)
+        await ml.add_msg_result_simulation("user", "Hello", index=2)
+        await ml.add_system("Late system injection.", index=3)
+        result = ml.get_json()
+        # First system (index 0) gets cache_control
+        assert result[0]["role"] == "system"
+        assert isinstance(result[0]["content"], list)
+        assert result[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
+        # Late system (index 2) does NOT
+        assert result[2]["role"] == "system"
+        assert isinstance(result[2]["content"], str)
+
+
 # ---------------------------------------------------------------------------
 # Helper to add "raw" user/assistant entries directly (bypassing Discord
 # message conversion) for test setup.
