@@ -125,10 +125,12 @@ class MessagesList:
         # We add a double newline to separate the personality from the technical instructions
         final_system_prompt = f"{formatted_persona}\n\n{XML_SYSTEM_PROMPT_APPENDIX}"
 
-        # 3b. Append OpenRouter citation instructions if web search/fetch tools are enabled
-        search_enabled = await self.config.guild(self.guild).web_search_enabled()
-        fetch_enabled = await self.config.guild(self.guild).web_fetch_enabled()
-        if search_enabled or fetch_enabled:
+        # 3b. Append citation instructions if any web search/fetch/answer tools are enabled
+        search_enabled = await self.config.guild(self.guild).openrouter_web_search_enabled()
+        fetch_enabled = await self.config.guild(self.guild).openrouter_web_fetch_enabled()
+        enabled_functions = await self.config.guild(self.guild).function_calling_functions()
+        has_direct_web_tools = bool({"web_search", "web_fetch", "web_answer"} & set(enabled_functions))
+        if search_enabled or fetch_enabled or has_direct_web_tools:
             final_system_prompt += f"\n\n{CITATION_INSTRUCTIONS}"
 
         self.prefill = await self._pick_prefill()
