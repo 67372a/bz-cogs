@@ -5,7 +5,7 @@ import io
 import json
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import aiohttp
 import discord
@@ -60,11 +60,10 @@ class GenerateImageToolCall(ToolCall):
         function=Function(
             name="generate_image",
             description=(
-                "Executes a complete, one-shot AI image generation request. "
+                "Executes a complete, one-shot image generation request. "
                 "Trigger this tool whenever the user expresses an intent to create, draw, "
                 "or visualize an image, illustration, diagram, or photograph. Structure the "
-                "request to be comprehensively detailed on the first attempt, capturing "
-                "the complete scope of the user's vision."
+                "request to be comprehensively detailed on the first attempt."
             ),
             parameters=Parameters(
                 properties={
@@ -76,8 +75,8 @@ class GenerateImageToolCall(ToolCall):
                             "Clearly state the overarching intent and context of the image. "
                             "For complex compositions, utilize step-by-step spatial or temporal descriptions "
                             "to place elements. Emphasize all desired elements using clear, affirmative phrasing. "
-                            "When textual elements are required, wrap the exact text in quotes and specify "
-                            "the typographic style. Dictate precise photographic terminology, camera setups, "
+                            "When textual elements are required, wrap the exact text in quotes "
+                            "Dictate precise photographic terminology, camera setups, "
                             "or artistic mediums to establish the definitive aesthetic, lighting, and mood."
                         ),
                     },
@@ -90,10 +89,7 @@ class GenerateImageToolCall(ToolCall):
                         ],
                         "description": (
                             "The optimal aspect ratio for the generated image. Select the configuration "
-                            "that perfectly aligns with the requested medium or spatial orientation. "
-                            "Options span standard dimensions such as '16:9' for widescreen or '1:1' for "
-                            "square, extending to specialized vertical or horizontal formats like '9:16', "
-                            "and extreme dimensions like '4:1' or '1:8'."
+                            "that aligns with the requested medium or spatial orientation."
                         ),
                     },
                     "reference_messages": {
@@ -105,9 +101,7 @@ class GenerateImageToolCall(ToolCall):
                             "(e.g. https://discord.com/channels/guild_id/channel_id/message_id) "
                             "providing visual references. Supply these when the requested generation "
                             "relies on existing external imagery. Utilize these references to establish "
-                            "definitive object fidelity, structural parameters, or character consistency. "
-                            "The system automatically deduplicates URLs and processes up to 14 distinct "
-                            "reference images to guide the final generation."
+                            "definitive object fidelity, structural parameters, or character consistency."
                         ),
                     },
                 },
@@ -377,7 +371,7 @@ class GenerateImageToolCall(ToolCall):
 
         return content_parts
 
-    async def _handle(self, arguments: Dict[str, Any]) -> str:
+    async def _handle(self, arguments: Dict[str, Any]) -> Union[str, List[Dict]]:
         """Execute the image generation via direct OpenRouter API call.
 
         Reads preconfigured model + image_size from guild config, uses the
@@ -385,12 +379,18 @@ class GenerateImageToolCall(ToolCall):
         images from Discord messages, calls the OpenRouter API, and stores
         the resulting image data for later sending to Discord.
 
+        On success, returns a list of multimodal content parts (image_url
+        parts + text part) per Gemini 3.5 Flash guidance:
+        "include multimodal content inside the function response, not
+        outside it."  On error, returns a plain string.
+
         Args:
             arguments: Dict with 'prompt' (required), 'aspect_ratio' (optional),
                        and 'reference_messages' (optional).
 
         Returns:
-            A confirmation string for the LLM describing what was generated.
+            A list of content parts (multimodal function response) on success,
+            or an error string on failure.
         """
         prompt = arguments.get("prompt", "")
         aspect_ratio = arguments.get("aspect_ratio")
@@ -564,12 +564,23 @@ class GenerateImageToolCall(ToolCall):
                 )
             return "Error: No image was generated. The model may not support image generation or returned an empty response."
 
-        # Decode and store images for later sending by the response layer
+        # Build multimodal function response content parts.
+        # Per Gemini 3.5 Flash guidance: "include multimodal content inside
+        # the function response, not outside it."  The tool itself produces
+        # the complete content parts (image_url + text) so the pipeline can
+        # pass them directly as the tool result.
+        content_parts: List[Dict] = []
+
+        # Decode and store images for later sending by the response layer,
+        # and build image_url content parts for the multimodal function response.
         for image_data_url in images:
             try:
                 decoded = self._decode_image_data(image_data_url)
                 if decoded:
                     self.generated_images.append(decoded)
+                    content_parts.append({
+                        "image": image_data_url,
+                    })
             except Exception as e:
                 logger.error(
                     f"[DirectImageGen] Failed to process image data: {e}"
@@ -585,15 +596,7 @@ class GenerateImageToolCall(ToolCall):
             f"for guild {self.ctx.guild.name}"
         )
 
-        model_info = model.split("/")[-1] if "/" in model else model
-        ratio_info = aspect_ratio or "default"
-        ref_info = f" with {len(reference_content_parts)} reference image(s)" if reference_content_parts else ""
-        return (
-            f"Image generation successful. Generated {len(self.generated_images)} image(s) "
-            f"using model '{model_info}' at aspect ratio '{ratio_info}'{ref_info}. "
-            f"Prompt used: \"{prompt[:200]}{'...' if len(prompt) > 200 else ''}\". "
-            f"The image(s) have been sent to the Discord channel."
-        )
+        return content_parts
 
     def _decode_image_data(self, image_data_url: str) -> Optional[Dict]:
         """Decode a base64 image data URL into image bytes and metadata.

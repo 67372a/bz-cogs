@@ -793,7 +793,8 @@ class LLMPipeline:
                 tool_call_id, tool_function_name, json.dumps(arguments, default=str)[:500]
             )
             result = await self.run_tool(tool_function_name, arguments)
-            logger.info("Tool result: id=%s name=%s result_length=%d", tool_call_id, tool_function_name, len(str(result)))
+            logger.info("Tool result: id=%s name=%s result_length=%d", tool_call_id, tool_function_name,
+                        len(result) if isinstance(result, list) else len(str(result)))
             return tool_call_id, tool_function_name, result
 
         logger.info("Processing %d local tool call(s) in parallel", len(tool_calls))
@@ -806,21 +807,19 @@ class LLMPipeline:
                 continue
             tool_call_id, tool_function_name, tool_result_content = result
 
-            # Collect images from image-generating tools and embed them
-            # directly in the tool result (multimodal function response).
-            # Per Gemini 3.5 Flash guidance: "include multimodal content
-            # inside the function response, not outside it."
-            tool_images = self._collect_images_from_tool(tool_function_name)
-            if tool_images:
-                content_parts = []
+            if isinstance(tool_result_content, list):
+                # Tool already returned multimodal content parts (image_url +
+                # text).  Per Gemini 3.5 Flash guidance: "include multimodal
+                # content inside the function response, not outside it."
+                # The tool has already built the correct structure — use it
+                # directly.  Still collect images for Discord sending.
+                tool_images = self._collect_images_from_tool(tool_function_name)
                 for img in tool_images:
-                    data_url = img.get("data_url")
-                    if data_url:
-                        content_parts.append({"type": "image_url", "image_url": {"url": data_url}})
-                        self.collected_images.append(img)
-                content_parts.append({"type": "text", "text": tool_result_content})
-                tool_result_content = content_parts
-                logger.info(f"Embedded {len(tool_images)} image(s) in tool result for '{tool_function_name}'")
+                    self.collected_images.append(img)
+                logger.info(
+                    "Tool '%s' returned %d multimodal content parts directly",
+                    tool_function_name, len(tool_result_content)
+                )
 
             # Add tool result to context — this is the "user" turn with functionResponse
             # Per Gemini 3.5 Flash: id and name MUST match the preceding functionCall
@@ -891,7 +890,7 @@ class LLMPipeline:
                     tr_id, tr_name
                 )
 
-    async def run_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
+    async def run_tool(self, tool_name: str, arguments: Dict[str, Any]):
         for tool_obj in self.enabled_tools:
             if tool_obj.function_name == tool_name:
                 logger.info(f'Executing tool: "{tool_name}" with args: {arguments}')
@@ -901,6 +900,10 @@ class LLMPipeline:
                     tool_output = await tool_obj.run(arguments_for_tool)
                     if tool_output is None:
                         return f"Tool '{tool_name}' executed successfully with no specific textual result."
+                    # Preserve list returns (multimodal content parts) as-is;
+                    # only convert non-list results to string.
+                    if isinstance(tool_output, list):
+                        return tool_output
                     return str(tool_output)
                 except Exception as e:
                     logger.exception(f"Error during execution of tool '{tool_name}'")

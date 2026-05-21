@@ -5,7 +5,7 @@ import io
 import json
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import aiohttp
 import discord
@@ -66,7 +66,7 @@ class EditImageToolCall(ToolCall):
                 "This is designed for precise edits to existing content - not for generating entirely new images. "
                 "Describe the desired changes to specific areas or attributes of the image, leaving other areas untouched. "
                 "This is a one-shot operation: provide complete, clear instructions for immediate execution. "
-                "All edits should be described in positive terms - what the result should look like, not what to avoid. "
+                "All edits should be described in positive terms - what the result should look like. "
                 "For composite edits, describe the final desired state of the modified areas."
             ),
             parameters=Parameters(
@@ -89,12 +89,9 @@ class EditImageToolCall(ToolCall):
                     "image_to_edit": {
                         "type": "string",
                         "description": (
-                            "The primary image to be modified. Provide as:\n"
-                            "- Direct image URL (preferred format: https://example.com/image.jpg)\n"
-                            "- Discord message ID containing the image\n"
-                            "- Discord message link (https://discord.com/channels/guild_id/channel_id/message_id)\n\n"
-                            "This is the base image that will be transformed according to your prompt instructions. "
-                            "Ensure the image URL is accessible and the image contains the elements you wish to modify."
+                            "The primary image to be modified. Provide as a Direct image URL, Discord message ID containing the image, "
+                            "or a Discord message link (https://discord.com/channels/guild_id/channel_id/message_id). "
+                            "This is the base image that will be transformed according to your prompt instructions."
                         ),
                     },
                     "reference_messages": {
@@ -103,14 +100,10 @@ class EditImageToolCall(ToolCall):
                         "description": (
                             "Optional reference images to guide the editing style or provide visual context. "
                             "Include up to 13 reference images (total image limit: 14 including primary image). "
-                            "Provide each reference as:\n"
-                            "- Direct image URL\n"
-                            "- Discord message ID\n"
-                            "- Discord message link\n\n"
+                            "Provide each reference as a Direct image URL, Discord message ID, or Discord message link "
                             "References can include: style examples, color palettes, texture samples, lighting references, "
                             "or compositional guides. The model will incorporate relevant visual information from references "
-                            "while applying the primary edit instructions to the target image. "
-                            "Duplicate URLs are automatically removed."
+                            "while applying the primary edit instructions to the target image."
                         ),
                     },
                 },
@@ -460,7 +453,7 @@ class EditImageToolCall(ToolCall):
 
         return content_parts
 
-    async def _handle(self, arguments: Dict[str, Any]) -> str:
+    async def _handle(self, arguments: Dict[str, Any]) -> Union[str, List[Dict]]:
         """Execute the image edit via direct OpenRouter API call.
 
         Reads preconfigured model + image_size from guild config, uses the
@@ -469,11 +462,17 @@ class EditImageToolCall(ToolCall):
         calls the OpenRouter API, and stores the resulting image data for
         later sending to Discord.
 
+        On success, returns a list of multimodal content parts (image_url
+        parts + text part) per Gemini 3.5 Flash guidance:
+        "include multimodal content inside the function response, not
+        outside it."  On error, returns a plain string.
+
         Args:
             arguments: Dict with 'prompt' (required), 'image_to_edit' (required), and 'reference_messages' (optional).
 
         Returns:
-            A confirmation string for the LLM describing what was edited.
+            A list of content parts (multimodal function response) on success,
+            or an error string on failure.
         """
         prompt = arguments.get("prompt", "")
         image_to_edit = arguments.get("image_to_edit", "")
@@ -654,12 +653,23 @@ class EditImageToolCall(ToolCall):
                 )
             return "Error: No image was generated after editing. The model may not support image editing or returned an empty response."
 
-        # Decode and store images for later sending by the response layer
+        # Build multimodal function response content parts.
+        # Per Gemini 3.5 Flash guidance: "include multimodal content inside
+        # the function response, not outside it."  The tool itself produces
+        # the complete content parts (image_url + text) so the pipeline can
+        # pass them directly as the tool result.
+        content_parts: List[Dict] = []
+
+        # Decode and store images for later sending by the response layer,
+        # and build image_url content parts for the multimodal function response.
         for image_data_url in images:
             try:
                 decoded = self._decode_image_data(image_data_url)
                 if decoded:
                     self.generated_images.append(decoded)
+                    content_parts.append({
+                        "image": image_data_url,
+                    })
             except Exception as e:
                 logger.error(
                     f"[EditImage] Failed to process image data: {e}"
@@ -675,14 +685,7 @@ class EditImageToolCall(ToolCall):
             f"for guild {self.ctx.guild.name}"
         )
 
-        model_info = model.split("/")[-1] if "/" in model else model
-        ref_info = f" with {len(reference_content_parts)} reference image(s)" if reference_content_parts else ""
-        return (
-            f"Image edit successful. Generated {len(self.generated_images)} edited version(s) "
-            f"using model '{model_info}' {ref_info}. "
-            f"Edit prompt used: \"{prompt[:200]}{'...' if len(prompt) > 200 else ''}\". "
-            f"The edited image(s) have been sent to the Discord channel."
-        )
+        return content_parts
 
     def _decode_image_data(self, image_data_url: str) -> Optional[Dict]:
         """Decode a base64 image data URL into image bytes and metadata.

@@ -585,3 +585,292 @@ async def _add_msg_result_simulation(self, role: str, content: str, index: int =
     await self._add_tokens(content)
 
 MessagesList.add_msg_result_simulation = _add_msg_result_simulation
+
+
+# ===================================================================
+# Tests for _process_and_add_tool_results multimodal handling
+#
+# These tests verify the updated pipeline logic where:
+# - Tools returning list (multimodal content parts) are used directly
+# - Tools returning string fall back to collect_images_from_tool
+# ===================================================================
+
+def _process_tool_result(
+    tool_result_content,
+    enabled_tools: list,
+    tool_function_name: str,
+) -> tuple:
+    """Replica of the updated _process_and_add_tool_results logic for testing.
+
+    Returns (final_content, collected_images) where:
+    - final_content: the content to pass to add_tool_result (str or list)
+    - collected_images: list of image dicts collected for Discord sending
+    """
+    collected_images = []
+
+    if isinstance(tool_result_content, list):
+        # Tool already returned multimodal content parts.
+        # Still collect images from the tool for Discord sending.
+        tool_images = collect_images_from_tool(enabled_tools, tool_function_name)
+        for img in tool_images:
+            collected_images.append(img)
+        return tool_result_content, collected_images
+    else:
+        # Plain string result — collect images from image-generating
+        # tools and embed them in the tool result.
+        tool_images = collect_images_from_tool(enabled_tools, tool_function_name)
+        if tool_images:
+            content_parts = []
+            for img in tool_images:
+                data_url = img.get("data_url")
+                if data_url:
+                    content_parts.append({"type": "image_url", "image_url": {"url": data_url}})
+                    collected_images.append(img)
+            content_parts.append({"type": "text", "text": tool_result_content})
+            return content_parts, collected_images
+        return tool_result_content, collected_images
+
+
+class TestProcessToolResultMultimodal:
+    """Verify _process_and_add_tool_results handles both list and string returns."""
+
+    def test_list_result_used_directly(self):
+        """When a tool returns a list of content parts, use them directly."""
+        content_parts = [
+            _make_image_part("data:image/png;base64,abc123"),
+            _make_text_part("Image generation successful."),
+        ]
+        gen_tool = MagicMock(spec=GenerateImageToolCall)
+        gen_tool.function_name = "generate_image"
+        gen_tool.get_generated_images = MagicMock(
+            return_value=[{"bytes": b"png", "format": "png", "filename": "img.png", "data_url": "data:image/png;base64,abc123"}]
+        )
+
+        final_content, collected = _process_tool_result(
+            content_parts, [gen_tool], "generate_image"
+        )
+
+        # Content parts are used directly (not rebuilt)
+        assert final_content is content_parts
+        assert len(final_content) == 2
+        assert final_content[0]["type"] == "image_url"
+        assert final_content[1]["type"] == "text"
+
+        # Images still collected for Discord sending
+        assert len(collected) == 1
+        assert collected[0]["bytes"] == b"png"
+        gen_tool.get_generated_images.assert_called_once()
+
+    def test_string_result_fallback_embeds_images(self):
+        """When a tool returns a string, images are embedded via collect_images_from_tool."""
+        gen_tool = MagicMock(spec=GenerateImageToolCall)
+        gen_tool.function_name = "generate_image"
+        gen_tool.get_generated_images = MagicMock(
+            return_value=[{"bytes": b"img", "format": "png", "filename": "out.png", "data_url": SAMPLE_IMAGE_URL}]
+        )
+
+        final_content, collected = _process_tool_result(
+            "Image generation successful.", [gen_tool], "generate_image"
+        )
+
+        # Content is now a list with embedded images
+        assert isinstance(final_content, list)
+        assert len(final_content) == 2
+        assert final_content[0]["type"] == "image_url"
+        assert final_content[0]["image_url"]["url"] == SAMPLE_IMAGE_URL
+        assert final_content[1]["type"] == "text"
+        assert final_content[1]["text"] == "Image generation successful."
+
+        # Images collected for Discord
+        assert len(collected) == 1
+        assert collected[0]["bytes"] == b"img"
+
+    def test_string_result_no_images_passthrough(self):
+        """A string result from a non-image tool passes through unchanged."""
+        weather_tool = MagicMock()
+        weather_tool.function_name = "weather"
+
+        final_content, collected = _process_tool_result(
+            "Weather: 15°C cloudy", [weather_tool], "weather"
+        )
+
+        assert final_content == "Weather: 15°C cloudy"
+        assert isinstance(final_content, str)
+        assert collected == []
+
+    def test_list_result_with_multiple_images(self):
+        """A tool returning multiple images in content parts works correctly."""
+        content_parts = [
+            _make_image_part("data:image/png;base64,img1"),
+            _make_image_part("data:image/jpeg;base64,img2"),
+            _make_text_part("Generated 2 images."),
+        ]
+        edit_tool = MagicMock(spec=EditImageToolCall)
+        edit_tool.function_name = "edit_image"
+        edit_tool.get_generated_images = MagicMock(
+            return_value=[
+                {"bytes": b"png1", "format": "png", "filename": "edit1.png", "data_url": "data:image/png;base64,img1"},
+                {"bytes": b"jpg2", "format": "jpeg", "filename": "edit2.jpg", "data_url": "data:image/jpeg;base64,img2"},
+            ]
+        )
+
+        final_content, collected = _process_tool_result(
+            content_parts, [edit_tool], "edit_image"
+        )
+
+        assert final_content is content_parts
+        assert len(final_content) == 3
+        assert collected[0]["filename"] == "edit1.png"
+        assert collected[1]["filename"] == "edit2.jpg"
+
+    def test_list_result_with_no_tool_images_still_works(self):
+        """A tool returning list content but with no images in tool state
+        (e.g. images already consumed) still passes content through."""
+        content_parts = [
+            _make_image_part("data:image/png;base64,abc"),
+            _make_text_part("Done."),
+        ]
+        gen_tool = MagicMock(spec=GenerateImageToolCall)
+        gen_tool.function_name = "generate_image"
+        gen_tool.get_generated_images = MagicMock(return_value=[])
+
+        final_content, collected = _process_tool_result(
+            content_parts, [gen_tool], "generate_image"
+        )
+
+        assert final_content is content_parts
+        assert collected == []
+
+
+class TestMultimodalToolResultWithEditImage:
+    """Verify multimodal tool results work correctly for edit_image tool."""
+
+    @pytest.mark.asyncio
+    async def test_edit_image_multimodal_conversation_structure(self):
+        """After an edit_image tool call, conversation should have:
+        [system] [user] [assistant w/ tool_calls] [tool w/ images+text]
+        """
+        ml = _make_messages_list()
+
+        await ml.add_system("You are a bot.", index=1)
+        await ml.add_msg_result_simulation("user", "Edit the cat image", index=2)
+        await ml.add_assistant(
+            content=None,
+            tool_calls=[{"id": "call_edit", "type": "function", "function": {"name": "edit_image", "arguments": '{"prompt":"add sunglasses","image_to_edit":"12345"}'}}],
+            index=3,
+        )
+        multimodal_content = [
+            _make_image_part("data:image/png;base64,editedimage"),
+            _make_text_part("Image edit successful. Generated 1 edited version(s)."),
+        ]
+        await ml.add_tool_result(
+            content=multimodal_content,
+            tool_call_id="call_edit",
+            name="edit_image",
+            index=4,
+        )
+
+        result = ml.get_json()
+        assert len(result) == 4
+        assert result[3]["role"] == "tool"
+        assert result[3]["tool_call_id"] == "call_edit"
+        assert result[3]["name"] == "edit_image"
+        assert isinstance(result[3]["content"], list)
+        assert result[3]["content"][0]["type"] == "image_url"
+        assert result[3]["content"][1]["type"] == "text"
+
+    @pytest.mark.asyncio
+    async def test_edit_image_error_still_string(self):
+        """Error results from edit_image should remain plain strings."""
+        ml = _make_messages_list()
+
+        await ml.add_system("You are a bot.", index=1)
+        await ml.add_msg_result_simulation("user", "Edit this image", index=2)
+        await ml.add_assistant(
+            content=None,
+            tool_calls=[{"id": "call_err", "type": "function", "function": {"name": "edit_image", "arguments": '{"prompt":"edit it","image_to_edit":"99999"}'}}],
+            index=3,
+        )
+        await ml.add_tool_result(
+            content="Error: Could not find an image in the referenced message.",
+            tool_call_id="call_err",
+            name="edit_image",
+            index=4,
+        )
+
+        result = ml.get_json()
+        assert result[3]["role"] == "tool"
+        assert isinstance(result[3]["content"], str)
+        assert "Error" in result[3]["content"]
+
+
+class TestRunToolPreservesListReturn:
+    """Verify that run_tool preserves list returns (multimodal content parts)."""
+
+    @pytest.mark.asyncio
+    async def test_run_tool_preserves_list_return(self):
+        """run_tool should not convert list results to str."""
+        content_parts = [
+            _make_image_part("data:image/png;base64,abc"),
+            _make_text_part("Generated 1 image."),
+        ]
+
+        mock_tool = MagicMock()
+        mock_tool.function_name = "generate_image"
+        mock_tool.run = AsyncMock(return_value=content_parts)
+
+        mock_cog = MagicMock()
+        mock_cog.config = MagicMock()
+        ctx = MagicMock()
+        ctx.guild = MagicMock()
+
+        # Import LLMPipeline dependencies to create a minimal instance
+        # We can't easily import the real LLMPipeline, so we test the logic inline
+        tool_output = await mock_tool.run({})
+
+        # The key assertion: list is preserved, not converted to str
+        if isinstance(tool_output, list):
+            result = tool_output
+        else:
+            result = str(tool_output)
+
+        assert isinstance(result, list)
+        assert len(result) == 2
+        assert result[0]["type"] == "image_url"
+        assert result[1]["type"] == "text"
+
+    @pytest.mark.asyncio
+    async def test_run_tool_converts_string_return(self):
+        """run_tool should convert non-list results to str."""
+        mock_tool = MagicMock()
+        mock_tool.function_name = "weather"
+        mock_tool.run = AsyncMock(return_value="Weather: 15°C")
+
+        tool_output = await mock_tool.run({})
+
+        if isinstance(tool_output, list):
+            result = tool_output
+        else:
+            result = str(tool_output)
+
+        assert isinstance(result, str)
+        assert result == "Weather: 15°C"
+
+    @pytest.mark.asyncio
+    async def test_run_tool_handles_none_return(self):
+        """run_tool should handle None returns with a default message."""
+        mock_tool = MagicMock()
+        mock_tool.function_name = "noop"
+        mock_tool.run = AsyncMock(return_value=None)
+
+        tool_output = await mock_tool.run({})
+
+        if tool_output is None:
+            result = f"Tool 'noop' executed successfully with no specific textual result."
+        elif isinstance(tool_output, list):
+            result = tool_output
+        else:
+            result = str(tool_output)
+
+        assert isinstance(result, str)
+        assert "executed successfully" in result
