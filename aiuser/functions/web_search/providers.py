@@ -83,11 +83,17 @@ class ExaSearchProvider(WebSearchProvider):
 
         exa = Exa(api_key=api_key)
 
-        kwargs: dict = {
-            "num_results": config.get("num_results", 10),
-            "type": config.get("type", "auto"),
-            "contents": {"highlights": True},
-        }
+        kwargs: dict = {}
+        kwargs["contents"] = config.get("contents", {"highlights": True})
+        kwargs["num_results"] = config.get("num_results", 10)
+        kwargs["type"] = config.get("type", "auto")
+
+        if config.get("livecrawl_timeout"):
+            kwargs["livecrawl_timeout"] = config.get("livecrawl_timeout")
+        if config.get("max_age_hours"):
+            kwargs["max_age_hours"] = config.get("max_age_hours")
+
+
         for opt in ("include_domains", "exclude_domains", "start_published_date", "end_published_date"):
             if config.get(opt) is not None:
                 kwargs[opt] = config[opt]

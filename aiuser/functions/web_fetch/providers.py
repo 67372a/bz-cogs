@@ -76,9 +76,15 @@ class ExaFetchProvider(WebFetchProvider):
 
         kwargs: dict = {}
         if config.get("text", True):
-            kwargs["text"] = True
+            kwargs["text"] = config.get("text")
         if config.get("summary"):
-            kwargs["summary"] = True
+            kwargs["summary"] = config.get("summary")
+        if config.get("highlights"):
+            kwargs["highlights"] = config.get("highlights")
+        if config.get("livecrawl_timeout"):
+            kwargs["livecrawl_timeout"] = config.get("livecrawl_timeout")
+        if config.get("max_age_hours"):
+            kwargs["max_age_hours"] = config.get("max_age_hours")
 
         try:
             results = exa.get_contents(urls, **kwargs)
