@@ -162,7 +162,7 @@ Parameters are loaded from guild config (customizable per-server) and deserializ
 
 ### 3.4 Web Search Output Format
 
-When web search/fetch are enabled, the system appends [`OPENROUTER_CITATION_INSTRUCTIONS`](../aiuser/config/constants.py:33) to the system prompt, requiring the LLM to format citations as numbered footnotes `[^1]`, `[^2]` with source URLs at the end.
+When web search/fetch are enabled, the system appends [`CITATION_INSTRUCTIONS`](../aiuser/config/constants.py:33) to the system prompt, requiring the LLM to format citations as numbered footnotes `[^1]`, `[^2]` with source URLs at the end.
 
 ---
 

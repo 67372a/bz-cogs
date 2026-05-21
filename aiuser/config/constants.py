@@ -30,7 +30,7 @@ XML_SYSTEM_PROMPT_APPENDIX = (
     "Respond naturally in with text, inclusive of markdown and emojis as is relevant, adhering to the persona described above."
 )
 
-OPENROUTER_CITATION_INSTRUCTIONS = (
+CITATION_INSTRUCTIONS = (
     "CITATION REQUIREMENTS:\n"
     "When you use information from web_search or web_fetch tools, you MUST include "
     "markdown-based source citations for factual claims derived from those results.\n\n"

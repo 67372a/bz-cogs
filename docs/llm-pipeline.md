@@ -34,7 +34,7 @@
 
    > *"The chat history below is formatted in Semantic XML. User messages are wrapped in `<message>` tags containing metadata (id, author, time, and reply targets). Media attachments are represented by tags like `<image/>`, `<file/>`, or `<sticker/>."*
 
-7. Optionally appends `OPENROUTER_CITATION_INSTRUCTIONS` when web search/fetch tools are enabled
+7. Optionally appends `CITATION_INSTRUCTIONS` when web search/fetch tools are enabled
 8. Adds optional prefill prompt (member → role → channel → guild hierarchy)
 
 ### 1.2 History Collection ([`add_history()`](../aiuser/messages_list/messages.py:265))

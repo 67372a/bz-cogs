@@ -19,7 +19,7 @@ from aiuser.messages_list.opt_view import OptView
 from aiuser.types.abc import MixinMeta
 from aiuser.types.enums import ScanImageMode
 from aiuser.utils.utilities import format_variables, format_stable_variables, build_dynamic_context_message
-from aiuser.config.constants import XML_SYSTEM_PROMPT_APPENDIX, OPENROUTER_CITATION_INSTRUCTIONS
+from aiuser.config.constants import XML_SYSTEM_PROMPT_APPENDIX, CITATION_INSTRUCTIONS
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
@@ -126,10 +126,10 @@ class MessagesList:
         final_system_prompt = f"{formatted_persona}\n\n{XML_SYSTEM_PROMPT_APPENDIX}"
 
         # 3b. Append OpenRouter citation instructions if web search/fetch tools are enabled
-        search_enabled = await self.config.guild(self.guild).openrouter_web_search_enabled()
-        fetch_enabled = await self.config.guild(self.guild).openrouter_web_fetch_enabled()
+        search_enabled = await self.config.guild(self.guild).web_search_enabled()
+        fetch_enabled = await self.config.guild(self.guild).web_fetch_enabled()
         if search_enabled or fetch_enabled:
-            final_system_prompt += f"\n\n{OPENROUTER_CITATION_INSTRUCTIONS}"
+            final_system_prompt += f"\n\n{CITATION_INSTRUCTIONS}"
 
         self.prefill = await self._pick_prefill()
 
