@@ -19,6 +19,9 @@ from aiuser.utils.utilities import to_thread, resolve_emojis_for_discord, escape
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
+# Hardcoded toggle: set to True to re-enable sending model reasoning to Discord
+_SEND_REASONING_TO_DISCORD = False
+
 # Use to_thread to compile & apply a regex pattern
 @to_thread(timeout=REGEX_RUN_TIMEOUT)
 def compile_and_apply(pattern_str: str, text: str) -> str:
@@ -134,7 +137,8 @@ async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_l
     ]
 
     # Send reasoning if present (always before any response text)
-    if reasoning:
+    # Hardcoded disable: _SEND_REASONING_TO_DISCORD must be True to send reasoning to Discord
+    if reasoning and _SEND_REASONING_TO_DISCORD:
         try:
             cleaned_reasoning = await remove_patterns_from_response(ctx, cog.config, reasoning, recent_authors)
         except Exception:
@@ -144,6 +148,8 @@ async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_l
             cleaned_reasoning = escape_unescaped_backticks(cleaned_reasoning)
             cleaned_reasoning = await resolve_emojis_for_discord(ctx, cleaned_reasoning)
             await send_reasoning(ctx, cleaned_reasoning, messages_list.can_reply, recent_authors)
+    elif reasoning and not _SEND_REASONING_TO_DISCORD:
+        logger.info("Reasoning output suppressed (Discord reasoning disabled)")
 
     if not has_tools:
         # No tool calls — single response, send it and done

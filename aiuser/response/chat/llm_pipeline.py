@@ -547,6 +547,15 @@ class LLMPipeline:
         self._phase1_tool_calls = response_tool_calls
         self._phase1_model_extra = response_model_extra
 
+        # Log phase 1 reasoning output
+        if reasoning_text:
+            logger.info(
+                "Phase 1 reasoning output: length=%d preview=%s",
+                len(reasoning_text), reasoning_text[:500]
+            )
+        else:
+            logger.info("Phase 1: No reasoning output from model")
+
         # Log phase 1 tool calls with structured detail (id, name, args)
         if response_tool_calls:
             logger.info(
@@ -626,6 +635,14 @@ class LLMPipeline:
             [tc.function.name for tc in openrouter_tool_calls]
         )
 
+        # Log full arguments for each tool call the model tried to make
+        if response_tool_calls:
+            for tc in response_tool_calls:
+                logger.info(
+                    "Phase 2 tool call detail: id=%s name=%s args=%s",
+                    tc.id, tc.function.name, tc.function.arguments[:1000]
+                )
+
         # Execute local tools.
         # Images from image-generating tools are collected and embedded
         # directly in tool results as multimodal content parts inside
@@ -677,6 +694,15 @@ class LLMPipeline:
             "Phase 2: Second LLM call completed. response_text length=%d, has_reasoning=%s",
             len(tool_response_text or ''), bool(tool_reasoning_text)
         )
+
+        # Log phase 2 reasoning output
+        if tool_reasoning_text:
+            logger.info(
+                "Phase 2 reasoning output: length=%d preview=%s",
+                len(tool_reasoning_text), tool_reasoning_text[:500]
+            )
+        else:
+            logger.info("Phase 2: No reasoning output from model")
 
         await self.msg_list.add_assistant(
             content=tool_response_text,
