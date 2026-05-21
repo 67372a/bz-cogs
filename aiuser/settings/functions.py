@@ -758,7 +758,7 @@ class FunctionCallingSettings(MixinMeta):
 
         - No args or 'show'/'list' → shows current config + example
         - 'reset'/'clear' → resets to defaults
-        - JSON code block → sets config (validated against valid_keys)
+        - JSON code block → sets config (unrecognized keys warn but are saved)
         """
         if not json_block or json_block in ("show", "list"):
             current_json = await getattr(self.config.guild(ctx.guild), config_key)()
@@ -811,10 +811,10 @@ class FunctionCallingSettings(MixinMeta):
         unknown_keys = [k for k in data if k not in valid_keys]
         if unknown_keys:
             await ctx.send(
-                f":warning: Unknown key(s): {', '.join(f'`{k}`' for k in unknown_keys)}. "
-                f"Valid keys: {', '.join(f'`{k}`' for k in valid_keys)}."
+                f":information_source: Unrecognized key(s): {', '.join(f'`{k}`' for k in unknown_keys)}. "
+                f"These will be saved but may be ignored by the current backend. "
+                f"Recognized keys: {', '.join(f'`{k}`' for k in valid_keys)}."
             )
-            data = {k: v for k, v in data.items() if k in valid_keys}
 
         serialized = json.dumps(data)
         await getattr(self.config.guild(ctx.guild), config_key).set(serialized)
@@ -886,11 +886,14 @@ class FunctionCallingSettings(MixinMeta):
     async def config_web_search(self, ctx: commands.Context, *, json_block: str = ""):
         """Configure web_search backend parameters using JSON.
 
-        **Exa valid keys**: `num_results` (int), `type` (auto/fast/deep-lite/deep/deep-reasoning),
+        Any JSON fields are accepted — each backend picks the fields it cares about.
+        Unrecognized fields are saved but may be silently ignored.
+
+        **Exa recognized keys**: `num_results` (int), `type` (auto/fast/deep-lite/deep/deep-reasoning),
         `include_domains` (list), `exclude_domains` (list),
         `start_published_date` (str YYYY-MM-DD), `end_published_date` (str YYYY-MM-DD)
 
-        **Serper valid keys**: *(none — no configurable parameters)*
+        **Serper recognized keys**: *(none — no configurable parameters)*
 
         Example: `{ctx.clean_prefix}aiuser functions web_search_config ```json\n{"num_results": 10, "type": "auto"}\n``` `
         """
@@ -959,9 +962,12 @@ class FunctionCallingSettings(MixinMeta):
     async def config_web_fetch(self, ctx: commands.Context, *, json_block: str = ""):
         """Configure web_fetch backend parameters using JSON.
 
-        **Exa valid keys**: `text` (bool), `summary` (bool)
+        Any JSON fields are accepted — each backend picks the fields it cares about.
+        Unrecognized fields are saved but may be silently ignored.
 
-        **Scrape valid keys**: *(none — no configurable parameters)*
+        **Exa recognized keys**: `text` (bool), `summary` (bool)
+
+        **Scrape recognized keys**: *(none — no configurable parameters)*
 
         Example: `{ctx.clean_prefix}aiuser functions web_fetch_config ```json\n{"text": true}\n``` `
         """
@@ -1024,7 +1030,10 @@ class FunctionCallingSettings(MixinMeta):
     async def config_web_answer(self, ctx: commands.Context, *, json_block: str = ""):
         """Configure web_answer backend parameters using JSON.
 
-        **Exa valid keys**: `text` (bool — include full citation text)
+        Any JSON fields are accepted — each backend picks the fields it cares about.
+        Unrecognized fields are saved but may be silently ignored.
+
+        **Exa recognized keys**: `text` (bool — include full citation text)
 
         Example: `{ctx.clean_prefix}aiuser functions web_answer_config ```json\n{"text": false}\n``` `
         """
