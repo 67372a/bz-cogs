@@ -332,7 +332,7 @@ class FunctionCallingSettings(MixinMeta):
         or behavioral guidelines. (Separate from the chat persona prompt.)
 
         To view the current prompt, use without arguments.
-        To reset/clear, use `{ctx.clean_prefix}functions generate_image_prompt reset`
+        To reset/clear, use `{ctx.clean_prefix}aiuser functions generate_image_prompt reset`
         To set, provide the prompt text directly.
 
         **Arguments**
@@ -347,7 +347,7 @@ class FunctionCallingSettings(MixinMeta):
                     description=current,
                     color=await ctx.embed_color(),
                 )
-                embed.add_field(name="Reset", value=f"`{ctx.clean_prefix}functions generate_image_prompt reset`", inline=False)
+                embed.add_field(name="Reset", value=f"`{ctx.clean_prefix}aiuser functions generate_image_prompt reset`", inline=False)
             else:
                 embed = discord.Embed(
                     title="Image Generation System Prompt",
@@ -376,11 +376,11 @@ class FunctionCallingSettings(MixinMeta):
         The prompt and aspect_ratio are passed by the LLM, everything else is
         configured here.
 
-        To reset parameters to default, use `{ctx.clean_prefix}functions generate_image_config reset`
-        To show current parameters, use `{ctx.clean_prefix}functions generate_image_config show`
+        To reset parameters to default, use `{ctx.clean_prefix}aiuser functions generate_image_config reset`
+        To show current parameters, use `{ctx.clean_prefix}aiuser functions generate_image_config show`
 
         Example command:
-        `{ctx.clean_prefix}functions generate_image_config ```json\n{"model": "google/gemini-3.1-flash-image-preview", "image_size": "2K", "reasoning_effort": "medium", "temperature": 0.8, "top_p": 0.95, "service_tier": "flex"}\n``` `
+        `{ctx.clean_prefix}aiuser functions generate_image_config ```json\n{"model": "google/gemini-3.1-flash-image-preview", "image_size": "2K", "reasoning_effort": "medium", "temperature": 0.8, "top_p": 0.95, "service_tier": "flex"}\n``` `
 
         Valid fields: model, image_size, reasoning_effort, temperature, top_p, service_tier
         """
@@ -426,7 +426,7 @@ class FunctionCallingSettings(MixinMeta):
         (Separate from the chat persona prompt.)
 
         To view the current prompt, use without arguments.
-        To reset/clear, use `{ctx.clean_prefix}functions edit_image_prompt reset`
+        To reset/clear, use `{ctx.clean_prefix}aiuser functions edit_image_prompt reset`
         To set, provide the prompt text directly.
 
         **Arguments**
@@ -441,7 +441,7 @@ class FunctionCallingSettings(MixinMeta):
                     description=current,
                     color=await ctx.embed_color(),
                 )
-                embed.add_field(name="Reset", value=f"`{ctx.clean_prefix}functions edit_image_prompt reset`", inline=False)
+                embed.add_field(name="Reset", value=f"`{ctx.clean_prefix}aiuser functions edit_image_prompt reset`", inline=False)
             else:
                 embed = discord.Embed(
                     title="Image Edit System Prompt",
@@ -470,11 +470,11 @@ class FunctionCallingSettings(MixinMeta):
         The prompt and image_to_edit are passed by the LLM, everything else is
         configured here.
 
-        To reset parameters to default, use `{ctx.clean_prefix}functions edit_image_config reset`
-        To show current parameters, use `{ctx.clean_prefix}functions edit_image_config show`
+        To reset parameters to default, use `{ctx.clean_prefix}aiuser functions edit_image_config reset`
+        To show current parameters, use `{ctx.clean_prefix}aiuser functions edit_image_config show`
 
         Example command:
-        `{ctx.clean_prefix}functions edit_image_config ```json\n{"model": "google/gemini-3.1-flash-image-preview", "image_size": "2K", "reasoning_effort": "medium", "temperature": 0.8, "top_p": 0.95, "service_tier": "flex"}\n``` `
+        `{ctx.clean_prefix}aiuser functions edit_image_config ```json\n{"model": "google/gemini-3.1-flash-image-preview", "image_size": "2K", "reasoning_effort": "medium", "temperature": 0.8, "top_p": 0.95, "service_tier": "flex"}\n``` `
 
         Valid fields: model, image_size, reasoning_effort, temperature, top_p, service_tier
         """
@@ -558,9 +558,9 @@ class FunctionCallingSettings(MixinMeta):
             # Usage instructions
             tool_config_name = tool_type if isinstance(tool_type, str) else tool_type.value.replace(':', '_')
             usage = (
-                f"• Set: `{ctx.clean_prefix}functions {tool_config_name}_config "
+                f"• Set: `{ctx.clean_prefix}aiuser functions {tool_config_name}_config "
                 f"```json\n{'{...}'}\n``` `\n"
-                f"• Reset: `{ctx.clean_prefix}functions {tool_config_name}_config reset`"
+                f"• Reset: `{ctx.clean_prefix}aiuser functions {tool_config_name}_config reset`"
             )
             if extra_help:
                 usage += f"\n{extra_help}"
@@ -616,11 +616,11 @@ class FunctionCallingSettings(MixinMeta):
     async def config_or_web_search(self, ctx: commands.Context, *, json_block: str = ""):
         """ Configure OpenRouter web search parameters using JSON
 
-        To reset parameters to default, use `{ctx.clean_prefix}functions or_web_search_config reset`
-        To show current parameters, use `{ctx.clean_prefix}functions or_web_search_config show`
+        To reset parameters to default, use `{ctx.clean_prefix}aiuser functions or_web_search_config reset`
+        To show current parameters, use `{ctx.clean_prefix}aiuser functions or_web_search_config show`
 
         Example command:
-        `{ctx.clean_prefix}functions or_web_search_config ```json\n{"engine": "exa", "max_results": 10}\n``` `
+        `{ctx.clean_prefix}aiuser functions or_web_search_config ```json\n{"engine": "exa", "max_results": 10}\n``` `
 
         Valid fields: engine, max_results, max_total_results, search_context_size,
         user_location, allowed_domains, excluded_domains
@@ -646,11 +646,11 @@ class FunctionCallingSettings(MixinMeta):
     async def config_or_web_fetch(self, ctx: commands.Context, *, json_block: str = ""):
         """ Configure OpenRouter web fetch parameters using JSON
 
-        To reset parameters to default, use `{ctx.clean_prefix}functions or_web_fetch_config reset`
-        To show current parameters, use `{ctx.clean_prefix}functions or_web_fetch_config show`
+        To reset parameters to default, use `{ctx.clean_prefix}aiuser functions or_web_fetch_config reset`
+        To show current parameters, use `{ctx.clean_prefix}aiuser functions or_web_fetch_config show`
 
         Example command:
-        `{ctx.clean_prefix}functions or_web_fetch_config ```json\n{"engine": "firecrawl", "max_uses": 5}\n``` `
+        `{ctx.clean_prefix}aiuser functions or_web_fetch_config ```json\n{"engine": "firecrawl", "max_uses": 5}\n``` `
 
         Valid fields: engine, max_uses, max_content_tokens, allowed_domains, blocked_domains
         """
@@ -673,11 +673,11 @@ class FunctionCallingSettings(MixinMeta):
     async def config_or_image_gen(self, ctx: commands.Context, *, json_block: str = ""):
         """ Configure OpenRouter image generation parameters using JSON
 
-        To reset parameters to default, use `{ctx.clean_prefix}functions or_image_gen_config reset`
-        To show current parameters, use `{ctx.clean_prefix}functions or_image_gen_config show`
+        To reset parameters to default, use `{ctx.clean_prefix}aiuser functions or_image_gen_config reset`
+        To show current parameters, use `{ctx.clean_prefix}aiuser functions or_image_gen_config show`
 
         Example command:
-        `{ctx.clean_prefix}functions or_image_gen_config ```json\n{"model": "openai/dall-e-3", "quality": "high"}\n``` `
+        `{ctx.clean_prefix}aiuser functions or_image_gen_config ```json\n{"model": "openai/dall-e-3", "quality": "high"}\n``` `
 
         Valid fields: model, quality, size, aspect_ratio, background, output_format,
         output_compression, moderation
@@ -704,11 +704,11 @@ class FunctionCallingSettings(MixinMeta):
     async def config_or_pdf_parsing(self, ctx: commands.Context, *, json_block: str = ""):
         """ Configure OpenRouter PDF parsing engine using JSON
 
-        To reset parameters to default, use `{ctx.clean_prefix}functions or_pdf_parsing_config reset`
-        To show current parameters, use `{ctx.clean_prefix}functions or_pdf_parsing_config show`
+        To reset parameters to default, use `{ctx.clean_prefix}aiuser functions or_pdf_parsing_config reset`
+        To show current parameters, use `{ctx.clean_prefix}aiuser functions or_pdf_parsing_config show`
 
         Example command:
-        `{ctx.clean_prefix}functions or_pdf_parsing_config ```json\n{"engine": "cloudflare-ai"}\n``` `
+        `{ctx.clean_prefix}aiuser functions or_pdf_parsing_config ```json\n{"engine": "cloudflare-ai"}\n``` `
 
         Valid fields: engine (cloudflare-ai, mistral-ocr, or native)
         """
@@ -784,9 +784,9 @@ class FunctionCallingSettings(MixinMeta):
 
             config_cmd = config_key.replace("_", " ")
             usage = (
-                f"• Set: `{ctx.clean_prefix}functions {config_cmd} "
+                f"• Set: `{ctx.clean_prefix}aiuser functions {config_cmd} "
                 f"```json\n{{...}}\n``` `\n"
-                f"• Reset: `{ctx.clean_prefix}functions {config_cmd} reset`"
+                f"• Reset: `{ctx.clean_prefix}aiuser functions {config_cmd} reset`"
             )
             embed.add_field(name="Usage", value=usage, inline=False)
             return await ctx.send(embed=embed)
@@ -844,13 +844,13 @@ class FunctionCallingSettings(MixinMeta):
         **Arguments**
         - `backend`: `exa` (requires Exa API key), `serper` (requires Serper.dev key)
 
-        Example: `{ctx.clean_prefix}functions web_search_backend exa`
+        Example: `{ctx.clean_prefix}aiuser functions web_search_backend exa`
         """
         valid_backends = ["exa", "serper"]
         if not backend or backend not in valid_backends:
             return await ctx.send(
                 f"Please specify a backend: {', '.join(f'`{b}`' for b in valid_backends)}.\n"
-                f"Example: `{ctx.clean_prefix}functions web_search_backend exa`"
+                f"Example: `{ctx.clean_prefix}aiuser functions web_search_backend exa`"
             )
 
         if backend == "exa":
@@ -877,7 +877,7 @@ class FunctionCallingSettings(MixinMeta):
         )
         embed.add_field(
             name="Next Step",
-            value=f"Enable with `{ctx.clean_prefix}functions web_search`",
+            value=f"Enable with `{ctx.clean_prefix}aiuser functions web_search`",
             inline=False,
         )
         await ctx.send(embed=embed)
@@ -892,7 +892,7 @@ class FunctionCallingSettings(MixinMeta):
 
         **Serper valid keys**: *(none — no configurable parameters)*
 
-        Example: `{ctx.clean_prefix}functions web_search_config ```json\n{"num_results": 10, "type": "auto"}\n``` `
+        Example: `{ctx.clean_prefix}aiuser functions web_search_config ```json\n{"num_results": 10, "type": "auto"}\n``` `
         """
         await self._handle_web_config(
             ctx=ctx,
@@ -922,13 +922,13 @@ class FunctionCallingSettings(MixinMeta):
         **Arguments**
         - `backend`: `exa` (requires Exa API key), `scrape` (direct scraping, no API key needed)
 
-        Example: `{ctx.clean_prefix}functions web_fetch_backend exa`
+        Example: `{ctx.clean_prefix}aiuser functions web_fetch_backend exa`
         """
         valid_backends = ["exa", "scrape"]
         if not backend or backend not in valid_backends:
             return await ctx.send(
                 f"Please specify a backend: {', '.join(f'`{b}`' for b in valid_backends)}.\n"
-                f"Example: `{ctx.clean_prefix}functions web_fetch_backend exa`"
+                f"Example: `{ctx.clean_prefix}aiuser functions web_fetch_backend exa`"
             )
 
         if backend == "exa":
@@ -950,7 +950,7 @@ class FunctionCallingSettings(MixinMeta):
         )
         embed.add_field(
             name="Next Step",
-            value=f"Enable with `{ctx.clean_prefix}functions web_fetch`",
+            value=f"Enable with `{ctx.clean_prefix}aiuser functions web_fetch`",
             inline=False,
         )
         await ctx.send(embed=embed)
@@ -963,7 +963,7 @@ class FunctionCallingSettings(MixinMeta):
 
         **Scrape valid keys**: *(none — no configurable parameters)*
 
-        Example: `{ctx.clean_prefix}functions web_fetch_config ```json\n{"text": true}\n``` `
+        Example: `{ctx.clean_prefix}aiuser functions web_fetch_config ```json\n{"text": true}\n``` `
         """
         await self._handle_web_config(
             ctx=ctx,
@@ -992,13 +992,13 @@ class FunctionCallingSettings(MixinMeta):
         **Arguments**
         - `backend`: `exa` (requires Exa API key)
 
-        Example: `{ctx.clean_prefix}functions web_answer_backend exa`
+        Example: `{ctx.clean_prefix}aiuser functions web_answer_backend exa`
         """
         valid_backends = ["exa"]
         if not backend or backend not in valid_backends:
             return await ctx.send(
                 f"Please specify a backend: {', '.join(f'`{b}`' for b in valid_backends)}.\n"
-                f"Example: `{ctx.clean_prefix}functions web_answer_backend exa`"
+                f"Example: `{ctx.clean_prefix}aiuser functions web_answer_backend exa`"
             )
 
         if backend == "exa":
@@ -1015,7 +1015,7 @@ class FunctionCallingSettings(MixinMeta):
         )
         embed.add_field(
             name="Next Step",
-            value=f"Enable with `{ctx.clean_prefix}functions web_answer`",
+            value=f"Enable with `{ctx.clean_prefix}aiuser functions web_answer`",
             inline=False,
         )
         await ctx.send(embed=embed)
@@ -1026,7 +1026,7 @@ class FunctionCallingSettings(MixinMeta):
 
         **Exa valid keys**: `text` (bool — include full citation text)
 
-        Example: `{ctx.clean_prefix}functions web_answer_config ```json\n{"text": false}\n``` `
+        Example: `{ctx.clean_prefix}aiuser functions web_answer_config ```json\n{"text": false}\n``` `
         """
         await self._handle_web_config(
             ctx=ctx,
