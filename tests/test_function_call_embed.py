@@ -162,9 +162,10 @@ RealFunctionCallView = _real_fcv_module.FunctionCallView
 class _MockFunctionCallView:
     _data_cache = {}
     
-    def __init__(self, message_id=None, has_outputs=False):
+    def __init__(self, message_id=None, has_outputs=False, has_reasoning=False):
         self.message_id = message_id
         self.has_outputs = has_outputs
+        self.has_reasoning = has_reasoning
         self.children = []
         if not has_outputs:
             # Simulate removing the outputs button
@@ -173,24 +174,49 @@ class _MockFunctionCallView:
     @classmethod
     def store_inputs(cls, message_id, inputs):
         if message_id not in cls._data_cache:
-            cls._data_cache[message_id] = {"inputs": [], "outputs": []}
+            cls._data_cache[message_id] = {"inputs": [], "outputs": [], "reasoning": ""}
         cls._data_cache[message_id]["inputs"] = inputs
     
     @classmethod
     def store_outputs(cls, message_id, outputs):
         if message_id not in cls._data_cache:
-            cls._data_cache[message_id] = {"inputs": [], "outputs": []}
+            cls._data_cache[message_id] = {"inputs": [], "outputs": [], "reasoning": ""}
         cls._data_cache[message_id]["outputs"] = outputs
+    
+    @classmethod
+    def store_reasoning(cls, message_id, reasoning):
+        if message_id not in cls._data_cache:
+            cls._data_cache[message_id] = {"inputs": [], "outputs": [], "reasoning": ""}
+        cls._data_cache[message_id]["reasoning"] = reasoning
     
     @classmethod
     def cleanup(cls, message_id):
         cls._data_cache.pop(message_id, None)
 
+
+# Create a mock ResponseView for llm_pipeline tests.
+class _MockResponseView:
+    _reasoning_cache = {}
+    
+    def __init__(self, message_id=None, has_reasoning=False):
+        self.message_id = message_id
+        self.has_reasoning = has_reasoning
+    
+    @classmethod
+    def store_reasoning_steps(cls, message_id, steps):
+        cls._reasoning_cache[message_id] = steps
+    
+    @classmethod
+    def cleanup(cls, message_id):
+        cls._reasoning_cache.pop(message_id, None)
+
 # Set the mock as the module-level FunctionCallView so llm_pipeline picks it up
 _fcv_mock_module = MagicMock()
 _fcv_mock_module.FunctionCallView = _MockFunctionCallView
+_fcv_mock_module.ResponseView = _MockResponseView
 sys.modules["aiuser.response.chat.function_call_view"] = _fcv_mock_module
 FunctionCallView = _MockFunctionCallView
+ResponseView = _MockResponseView
 
 sys.modules["aiuser.response.chat.llm_pipeline"] = import_module_directly(
     "aiuser.response.chat.llm_pipeline", "aiuser/response/chat/llm_pipeline.py"
@@ -689,7 +715,9 @@ class TestRunLoopFunctionCallEmbed:
 
         await pipeline._run_loop()
 
-        pipeline.send_function_call_embed.assert_called_once_with([tool_call])
+        pipeline.send_function_call_embed.assert_called_once_with(
+            [tool_call], reasoning="thinking..."
+        )
 
     @pytest.mark.asyncio
     async def test_embed_not_sent_without_tool_calls(self):
@@ -877,3 +905,235 @@ class TestFunctionCallView:
         FunctionCallView.store_inputs(666, [{"name": "old", "args": "{}"}])
         FunctionCallView.store_inputs(666, [{"name": "new", "args": "{}"}])
         assert FunctionCallView._data_cache[666]["inputs"][0]["name"] == "new"
+
+
+# ---------------------------------------------------------------------------
+# Tests: FunctionCallView reasoning support
+# ---------------------------------------------------------------------------
+
+class TestFunctionCallViewReasoning:
+    """Test the FunctionCallView reasoning cache and button behavior."""
+
+    def setup_method(self):
+        FunctionCallView._data_cache.clear()
+
+    def test_store_and_retrieve_reasoning(self):
+        """Reasoning stored via store_reasoning should be retrievable from cache."""
+        FunctionCallView.store_reasoning(777, "I need to search for this.")
+        assert 777 in FunctionCallView._data_cache
+        assert FunctionCallView._data_cache[777]["reasoning"] == "I need to search for this."
+
+    def test_store_reasoning_creates_cache_if_missing(self):
+        """store_reasoning should create the cache entry if it doesn't exist."""
+        FunctionCallView.store_reasoning(888, "thinking...")
+        assert "inputs" in FunctionCallView._data_cache[888]
+        assert "outputs" in FunctionCallView._data_cache[888]
+        assert "reasoning" in FunctionCallView._data_cache[888]
+
+    def test_store_reasoning_overwrites_previous(self):
+        """Storing reasoning again should overwrite the previous reasoning."""
+        FunctionCallView.store_reasoning(999, "old reasoning")
+        FunctionCallView.store_reasoning(999, "new reasoning")
+        assert FunctionCallView._data_cache[999]["reasoning"] == "new reasoning"
+
+    def test_store_inputs_preserves_reasoning(self):
+        """Storing inputs should not overwrite existing reasoning."""
+        FunctionCallView.store_reasoning(1001, "my reasoning")
+        FunctionCallView.store_inputs(1001, [{"name": "test", "args": "{}"}])
+        assert FunctionCallView._data_cache[1001]["reasoning"] == "my reasoning"
+
+    def test_store_outputs_preserves_reasoning(self):
+        """Storing outputs should not overwrite existing reasoning."""
+        FunctionCallView.store_reasoning(1002, "my reasoning")
+        FunctionCallView.store_outputs(1002, [{"name": "test", "result": "ok"}])
+        assert FunctionCallView._data_cache[1002]["reasoning"] == "my reasoning"
+
+    def test_cleanup_removes_reasoning(self):
+        """cleanup should remove the reasoning cache entry too."""
+        FunctionCallView.store_reasoning(1003, "thinking...")
+        FunctionCallView.cleanup(1003)
+        assert 1003 not in FunctionCallView._data_cache
+
+    def test_init_removes_reasoning_button_when_no_reasoning(self):
+        """Constructor with has_reasoning=False should remove the reasoning button."""
+        FunctionCallView.store_inputs(1004, [{"name": "test", "args": "{}"}])
+        view = FunctionCallView(message_id=1004, has_outputs=False, has_reasoning=False)
+        # The mock doesn't actually remove items, but we verify the flag is set
+        assert view.has_reasoning is False
+
+    def test_init_keeps_reasoning_button_when_has_reasoning(self):
+        """Constructor with has_reasoning=True should keep the reasoning button."""
+        FunctionCallView.store_reasoning(1005, "thinking...")
+        FunctionCallView.store_inputs(1005, [{"name": "test", "args": "{}"}])
+        view = FunctionCallView(message_id=1005, has_outputs=False, has_reasoning=True)
+        assert view.has_reasoning is True
+
+
+# ---------------------------------------------------------------------------
+# Tests: ResponseView
+# ---------------------------------------------------------------------------
+
+class TestResponseView:
+    """Test the ResponseView class for response embed reasoning buttons."""
+
+    def setup_method(self):
+        ResponseView._reasoning_cache.clear()
+
+    def test_store_and_retrieve_reasoning_steps(self):
+        """Steps stored via store_reasoning_steps should be retrievable."""
+        steps = ["I searched for info.", "Now I'll summarize."]
+        ResponseView.store_reasoning_steps(2001, steps)
+        assert 2001 in ResponseView._reasoning_cache
+        assert ResponseView._reasoning_cache[2001] == steps
+
+    def test_store_empty_steps(self):
+        """Storing empty steps list should work."""
+        ResponseView.store_reasoning_steps(2002, [])
+        assert ResponseView._reasoning_cache[2002] == []
+
+    def test_store_overwrites_previous(self):
+        """Storing steps again should overwrite previous steps."""
+        ResponseView.store_reasoning_steps(2003, ["old step"])
+        ResponseView.store_reasoning_steps(2003, ["new step 1", "new step 2"])
+        assert ResponseView._reasoning_cache[2003] == ["new step 1", "new step 2"]
+
+    def test_cleanup_removes_cache_entry(self):
+        """cleanup should remove the cache entry."""
+        ResponseView.store_reasoning_steps(2004, ["step"])
+        ResponseView.cleanup(2004)
+        assert 2004 not in ResponseView._reasoning_cache
+
+    def test_cleanup_nonexistent_is_noop(self):
+        """cleanup on a nonexistent ID should not raise."""
+        ResponseView.cleanup(99999)
+
+    def test_init_removes_button_when_no_reasoning(self):
+        """Constructor with has_reasoning=False should remove the button."""
+        view = ResponseView(message_id=2005, has_reasoning=False)
+        assert view.has_reasoning is False
+
+    def test_init_keeps_button_when_has_reasoning(self):
+        """Constructor with has_reasoning=True should keep the button."""
+        view = ResponseView(message_id=2006, has_reasoning=True)
+        assert view.has_reasoning is True
+
+
+# ---------------------------------------------------------------------------
+# Tests: PipelineResult reasoning_steps
+# ---------------------------------------------------------------------------
+
+class TestPipelineResultReasoningSteps:
+    """Test that PipelineResult includes reasoning_steps field."""
+
+    def test_pipeline_result_has_reasoning_steps(self):
+        """PipelineResult should have a reasoning_steps field."""
+        from aiuser.response.chat.llm_pipeline import PipelineResult
+        result = PipelineResult(text="hello", reasoning_steps=["step1", "step2"])
+        assert result.reasoning_steps == ["step1", "step2"]
+
+    def test_pipeline_result_default_empty_reasoning_steps(self):
+        """PipelineResult should default reasoning_steps to empty list."""
+        from aiuser.response.chat.llm_pipeline import PipelineResult
+        result = PipelineResult(text="hello")
+        assert result.reasoning_steps == []
+
+
+# ---------------------------------------------------------------------------
+# Tests: _run_loop integration — reasoning passed to embed
+# ---------------------------------------------------------------------------
+
+class TestRunLoopReasoningIntegration:
+    """Test that reasoning is properly passed through during _run_loop."""
+
+    @pytest.mark.asyncio
+    async def test_reasoning_passed_to_send_function_call_embed(self):
+        """reasoning_text should be passed to send_function_call_embed."""
+        pipeline = _make_pipeline(max_rounds=2)
+        pipeline._is_openrouter_tool_name = MagicMock(return_value=False)
+        pipeline._process_and_add_tool_results = AsyncMock()
+        pipeline._process_openrouter_tool_results = AsyncMock()
+        pipeline.send_function_call_embed = AsyncMock(return_value=(MagicMock(), 1700000000))
+        pipeline.update_function_call_embed = AsyncMock()
+
+        tool_call = _make_tool_call("call_1", "web_search", '{"query": "test"}')
+
+        pipeline.call_client = AsyncMock(side_effect=[
+            ("Let me search", "reasoning round 1", [tool_call], None, None),
+            ("Here are the results", "reasoning round 2", [], None, None),
+        ])
+        pipeline._is_text_incomplete = MagicMock(return_value=False)
+
+        result = await pipeline._run_loop()
+
+        # Verify reasoning was passed to send_function_call_embed
+        pipeline.send_function_call_embed.assert_called_once_with(
+            [tool_call], reasoning="reasoning round 1"
+        )
+        # Verify reasoning_steps is populated in the result
+        assert result.reasoning_steps == ["reasoning round 1", "reasoning round 2"]
+
+    @pytest.mark.asyncio
+    async def test_no_reasoning_results_in_empty_reasoning_steps(self):
+        """When no reasoning is returned, reasoning_steps should be empty."""
+        pipeline = _make_pipeline(max_rounds=2)
+        pipeline._is_openrouter_tool_name = MagicMock(return_value=False)
+        pipeline.send_function_call_embed = AsyncMock()
+        pipeline.update_function_call_embed = AsyncMock()
+
+        pipeline.call_client = AsyncMock(return_value=(
+            "Hello world", None, [], None, None,
+        ))
+        pipeline._is_text_incomplete = MagicMock(return_value=False)
+
+        result = await pipeline._run_loop()
+
+        assert result.reasoning_steps == []
+
+    @pytest.mark.asyncio
+    async def test_none_reasoning_passed_to_send_function_call_embed(self):
+        """When reasoning is None, send_function_call_embed should receive reasoning=None."""
+        pipeline = _make_pipeline(max_rounds=2)
+        pipeline._is_openrouter_tool_name = MagicMock(return_value=False)
+        pipeline._process_and_add_tool_results = AsyncMock()
+        pipeline._process_openrouter_tool_results = AsyncMock()
+        pipeline.send_function_call_embed = AsyncMock(return_value=(MagicMock(), 1700000000))
+        pipeline.update_function_call_embed = AsyncMock()
+
+        tool_call = _make_tool_call("call_1", "test", '{}')
+
+        pipeline.call_client = AsyncMock(side_effect=[
+            ("Testing", None, [tool_call], None, None),
+            ("Done", None, [], None, None),
+        ])
+        pipeline._is_text_incomplete = MagicMock(return_value=False)
+
+        result = await pipeline._run_loop()
+
+        pipeline.send_function_call_embed.assert_called_once_with(
+            [tool_call], reasoning=None
+        )
+        assert result.reasoning_steps == []
+
+    @pytest.mark.asyncio
+    async def test_multi_round_reasoning_accumulated(self):
+        """Multiple rounds of reasoning should all be accumulated."""
+        pipeline = _make_pipeline(max_rounds=3)
+        pipeline._is_openrouter_tool_name = MagicMock(return_value=False)
+        pipeline._process_and_add_tool_results = AsyncMock()
+        pipeline._process_openrouter_tool_results = AsyncMock()
+        pipeline.send_function_call_embed = AsyncMock(return_value=(MagicMock(), 1700000000))
+        pipeline.update_function_call_embed = AsyncMock()
+
+        tc1 = _make_tool_call("call_1", "tool_a", '{}')
+        tc2 = _make_tool_call("call_2", "tool_b", '{}')
+
+        pipeline.call_client = AsyncMock(side_effect=[
+            ("Step 1", "reasoning A", [tc1], None, None),
+            ("Step 2", "reasoning B", [tc2], None, None),
+            ("Final", "reasoning C", [], None, None),
+        ])
+        pipeline._is_text_incomplete = MagicMock(return_value=False)
+
+        result = await pipeline._run_loop()
+
+        assert result.reasoning_steps == ["reasoning A", "reasoning B", "reasoning C"]

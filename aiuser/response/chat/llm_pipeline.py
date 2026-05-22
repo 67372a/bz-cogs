@@ -31,7 +31,7 @@ from aiuser.functions.generate_image.tool_call import GenerateImageToolCall
 from aiuser.functions.edit_image.tool_call import EditImageToolCall
 from aiuser.messages_list.messages import MessagesList
 from aiuser.messages_list.entry import MessageEntry
-from aiuser.response.chat.function_call_view import FunctionCallView
+from aiuser.response.chat.function_call_view import FunctionCallView, ResponseView
 from aiuser.functions.openrouter import (
     OpenRouterWebSearch,
     OpenRouterWebFetch,
@@ -64,6 +64,7 @@ class PipelineResult:
     """
     text: Optional[str] = None
     reasoning: Optional[str] = None
+    reasoning_steps: List[str] = field(default_factory=list)
     images: List[Dict] = field(default_factory=list)
     response_parts: List["ResponsePart"] = field(default_factory=list)
     has_tools: bool = False
@@ -683,7 +684,9 @@ class LLMPipeline:
             all_pre_texts.append(response_text or "")
 
             # NEW: Send function call notification embed
-            status_embed_msg, embed_start_time = await self.send_function_call_embed(tool_calls)
+            status_embed_msg, embed_start_time = await self.send_function_call_embed(
+                tool_calls, reasoning=reasoning_text
+            )
 
             # Split into local vs OpenRouter server tools
             local_tool_calls = [tc for tc in tool_calls if not self._is_openrouter_tool_name(tc.function.name)]
@@ -764,6 +767,7 @@ class LLMPipeline:
             return PipelineResult(
                 text=response_text,
                 reasoning=reasoning_text,
+                reasoning_steps=accumulated_reasoning,
                 images=self.collected_images,
                 response_parts=self.response_parts,
                 has_tools=False,
@@ -834,6 +838,7 @@ class LLMPipeline:
         return PipelineResult(
             text=final_text,
             reasoning=final_reasoning,
+            reasoning_steps=accumulated_reasoning,
             images=self.collected_images,
             response_parts=self.response_parts,
             has_tools=True,
@@ -1027,12 +1032,19 @@ class LLMPipeline:
     }
 
     async def send_function_call_embed(
-        self, tool_calls: List[ChatCompletionMessageToolCall]
+        self,
+        tool_calls: List[ChatCompletionMessageToolCall],
+        reasoning: Optional[str] = None,
     ) -> Tuple[Optional[discord.Message], Optional[int]]:
         """Send an embed announcing the function calls being made.
 
-        Stores tool call inputs in the FunctionCallView cache and attaches
-        a View with a "View Inputs" button to the embed.
+        Stores tool call inputs and reasoning in the FunctionCallView cache
+        and attaches a View with "View Inputs" and optionally "View Reasoning"
+        buttons to the embed.
+
+        Args:
+            tool_calls: The tool calls being executed.
+            reasoning: Optional LLM reasoning text for this step.
 
         Returns a tuple of (sent_message, start_unix_timestamp).
         """
@@ -1055,9 +1067,15 @@ class LLMPipeline:
                 ),
             )
             if msg:
-                # Store inputs and attach view (inputs only, no outputs yet)
+                # Store inputs, reasoning, and attach view
                 FunctionCallView.store_inputs(msg.id, inputs)
-                view = FunctionCallView(message_id=msg.id, has_outputs=False)
+                if reasoning:
+                    FunctionCallView.store_reasoning(msg.id, reasoning)
+                view = FunctionCallView(
+                    message_id=msg.id,
+                    has_outputs=False,
+                    has_reasoning=bool(reasoning),
+                )
                 await msg.edit(view=view)
             return msg, start_time
         except Exception:
@@ -1104,12 +1122,20 @@ class LLMPipeline:
             )
             embed.description = f"{base_desc}\n\n{timestamp_line}"
 
-            # Build the view: always has View Inputs, conditionally add View Outputs
-            view = FunctionCallView(message_id=embed_message.id, has_outputs=bool(tool_outputs))
-
             # Store outputs if provided
             if tool_outputs:
                 FunctionCallView.store_outputs(embed_message.id, tool_outputs)
+
+            # Check if reasoning was stored (from send_function_call_embed)
+            cached_data = FunctionCallView._data_cache.get(embed_message.id, {})
+            has_reasoning = bool(cached_data.get("reasoning"))
+
+            # Build the view: View Inputs always, conditionally View Outputs + View Reasoning
+            view = FunctionCallView(
+                message_id=embed_message.id,
+                has_outputs=bool(tool_outputs),
+                has_reasoning=has_reasoning,
+            )
 
             await embed_message.edit(embed=embed, view=view)
         except Exception:

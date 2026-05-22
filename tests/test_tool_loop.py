@@ -127,6 +127,7 @@ for _m in [
     "aiuser.functions.openrouter.image_generation",
     "aiuser.functions.openrouter.pdf_parsing",
     "aiuser.functions.openrouter.image_parsing",
+    "aiuser.response.chat.function_call_view",
 ]:
     if _m not in sys.modules:
         sys.modules[_m] = MagicMock()

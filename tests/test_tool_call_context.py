@@ -168,6 +168,7 @@ _pipeline_mocks = [
     "aiuser.functions.openrouter.image_generation",
     "aiuser.functions.openrouter.pdf_parsing",
     "aiuser.functions.openrouter.image_parsing",
+    "aiuser.response.chat.function_call_view",
     "aiuser.response.chat.llm_pipeline",
 ]
 # Mock tenacity and httpx and openai

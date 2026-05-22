@@ -14,6 +14,7 @@ from redbot.core import Config, commands
 from aiuser.config.constants import REGEX_RUN_TIMEOUT
 from aiuser.messages_list.messages import MessagesList
 from aiuser.response.chat.llm_pipeline import LLMPipeline, ResponsePart, PipelineResult
+from aiuser.response.chat.function_call_view import ResponseView
 from aiuser.types.abc import MixinMeta
 from aiuser.utils.utilities import to_thread, resolve_emojis_for_discord, escape_unescaped_backticks, collapse_lines
 
@@ -74,8 +75,13 @@ async def should_reply(ctx: commands.Context) -> bool:
             return True
     return False
 
-async def send_response(ctx: commands.Context, response: str, can_reply: bool, mentionable_users) -> bool:
+async def send_response(ctx: commands.Context, response: str, can_reply: bool, mentionable_users) -> Optional[discord.Message]:
+    """Send the response embed to Discord.
+
+    Returns the sent message (or None) so callers can attach views.
+    """
     allowed = AllowedMentions(everyone=False, roles=False, users=[ctx.message.author])
+    sent_message = None
 
     if len(response) > 4096:
         total_embed_count = math.ceil(len(response) / 4096)
@@ -83,14 +89,26 @@ async def send_response(ctx: commands.Context, response: str, can_reply: bool, m
         for i in range(0, len(response), 4096):
             embed = Embed(title=f"{ctx.bot.user.name}'s Response", description = response[i:i + 4096])
             embed.set_footer(text=f"{int((i + 4096) / 4096)} of {total_embed_count}")
-            await ctx.send(embed=embed, allowed_mentions=allowed)
+            sent_message = await ctx.send(embed=embed, allowed_mentions=allowed)
     elif can_reply and await should_reply(ctx):
-        await ctx.message.reply(embed=Embed(title=f"{ctx.bot.user.name}'s Response", description = response), mention_author=False, allowed_mentions=allowed)
+        sent_message = await ctx.message.reply(embed=Embed(title=f"{ctx.bot.user.name}'s Response", description = response), mention_author=False, allowed_mentions=allowed)
     elif ctx.interaction:
-        await ctx.interaction.followup.send(embed=Embed(title=f"{ctx.bot.user.name}'s Response", description = response), allowed_mentions=allowed)
+        sent_message = await ctx.interaction.followup.send(embed=Embed(title=f"{ctx.bot.user.name}'s Response", description = response), allowed_mentions=allowed)
     else:
-        await ctx.send(embed=Embed(title=f"{ctx.bot.user.name}'s Response", description = response), allowed_mentions=allowed)
-    return True
+        sent_message = await ctx.send(embed=Embed(title=f"{ctx.bot.user.name}'s Response", description = response), allowed_mentions=allowed)
+    return sent_message
+
+
+async def _attach_reasoning_view(message: Optional[discord.Message], reasoning_steps: Optional[List[str]]):
+    """Attach a ResponseView with reasoning to a sent message, if reasoning is available."""
+    if not message or not reasoning_steps:
+        return
+    try:
+        ResponseView.store_reasoning_steps(message.id, reasoning_steps)
+        view = ResponseView(message_id=message.id, has_reasoning=True)
+        await message.edit(view=view)
+    except Exception:
+        logger.warning("Failed to attach reasoning view to response message", exc_info=True)
 
 async def send_reasoning(ctx: commands.Context, reasoning: str, can_reply: bool, mentionable_users) -> bool:
     allowed = AllowedMentions(everyone=False, roles=False, users=[ctx.message.author])
@@ -158,7 +176,9 @@ async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_l
                 cleaned_text = collapse_lines(cleaned_text, replacement=r'\n\n')
                 cleaned_text = escape_unescaped_backticks(cleaned_text)
                 cleaned_text = await resolve_emojis_for_discord(ctx, cleaned_text)
-                return await send_response(ctx, cleaned_text, messages_list.can_reply, recent_authors)
+                sent_msg = await send_response(ctx, cleaned_text, messages_list.can_reply, recent_authors)
+                await _attach_reasoning_view(sent_msg, result.reasoning_steps)
+                return True
         return True
 
     # ---- Has tool calls ----
@@ -173,7 +193,8 @@ async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_l
             cleaned_pre = collapse_lines(cleaned_pre, replacement=r'\n\n')
             cleaned_pre = escape_unescaped_backticks(cleaned_pre)
             cleaned_pre = await resolve_emojis_for_discord(ctx, cleaned_pre)
-            await send_response(ctx, cleaned_pre, messages_list.can_reply, recent_authors)
+            sent_msg = await send_response(ctx, cleaned_pre, messages_list.can_reply, recent_authors)
+            await _attach_reasoning_view(sent_msg, result.reasoning_steps)
             sent_early = True
 
     # ---- Final output: text + images ----
@@ -201,7 +222,7 @@ async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_l
         logger.warning("No text or images to send after pipeline run — bot will not reply!")
         return sent_early or False
 
-    await send_single_combined_message(ctx, cog, text_to_send, images, messages_list.can_reply, recent_authors)
+    await send_single_combined_message(ctx, cog, text_to_send, images, messages_list.can_reply, recent_authors, reasoning_steps=result.reasoning_steps)
     return True
 
 
@@ -212,6 +233,7 @@ async def send_single_combined_message(
     images: List[Dict],
     can_reply: bool,
     recent_authors,
+    reasoning_steps: Optional[List[str]] = None,
 ) -> bool:
     """Send a single Discord reply with an embed + optional image file attachments.
 
@@ -262,17 +284,21 @@ async def send_single_combined_message(
             )
             # Cache image data URLs for future context turn re-ingestion
             _cache_generated_images_in_response(ctx, cog, sent_message, images)
+            await _attach_reasoning_view(sent_message, reasoning_steps)
             return True
 
         elif cleaned_text:
             # Text only
-            return await send_response(ctx, cleaned_text, can_reply, recent_authors)
+            sent_msg = await send_response(ctx, cleaned_text, can_reply, recent_authors)
+            await _attach_reasoning_view(sent_msg, reasoning_steps)
+            return True
 
         elif files:
             # Images only
             sent_message = await ctx.message.reply(files=files, mention_author=False, allowed_mentions=allowed)
             logger.info(f"[Combined] Sent {len(files)} image(s) as reply to message {ctx.message.id}")
             _cache_generated_images_in_response(ctx, cog, sent_message, images)
+            await _attach_reasoning_view(sent_message, reasoning_steps)
             return True
 
     except discord.HTTPException as e:
