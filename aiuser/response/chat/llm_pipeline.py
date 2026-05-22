@@ -682,7 +682,7 @@ class LLMPipeline:
             all_pre_texts.append(response_text or "")
 
             # NEW: Send function call notification embed
-            status_embed_msg = await self.send_function_call_embed(tool_calls)
+            status_embed_msg, embed_start_time = await self.send_function_call_embed(tool_calls)
 
             # Split into local vs OpenRouter server tools
             local_tool_calls = [tc for tc in tool_calls if not self._is_openrouter_tool_name(tc.function.name)]
@@ -713,12 +713,14 @@ class LLMPipeline:
             except Exception:
                 # Update embed to failed status
                 if status_embed_msg:
-                    await self.update_function_call_embed(status_embed_msg, "failed")
+                    finish_time = int(datetime.now(timezone.utc).timestamp())
+                    await self.update_function_call_embed(status_embed_msg, "failed", embed_start_time, finish_time)
                 raise
 
             # Update embed to complete status
             if status_embed_msg:
-                await self.update_function_call_embed(status_embed_msg, "complete")
+                finish_time = int(datetime.now(timezone.utc).timestamp())
+                await self.update_function_call_embed(status_embed_msg, "complete", embed_start_time, finish_time)
 
             # Last round with tool_calls — force break
             if is_last:
@@ -997,12 +999,14 @@ class LLMPipeline:
 
     async def send_function_call_embed(
         self, tool_calls: List[ChatCompletionMessageToolCall]
-    ) -> Optional[discord.Message]:
+    ) -> Tuple[Optional[discord.Message], Optional[int]]:
         """Send an embed announcing the function calls being made.
 
-        Returns the sent message so it can be edited later with status updates.
+        Returns a tuple of (sent_message, start_unix_timestamp) so the embed
+        can be edited later with status updates and localized timestamps.
         """
-        embed = self._build_function_call_embed(tool_calls, "in_progress")
+        start_time = int(datetime.now(timezone.utc).timestamp())
+        embed = self._build_function_call_embed(tool_calls, "in_progress", start_time)
         try:
             msg = await self.ctx.send(
                 embed=embed,
@@ -1010,30 +1014,39 @@ class LLMPipeline:
                     everyone=False, roles=False, users=False
                 ),
             )
-            return msg
+            return msg, start_time
         except Exception:
             logger.warning("Failed to send function call notification embed", exc_info=True)
-            return None
+            return None, start_time
 
     async def update_function_call_embed(
-        self, embed_message: discord.Message, status: str
+        self, embed_message: discord.Message, status: str,
+        start_time: int, finish_time: int
     ) -> None:
-        """Edit the function call notification embed with a new status."""
+        """Edit the function call notification embed with a new status.
+
+        Uses Discord's localized timestamp format (<t:UNIX:F>) so each user
+        sees the timestamps in their own timezone.
+        """
         try:
             embed = embed_message.embeds[0]
             emoji = self._STATUS_EMOJI.get(status, "")
-            footer_text = embed.footer.text or ""
-            # Replace the status in the footer
-            new_footer = f"{emoji} {status.replace('_', ' ').title()} • {datetime.now(timezone.utc).strftime('%I:%M %p')}"
+            status_label = status.replace('_', ' ').title()
+            new_footer = f"{emoji} {status_label} • Started <t:{start_time}:F> • Finished <t:{finish_time}:F>"
             embed.set_footer(text=new_footer)
             await embed_message.edit(embed=embed)
         except Exception:
             logger.warning("Failed to update function call notification embed", exc_info=True)
 
     def _build_function_call_embed(
-        self, tool_calls: List[ChatCompletionMessageToolCall], status: str
+        self, tool_calls: List[ChatCompletionMessageToolCall], status: str,
+        start_time: int
     ) -> discord.Embed:
-        """Build the function call notification embed."""
+        """Build the function call notification embed.
+
+        Uses Discord's localized timestamp format (<t:UNIX:F>) so each user
+        sees the start time in their own timezone.
+        """
         bot_name = self.ctx.me.display_name or self.bot.user.name
         embed = discord.Embed(
             title=f"{bot_name} is making the following function calls...",
@@ -1058,9 +1071,10 @@ class LLMPipeline:
 
         embed.description = "\n".join(lines) if lines else "*No function call details available*"
 
-        # Set footer with status and timestamp
+        # Set footer with status and localized start timestamp
         emoji = self._STATUS_EMOJI.get(status, "")
-        footer_text = f"{emoji} {status.replace('_', ' ').title()} • {datetime.now(timezone.utc).strftime('%I:%M %p')}"
+        status_label = status.replace('_', ' ').title()
+        footer_text = f"{emoji} {status_label} • Started <t:{start_time}:F>"
         embed.set_footer(text=footer_text)
         embed.timestamp = datetime.now(timezone.utc)
 

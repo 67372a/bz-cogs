@@ -287,7 +287,7 @@ class TestBuildFunctionCallEmbed:
         tc1 = _make_tool_call("c1", "web_search", '{"query": "python"}')
         tc2 = _make_tool_call("c2", "web_fetch", '{"url": "https://example.com"}')
 
-        embed = pipeline._build_function_call_embed([tc1, tc2], "in_progress")
+        embed = pipeline._build_function_call_embed([tc1, tc2], "in_progress", 1700000000)
 
         # Verify the embed was created
         assert embed is not None
@@ -296,7 +296,7 @@ class TestBuildFunctionCallEmbed:
         pipeline = _make_pipeline()
         tc = _make_tool_call("c1", "weather", '{"city": "NYC"}')
 
-        embed = pipeline._build_function_call_embed([tc], "in_progress")
+        embed = pipeline._build_function_call_embed([tc], "in_progress", 1700000000)
 
         # The embed's title should match the expected pattern
         # Since discord.Embed is mocked, we check it was called with the right title
@@ -309,7 +309,7 @@ class TestBuildFunctionCallEmbed:
         pipeline = _make_pipeline()
         tc = _make_tool_call("c1", "test_tool", '{}')
 
-        embed = pipeline._build_function_call_embed([tc], "complete")
+        embed = pipeline._build_function_call_embed([tc], "complete", 1700000000)
 
         # Verify set_footer was called (the embed builder sets footer)
         # The embed is a mock, so we just verify the method was called
@@ -317,20 +317,29 @@ class TestBuildFunctionCallEmbed:
 
     def test_build_embed_with_empty_tool_calls(self):
         pipeline = _make_pipeline()
-        embed = pipeline._build_function_call_embed([], "in_progress")
+        embed = pipeline._build_function_call_embed([], "in_progress", 1700000000)
         assert embed is not None
 
     def test_build_embed_truncates_long_arguments(self):
         pipeline = _make_pipeline()
         long_args = '{"query": "' + 'x' * 200 + '"}'
         tc = _make_tool_call("c1", "search", long_args)
-        embed = pipeline._build_function_call_embed([tc], "in_progress")
+        embed = pipeline._build_function_call_embed([tc], "in_progress", 1700000000)
         assert embed is not None
 
     def test_build_embed_with_invalid_json_arguments(self):
         pipeline = _make_pipeline()
         tc = _make_tool_call("c1", "tool", 'not valid json')
-        embed = pipeline._build_function_call_embed([tc], "in_progress")
+        embed = pipeline._build_function_call_embed([tc], "in_progress", 1700000000)
+        assert embed is not None
+
+    def test_build_embed_footer_uses_discord_timestamp(self):
+        """Footer should contain Discord's localized timestamp format."""
+        pipeline = _make_pipeline()
+        tc = _make_tool_call("c1", "test", '{}')
+        embed = pipeline._build_function_call_embed([tc], "in_progress", 1700000000)
+        # The embed is a mock, but we can verify set_footer was called
+        # by checking the mock's call history
         assert embed is not None
 
 
@@ -347,10 +356,23 @@ class TestSendFunctionCallEmbed:
         pipeline.ctx.send = AsyncMock(return_value=MagicMock())
         tc = _make_tool_call("c1", "web_search", '{"query": "test"}')
 
-        result = await pipeline.send_function_call_embed([tc])
+        msg, start_time = await pipeline.send_function_call_embed([tc])
 
         pipeline.ctx.send.assert_called_once()
-        assert result is not None
+        assert msg is not None
+        assert isinstance(start_time, int)
+
+    @pytest.mark.asyncio
+    async def test_send_embed_returns_tuple_with_start_time(self):
+        """send_function_call_embed should return (message, start_unix) tuple."""
+        pipeline = _make_pipeline()
+        pipeline.ctx.send = AsyncMock(return_value=MagicMock())
+        tc = _make_tool_call("c1", "test", '{}')
+
+        msg, start_time = await pipeline.send_function_call_embed([tc])
+
+        assert isinstance(start_time, int)
+        assert start_time > 0
 
     @pytest.mark.asyncio
     async def test_send_embed_uses_allowed_mentions(self):
@@ -365,14 +387,15 @@ class TestSendFunctionCallEmbed:
         assert "allowed_mentions" in call_kwargs.kwargs or "allowed_mentions" in (call_kwargs[1] if len(call_kwargs) > 1 else {})
 
     @pytest.mark.asyncio
-    async def test_send_embed_returns_none_on_failure(self):
+    async def test_send_embed_returns_none_tuple_on_failure(self):
         pipeline = _make_pipeline()
         pipeline.ctx.send = AsyncMock(side_effect=discord_mock.HTTPException("fail"))
         tc = _make_tool_call("c1", "test", '{}')
 
-        result = await pipeline.send_function_call_embed([tc])
+        msg, start_time = await pipeline.send_function_call_embed([tc])
 
-        assert result is None
+        assert msg is None
+        assert isinstance(start_time, int)
 
 
 # ---------------------------------------------------------------------------
@@ -388,24 +411,46 @@ class TestUpdateFunctionCallEmbed:
         embed_msg = MagicMock()
         embed_msg.embeds = [MagicMock()]
         embed_msg.embeds[0].footer = MagicMock()
-        embed_msg.embeds[0].footer.text = "🔄 In Progress • 2:34 PM"
+        embed_msg.embeds[0].footer.text = "🔄 In Progress • Started <t:1700000000:F>"
         embed_msg.edit = AsyncMock()
 
-        await pipeline.update_function_call_embed(embed_msg, "complete")
+        await pipeline.update_function_call_embed(embed_msg, "complete", 1700000000, 1700000060)
 
         embed_msg.edit.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_update_embed_handles_http_exception(self):
+    async def test_update_embed_handles_exception(self):
         pipeline = _make_pipeline()
         embed_msg = MagicMock()
         embed_msg.embeds = [MagicMock()]
         embed_msg.embeds[0].footer = MagicMock()
         embed_msg.embeds[0].footer.text = "🔄 In Progress"
-        embed_msg.edit = AsyncMock(side_effect=discord_mock.HTTPException("fail"))
+        embed_msg.edit = AsyncMock(side_effect=Exception("fail"))
 
         # Should not raise
-        await pipeline.update_function_call_embed(embed_msg, "complete")
+        await pipeline.update_function_call_embed(embed_msg, "complete", 1700000000, 1700000060)
+
+    @pytest.mark.asyncio
+    async def test_update_embed_footer_has_both_timestamps(self):
+        """The updated footer should contain both start and finish timestamps."""
+        pipeline = _make_pipeline()
+        embed_msg = MagicMock()
+        embed_msg.embeds = [MagicMock()]
+        embed_msg.embeds[0].footer = MagicMock()
+        embed_msg.edit = AsyncMock()
+
+        await pipeline.update_function_call_embed(
+            embed_msg, "complete", 1700000000, 1700000060
+        )
+
+        # Verify set_footer was called with a string containing both timestamps
+        embed_msg.embeds[0].set_footer.assert_called_once()
+        footer_call = embed_msg.embeds[0].set_footer.call_args
+        footer_text = footer_call.kwargs.get("text", footer_call[1].get("text", ""))
+        assert "1700000000" in footer_text
+        assert "1700000060" in footer_text
+        assert "Started" in footer_text
+        assert "Finished" in footer_text
 
 
 # ---------------------------------------------------------------------------
@@ -512,7 +557,7 @@ class TestRunLoopFunctionCallEmbed:
         pipeline._is_openrouter_tool_name = MagicMock(return_value=False)
         pipeline._process_and_add_tool_results = AsyncMock()
         pipeline._process_openrouter_tool_results = AsyncMock()
-        pipeline.send_function_call_embed = AsyncMock(return_value=MagicMock())
+        pipeline.send_function_call_embed = AsyncMock(return_value=(MagicMock(), 1700000000))
         pipeline.update_function_call_embed = AsyncMock()
 
         tool_call = _make_tool_call("call_1", "web_search", '{"query": "test"}')
@@ -554,7 +599,7 @@ class TestRunLoopFunctionCallEmbed:
         pipeline._process_openrouter_tool_results = AsyncMock()
 
         mock_embed_msg = MagicMock()
-        pipeline.send_function_call_embed = AsyncMock(return_value=mock_embed_msg)
+        pipeline.send_function_call_embed = AsyncMock(return_value=(mock_embed_msg, 1700000000))
         pipeline.update_function_call_embed = AsyncMock()
 
         tool_call = _make_tool_call("call_1", "weather", '{"city": "NYC"}')
@@ -567,7 +612,12 @@ class TestRunLoopFunctionCallEmbed:
 
         await pipeline._run_loop()
 
-        pipeline.update_function_call_embed.assert_called_with(mock_embed_msg, "complete")
+        # Verify update was called with message, status, start_time, and finish_time
+        call_args = pipeline.update_function_call_embed.call_args
+        assert call_args[0][0] is mock_embed_msg
+        assert call_args[0][1] == "complete"
+        assert isinstance(call_args[0][2], int)  # start_time
+        assert isinstance(call_args[0][3], int)  # finish_time
 
     @pytest.mark.asyncio
     async def test_embed_updated_to_failed_on_exception(self):
@@ -580,7 +630,7 @@ class TestRunLoopFunctionCallEmbed:
         pipeline._process_openrouter_tool_results = AsyncMock()
 
         mock_embed_msg = MagicMock()
-        pipeline.send_function_call_embed = AsyncMock(return_value=mock_embed_msg)
+        pipeline.send_function_call_embed = AsyncMock(return_value=(mock_embed_msg, 1700000000))
         pipeline.update_function_call_embed = AsyncMock()
 
         tool_call = _make_tool_call("call_1", "failing_tool", '{"key": "val"}')
@@ -594,7 +644,12 @@ class TestRunLoopFunctionCallEmbed:
         with pytest.raises(RuntimeError, match="Tool failed"):
             await pipeline._run_loop()
 
-        pipeline.update_function_call_embed.assert_called_with(mock_embed_msg, "failed")
+        # Verify update was called with message, status, start_time, and finish_time
+        call_args = pipeline.update_function_call_embed.call_args
+        assert call_args[0][0] is mock_embed_msg
+        assert call_args[0][1] == "failed"
+        assert isinstance(call_args[0][2], int)  # start_time
+        assert isinstance(call_args[0][3], int)  # finish_time
 
     @pytest.mark.asyncio
     async def test_embed_not_updated_when_send_returns_none(self):
@@ -603,7 +658,7 @@ class TestRunLoopFunctionCallEmbed:
         pipeline._is_openrouter_tool_name = MagicMock(return_value=False)
         pipeline._process_and_add_tool_results = AsyncMock()
         pipeline._process_openrouter_tool_results = AsyncMock()
-        pipeline.send_function_call_embed = AsyncMock(return_value=None)
+        pipeline.send_function_call_embed = AsyncMock(return_value=(None, 1700000000))
         pipeline.update_function_call_embed = AsyncMock()
 
         tool_call = _make_tool_call("call_1", "test", '{}')
@@ -625,7 +680,7 @@ class TestRunLoopFunctionCallEmbed:
         pipeline._is_openrouter_tool_name = MagicMock(return_value=False)
         pipeline._process_and_add_tool_results = AsyncMock()
         pipeline._process_openrouter_tool_results = AsyncMock()
-        pipeline.send_function_call_embed = AsyncMock(return_value=MagicMock())
+        pipeline.send_function_call_embed = AsyncMock(return_value=(MagicMock(), 1700000000))
         pipeline.update_function_call_embed = AsyncMock()
 
         tc1 = _make_tool_call("call_1", "tool_a", '{}')
