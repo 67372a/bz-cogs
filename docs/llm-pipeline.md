@@ -66,47 +66,99 @@ The [`backfill`](../aiuser/settings/base.py:53) command sets a one-shot anchor m
 
 ---
 
-## 2. Two-Phase LLM Pipeline
+## 2. Tool-Calling Loop Pipeline
 
 [`LLMPipeline`](../aiuser/response/chat/llm_pipeline.py:91) is the core interaction engine.
+Instead of a fixed two-phase approach, the pipeline runs a **loop with a configurable
+maximum number of tool-calling rounds** (`max_tool_rounds`, default: `2`, which preserves
+the existing two-call behavior for backward compatibility).
 
-### 2.1 Phase 1: First LLM Call ([`phase1()`](../aiuser/response/chat/llm_pipeline.py:389))
-
-```
-1. Get custom parameters (logit_bias, model-specific kwargs)
-2. Setup tools (local ToolCall subclasses + OpenRouter server tools)
-3. Inject cached PDF annotations
-4. Build API call with tools, tool_choice="auto"
-5. Set safety settings to BLOCK_NONE for all categories
-6. Call LLM with tenacity retries
-7. Add assistant response to message history
-8. Return (pre_text, reasoning, has_tools, is_incomplete)
-```
-
-### 2.2 Phase 2: Tool Execution + Second Call ([`phase2()`](../aiuser/response/chat/llm_pipeline.py:435))
+### 2.1 Loop Flow
 
 ```
-1. Split tool calls into local vs. OpenRouter server tools
-2. Execute local tools in parallel (asyncio.gather)
-3. Collect generated images from tool executions
-4. Inject images into message history for vision context
-5. Second LLM call with tool_choice="none"
-6. Process OpenRouter server tool results
-7. Handle Gemini "replacement pattern" detection
-8. Combine reasoning from both calls
-9. Build ResponsePart objects
-10. Return (final_text, final_reasoning, images)
+round = 0
+response_text = ""
+reasoning = ""
+collected_images = []
+
+while round < max_tool_rounds:
+    round += 1
+    │
+    ├── Build API call with tools + tool_choice (see §2.2)
+    ├── Call LLM with tenacity retries (see §2.4)
+    ├── Add assistant response to message history
+    │
+    ├── IF no tool_calls:
+    │      Append content → response_text
+    │      Append reasoning → final_reasoning
+    │      BREAK (LLM chose to respond directly)
+    │
+    └── IF has tool_calls:
+           ├── Send early pre-text to Discord (first round only, if complete)
+           ├── Split: local tool calls vs. OpenRouter server tools
+           ├── Execute local tools in parallel (asyncio.gather)
+           ├── Collect generated images from tool executions
+           ├── Add tool results to message history (multimodal content parts
+           │   for image-generating tools)
+           ├── Add synthetic tool results for OpenRouter server-side tools
+           └── Continue to next round
+
+return final_text, final_reasoning, collected_images
 ```
 
-### 2.3 Text Completeness Heuristic
+### 2.2 `tool_choice` Per Round
 
-[`_is_text_incomplete()`](../aiuser/response/chat/llm_pipeline.py:131) checks if tool-call prefacing text appears interrupted:
+| Round | `tool_choice` | Rationale |
+|-------|--------------|-----------|
+| 1 to N-1 | `"auto"` | LLM may call tools OR respond directly — the loop naturally terminates when `tool_calls` is empty |
+| N (last round) | `"none"` + system prompt injection (see §2.3) | Attempt to force a final text response without further tool calls |
+
+Tools are included in **every** API call because some providers reject calls with an
+empty or missing `tools` array.
+
+### 2.3 Stopping Tool Calls on the Final Round
+
+Because `tool_choice="none"` can be unreliable across providers/proxies, a
+**layered defense** is applied on the last round:
+
+1. **`tool_choice="none"`** — Set per the OpenAI spec. Works on most providers.
+
+2. **User-role stop instruction** — A temporary `user`-role message is appended
+   before the final call (stripped afterward — not persisted to `MessagesList`).
+   A `user` role is used instead of `system` to avoid breaking provider-level
+   system-prompt caching (e.g., Google's context cache):
+
+   > *"You have reached the maximum number of tool-calling rounds. Based on all
+   > the information you have gathered, provide your final, complete response now.
+   > Do NOT call any more tools — respond directly to the user."*
+
+3. **Graceful forced-break** — If the LLM returns `tool_calls` despite the above,
+   they are executed, results are added to history, and the loop is force-broken.
+   The accumulated `response_text` and tool results form the final answer. A
+   warning is logged so operators can detect models that ignore `tool_choice="none"`.
+
+### 2.4 Configuration
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `max_tool_rounds` | `2` | Maximum LLM calls in the tool-calling loop. Set to `1` to disable tools entirely (one call, no execution). Set higher (e.g., `5`) for chained/sequential tool calls. |
+
+Added to [`DEFAULT_GUILD`](../aiuser/config/defaults.py:63) and exposed via the
+`[p]functions` settings group.
+
+### 2.5 Text Completeness Heuristic
+
+[`_is_text_incomplete()`](../aiuser/response/chat/llm_pipeline.py:139) checks if tool-call
+prefacing text appears interrupted. Applied on the **first round only** — if the pre-text
+before tool calls looks complete, it is sent to Discord early. On subsequent rounds,
+pre-text is accumulated internally and only delivered as part of the final combined message.
+Checks:
 1. Trailing punctuation (`,`, `;`, `-`, `–`)
 2. Trailing dash (`--` or ` -`)
 3. Ends with a "bridging word" (articles, conjunctions, prepositions — 80+ word set)
 4. Trailing whitespace
 
-### 2.4 Retry & Error Handling
+### 2.6 Retry & Error Handling
 
 [`_create_completion_with_retry()`](../aiuser/response/chat/llm_pipeline.py:374):
 
@@ -115,6 +167,8 @@ The [`backfill`](../aiuser/settings/base.py:53) command sets a one-shot anchor m
 | Wait strategy | `wait_random_exponential(min=1, max=5)` |
 | Max attempts | 4 |
 | Retry triggers | `RateLimitError`, `APIConnectionError`, `InternalServerError` |
+
+Each LLM call within the loop uses the same retry logic independently.
 
 [`is_response_unsatisfactory()`](../aiuser/response/chat/llm_pipeline.py:55) also retries on: empty content with `content_filter` or `error` finish_reason.
 
@@ -126,7 +180,6 @@ Error reactions:
 | `APIConnectionError` | ⚠️ "aiuser could not connect to LLM API" |
 | `APIStatusError` | ⚠️ "aiuser LLM API error (Status NNN)" |
 | Any other | ⚠️ "aiuser request failed" |
-
 ---
 
 ## 3. Response Dispatch
@@ -140,13 +193,13 @@ Routes based on context:
 ### 3.2 Chat Response Flow ([`create_chat_response()`](../aiuser/response/chat/response.py:110))
 
 ```
-Phase 1 complete
+pipeline.run() completes
     │
-    ├── No tools: send reasoning → clean text → send response → done
+    ├── No tools used: send reasoning → clean text → send response → done
     │
-    └── Has tools:
-         ├── Pre-text complete? → send early output
-         └── Phase 2 → clean final text + images → send combined message
+    └── Tools used:
+         ├── Pre-text complete? → send early output (first round only)
+         └── Final round complete → clean final text + images → send combined message
 ```
 
 ### 3.3 Response Cleaning

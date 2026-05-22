@@ -102,6 +102,7 @@ DEFAULT_GUILD = {
     "function_calling": False,
     "function_calling_functions": [],
     "function_calling_default_location": [49.24966, -123.11934],
+    "max_tool_rounds": 2,
     "conversation_reply_percent": 0,
     "conversation_reply_time": 20,
     "grok_trigger": False,

@@ -321,6 +321,15 @@ class MessagesList:
         else:
             await self._add_tokens(content)
 
+    async def add_user(self, content: str, index: int = None):
+        """Add a user-role message (e.g. stop instruction)."""
+        if self.tokens > self.token_limit:
+            return
+        entry = MessageEntry("user", content)
+        insert_at = len(self.messages) if index is None else index
+        self.messages.insert(insert_at, entry)
+        await self._add_tokens(content)
+
     async def add_tool_result(self, content: Union[str, list], tool_call_id: int, name: str = None, index: int = None):
         """Add a tool result message. Content may be a plain string or a list
         of content parts (text + image_url) for multimodal function responses."""

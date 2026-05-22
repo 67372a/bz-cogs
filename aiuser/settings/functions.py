@@ -87,6 +87,9 @@ class FunctionCallingSettings(MixinMeta):
         if location:
             embed.add_field(name="Location", value=f"`{location[0]}, {location[1]}`", inline=False)
 
+        max_rounds = await self.config.guild(ctx.guild).max_tool_rounds()
+        embed.add_field(name="Max Tool Rounds", value=f"`{max_rounds}`", inline=False)
+
         embed.set_footer(text=f"Use {ctx.clean_prefix}aiuser functions --help to see all subcommands")
         await ctx.send(embed=embed)
 
@@ -110,6 +113,28 @@ class FunctionCallingSettings(MixinMeta):
         )
         if current_value:
             embed.set_footer(text="⚠️ Ensure selected model supports function calling!")
+        await ctx.send(embed=embed)
+
+    @functions.command(name="maxrounds")
+    async def set_max_tool_rounds(self, ctx: commands.Context, rounds: int):
+        """Set the maximum number of tool-calling rounds.
+
+        Controls how many sequential LLM calls can be made with tool execution
+        between them. Default is 2 (one tool call + one response).
+        Set to 1 to disable tool execution (single call only).
+        Set higher (e.g. 5) for chained/sequential tool calls.
+
+        **Arguments**
+            - `rounds` number of rounds (1–10)
+        """
+        if rounds < 1 or rounds > 10:
+            return await ctx.send("Please provide a value between 1 and 10.")
+        await self.config.guild(ctx.guild).max_tool_rounds.set(rounds)
+        embed = discord.Embed(
+            title="Max Tool Rounds now set to:",
+            description=f"`{rounds}`",
+            color=await ctx.embed_color(),
+        )
         await ctx.send(embed=embed)
 
     @functions.command(name="location")

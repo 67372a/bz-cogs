@@ -28,6 +28,7 @@ from aiuser.functions.types import ToolCallSchema
 from aiuser.functions.generate_image.tool_call import GenerateImageToolCall
 from aiuser.functions.edit_image.tool_call import EditImageToolCall
 from aiuser.messages_list.messages import MessagesList
+from aiuser.messages_list.entry import MessageEntry
 from aiuser.functions.openrouter import (
     OpenRouterWebSearch,
     OpenRouterWebFetch,
@@ -50,6 +51,21 @@ class ResponsePart:
     images: List[Dict] = field(default_factory=list)
     def __bool__(self):
         return bool(self.content.strip()) if isinstance(self.content, str) else bool(self.content)
+
+
+@dataclass
+class PipelineResult:
+    """Result of the tool-calling loop execution.
+
+    Contains everything the caller needs to send the final response to Discord.
+    """
+    text: Optional[str] = None
+    reasoning: Optional[str] = None
+    images: List[Dict] = field(default_factory=list)
+    response_parts: List["ResponsePart"] = field(default_factory=list)
+    has_tools: bool = False
+    pre_text: Optional[str] = None
+    pre_text_complete: bool = False
 
 
 # --- Predicate function for tenacity ---
@@ -112,8 +128,6 @@ class LLMPipeline:
         self.reasoning: Optional[str] = None
         self.response_parts: List[ResponsePart] = []
         self.collected_images: List[Dict] = []
-        self._phase1_done = False
-        self._phase2_done = False
 
     # ------------------------------------------------------------------    
     # Text completeness heuristic
@@ -510,15 +524,49 @@ class LLMPipeline:
             logger.error(f"Error calling LLM API: {e}")
             raise
 
-    # ------------------------------------------------------------------    
-    # Two-phase execution API
     # ------------------------------------------------------------------
-    async def phase1(self) -> Tuple[Optional[str], Optional[str], bool, bool]:
-        """Phase 1: first LLM call.
+    # Tool-calling loop
+    # ------------------------------------------------------------------
+    _STOP_INSTRUCTION = (
+        "You have reached the maximum number of tool-calling rounds. "
+        "Based on all the information you have gathered, provide your final, "
+        "complete response now. Do NOT call any more tools — respond directly to the user."
+    )
+
+    async def run(self) -> PipelineResult:
+        """Run the tool-calling loop with configurable max rounds.
+
+        On the first round, if no tools are called, returns immediately.
+        If tool calls are present, executes tools and loops for additional rounds.
+        On the final round, uses ``tool_choice="none"`` and injects a user-role
+        stop instruction (to preserve system-prompt caching) to discourage
+        further tool calls.
 
         Returns:
-            (pre_text, reasoning, has_tool_calls, is_incomplete)
+            PipelineResult with text, reasoning, images, has_tools, etc.
         """
+        try:
+            return await self._run_loop()
+        except httpx.ReadTimeout:
+            logger.error(f"LLM request to {self.model} timed out.")
+            await self.ctx.react_quietly("💤", message="`aiuser` request timed out")
+        except openai.RateLimitError:
+            logger.warning(f"LLM request to {self.model} was rate-limited.")
+            await self.ctx.react_quietly("💤", message="`aiuser` request ratelimited")
+        except openai.APIConnectionError as e:
+            logger.error(f"LLM API connection error: {e}")
+            await self.ctx.react_quietly("⚠️", message="`aiuser` could not connect to LLM API")
+        except openai.APIStatusError as e:
+            logger.error(f"LLM API error (Status {e.status_code}): {e.response.text if e.response else 'No response body'}")
+            await self.ctx.react_quietly("⚠️", message=f"`aiuser` LLM API error (Status {e.status_code})")
+        except Exception:
+            logger.exception("Unexpected error during LLM processing")
+            await self.ctx.react_quietly("⚠️", message="`aiuser` request failed")
+        return PipelineResult()
+
+    async def _run_loop(self) -> PipelineResult:
+        """Execute the tool-calling loop (core logic, no error handling)."""
+        # --- Setup (once) ---
         custom_kwargs = await self.get_custom_parameters()
         await self.setup_tools()
         await self._inject_pdf_annotations()
@@ -526,147 +574,129 @@ class LLMPipeline:
         self.response_parts = []
         self.collected_images = []
 
-        kwargs1 = copy.deepcopy(custom_kwargs)
+        max_rounds = await self.config.guild(self.ctx.guild).max_tool_rounds()
+        if not max_rounds or max_rounds < 1:
+            max_rounds = 2
 
-        if self.available_tools_schemas or self.openrouter_tools:
-            kwargs1["tools"] = [asdict(schema) for schema in self.available_tools_schemas] + self.openrouter_tools
-            kwargs1["tool_choice"] = "auto"
-            if "gemini-3" in self.model.lower():
-                kwargs1["parallel_tool_calls"] = True
+        tools_available = bool(self.available_tools_schemas or self.openrouter_tools)
 
-        if 'extra_body' not in kwargs1 or not isinstance(kwargs1.get('extra_body'), dict):
-            kwargs1['extra_body'] = {}
-        kwargs1['extra_body']['modalities'] = ['text']
-        if 'openrouter:image_generation' in kwargs1.get("tools", []):
-            kwargs1['extra_body']['modalities'].append('image')
+        logger.info("Tool-calling loop: max_rounds=%d, tools_available=%s", max_rounds, tools_available)
 
-        response_text, reasoning_text, response_tool_calls, response_reasoning_details, response_model_extra = await self.call_client(kwargs1)
+        # --- State tracking across rounds ---
+        first_round_text = None
+        first_round_reasoning = None
+        first_round_model_extra = None
+        all_pre_texts: List[str] = []
+        accumulated_reasoning: List[str] = []
+        has_tools = False
+        forced_break = False
 
-        self._phase1_pre_text = response_text
-        self._phase1_reasoning = reasoning_text
-        self._phase1_tool_calls = response_tool_calls
-        self._phase1_model_extra = response_model_extra
+        # Updated each iteration
+        response_text = None
+        reasoning_text = None
+        model_extra = None
+        last_or_tool_calls: List[ChatCompletionMessageToolCall] = []
+        last_or_model_extra = None
 
-        # Log phase 1 reasoning output
-        if reasoning_text:
+        for round_num in range(1, max_rounds + 1):
+            is_last = (round_num == max_rounds)
+
+            # --- Build kwargs for this round ---
+            kwargs = copy.deepcopy(custom_kwargs)
+
+            if tools_available:
+                kwargs["tools"] = [asdict(schema) for schema in self.available_tools_schemas] + self.openrouter_tools
+                kwargs["tool_choice"] = "none" if is_last else "auto"
+                if "gemini-3" in self.model.lower():
+                    kwargs["parallel_tool_calls"] = True
+
+            if 'extra_body' not in kwargs or not isinstance(kwargs.get('extra_body'), dict):
+                kwargs['extra_body'] = {}
+            kwargs['extra_body']['modalities'] = ['text']
+            if 'openrouter:image_generation' in kwargs.get("tools", []):
+                kwargs['extra_body']['modalities'].append('image')
+
+            # Inject user-role stop instruction on the last round to discourage
+            # further tool calls.  A user role is used instead of system to avoid
+            # breaking provider-level system-prompt caching (e.g. Google context cache).
+            stop_entry = None
+            if is_last and tools_available:
+                stop_entry = MessageEntry("user", self._STOP_INSTRUCTION)
+                self.msg_list.messages.append(stop_entry)
+
+            # --- Call LLM ---
+            response_text, reasoning_text, tool_calls, reasoning_details, model_extra = await self.call_client(kwargs)
+
+            # Remove stop instruction (before adding assistant message)
+            if stop_entry:
+                try:
+                    self.msg_list.messages.remove(stop_entry)
+                except ValueError:
+                    pass
+
+            # --- Logging ---
             logger.info(
-                "Phase 1 reasoning output: length=%d preview=%s",
-                len(reasoning_text), reasoning_text[:500]
+                "Round %d/%d: text_length=%d, tool_calls=%d",
+                round_num, max_rounds, len(response_text or ''), len(tool_calls)
             )
-        else:
-            logger.info("Phase 1: No reasoning output from model")
-
-        # Log phase 1 tool calls with structured detail (id, name, args)
-        if response_tool_calls:
-            logger.info(
-                "Phase 1: Received %d tool call(s) from LLM", len(response_tool_calls)
-            )
-            for tc in response_tool_calls:
+            if reasoning_text:
                 logger.info(
-                    "Phase 1 tool call: id=%s name=%s args=%s",
-                    tc.id, tc.function.name, tc.function.arguments[:200]
+                    "Round %d reasoning: length=%d, preview=%s",
+                    round_num, len(reasoning_text), reasoning_text[:500]
                 )
-        else:
-            logger.info("Phase 1: No tool calls in LLM response")
-
-        # Add to message history — this becomes the "model" turn with functionCalls
-        await self.msg_list.add_assistant(
-            content=response_text,
-            tool_calls=response_tool_calls,
-            reasoning_details=response_reasoning_details,
-            index=len(self.msg_list) + 1
-        )
-
-        # Verify the assistant message was added with correct tool_calls
-        if response_tool_calls:
-            last_entry = self.msg_list.messages[-1] if self.msg_list.messages else None
-            if last_entry and last_entry.tool_calls:
-                for tc in last_entry.tool_calls:
-                    tc_id = getattr(tc, 'id', tc.get('id') if isinstance(tc, dict) else '?')
-                    tc_name = getattr(tc, 'function', None)
-                    tc_name = getattr(tc_name, 'name', '?') if tc_name else (tc.get('function', {}).get('name', '?') if isinstance(tc, dict) else '?')
-                    logger.info(
-                        "Phase 1 context verification: assistant message stores tool_call id=%s name=%s",
-                        tc_id, tc_name
-                    )
             else:
-                logger.warning("Phase 1 context verification FAILED: assistant message has no tool_calls after add_assistant()")
-
-        has_tools = bool(response_tool_calls)
-        is_incomplete = self._is_text_incomplete(response_text or "") if has_tools else False
-
-        self._phase1_done = True
-        return response_text, reasoning_text, has_tools, is_incomplete
-
-    async def phase2(self) -> Tuple[Optional[str], Optional[str], List[Dict]]:
-        """Phase 2: execute tools + second LLM call.
-
-        Must be called after phase1. Returns:
-            (final_text, final_reasoning, images)
-            - final_text: the text content to send (may differ from raw LLM output
-              when Gemini replacement pattern is detected)
-            - final_reasoning: combined reasoning from both calls
-            - images: list of image-data dicts generated by tools
-        """
-        if not self._phase1_done:
-            raise RuntimeError("phase2() called before phase1()")
-
-        logger.info("Phase 2: Starting tool execution and second LLM call")
-
-        custom_kwargs = await self.get_custom_parameters()
-        response_text = self._phase1_pre_text
-        reasoning_text = self._phase1_reasoning
-        response_tool_calls = self._phase1_tool_calls
-        first_call_model_extra = self._phase1_model_extra
-
-        logger.info(
-            "Phase 2: phase1 pre_text length=%d, num_tool_calls=%d, tool_call_ids=%s",
-            len(response_text or ''), len(response_tool_calls),
-            [(tc.id, tc.function.name) for tc in response_tool_calls]
-        )
-
-        # Filter tool calls
-        local_tool_calls = [tc for tc in response_tool_calls if not self._is_openrouter_tool_name(tc.function.name)]
-        openrouter_tool_calls = [tc for tc in response_tool_calls if self._is_openrouter_tool_name(tc.function.name)]
-
-        logger.info(
-            "Phase 2: local_tools=%s, openrouter_tools=%s",
-            [tc.function.name for tc in local_tool_calls],
-            [tc.function.name for tc in openrouter_tool_calls]
-        )
-
-        # Log full arguments for each tool call the model tried to make
-        if response_tool_calls:
-            for tc in response_tool_calls:
+                logger.info("Round %d: No reasoning output from model", round_num)
+            for tc in tool_calls:
                 logger.info(
-                    "Phase 2 tool call detail: id=%s name=%s args=%s",
-                    tc.id, tc.function.name, tc.function.arguments[:1000]
+                    "Round %d tool call: id=%s name=%s args=%s",
+                    round_num, tc.id, tc.function.name, tc.function.arguments[:200]
                 )
 
-        # Execute local tools.
-        # Images from image-generating tools are collected and embedded
-        # directly in tool results as multimodal content parts inside
-        # _process_and_add_tool_results (per Gemini 3.5 Flash guidance:
-        # "include multimodal content inside the function response, not
-        # outside it").
-        if local_tool_calls:
-            logger.info("Phase 2: Executing %d local tool(s)", len(local_tool_calls))
-            await self._process_and_add_tool_results(local_tool_calls)
-            logger.info("Phase 2: Local tool execution completed")
-        else:
-            logger.info("Phase 2: No local tools to execute")
+            # --- Add assistant response to history ---
+            await self.msg_list.add_assistant(
+                content=response_text,
+                tool_calls=tool_calls,
+                reasoning_details=reasoning_details,
+                index=len(self.msg_list) + 1
+            )
 
-        # Add synthetic tool results for OpenRouter server-side tools.
-        # Without these, the second LLM call would see an assistant message
-        # with unanswered tool_calls — an invalid conversation state that
-        # causes some models (especially Gemini) to return empty content.
-        if openrouter_tool_calls:
-            logger.info("Phase 2: Adding synthetic tool results for %d OpenRouter server tool(s)", len(openrouter_tool_calls))
+            # --- Track first-round state ---
+            if round_num == 1:
+                first_round_text = response_text
+                first_round_reasoning = reasoning_text
+                first_round_model_extra = model_extra
+
+            # Track reasoning across rounds
+            if reasoning_text:
+                accumulated_reasoning.append(reasoning_text)
+
+            # --- No tool calls — loop complete ---
+            if not tool_calls:
+                logger.info("Round %d/%d: No tool calls, loop complete", round_num, max_rounds)
+                break
+
+            # --- Has tool calls ---
+            has_tools = True
+            all_pre_texts.append(response_text or "")
+
+            # Split into local vs OpenRouter server tools
+            local_tool_calls = [tc for tc in tool_calls if not self._is_openrouter_tool_name(tc.function.name)]
+            openrouter_tool_calls = [tc for tc in tool_calls if self._is_openrouter_tool_name(tc.function.name)]
+            if openrouter_tool_calls:
+                last_or_tool_calls = openrouter_tool_calls
+                last_or_model_extra = model_extra
+
+            # Execute local tools in parallel
+            if local_tool_calls:
+                logger.info("Round %d: Executing %d local tool(s)", round_num, len(local_tool_calls))
+                await self._process_and_add_tool_results(local_tool_calls)
+                logger.info("Round %d: Local tool execution completed", round_num)
+            else:
+                logger.info("Round %d: No local tools to execute", round_num)
+
+            # Add synthetic tool results for OpenRouter server-side tools
             for tc in openrouter_tool_calls:
-                logger.info(
-                    "Phase 2: Adding OpenRouter synthetic result: id=%s name=%s",
-                    tc.id, tc.function.name
-                )
+                logger.info("Round %d: Adding OpenRouter synthetic result: id=%s name=%s", round_num, tc.id, tc.function.name)
                 await self.msg_list.add_tool_result(
                     name=tc.function.name,
                     tool_call_id=tc.id,
@@ -675,71 +705,83 @@ class LLMPipeline:
                     index=len(self.msg_list) + 1
                 )
 
-        # Phase 2 LLM call
-        logger.info("Phase 2: Starting second LLM call with %d messages in history", len(self.msg_list))
-        kwargs2 = copy.deepcopy(custom_kwargs)
-        kwargs2["tools"] = [asdict(schema) for schema in self.available_tools_schemas] + self.openrouter_tools
-        kwargs2["tool_choice"] = "none"
-        if 'extra_body' not in kwargs2 or not isinstance(kwargs2.get('extra_body'), dict):
-            kwargs2['extra_body'] = {}
-        kwargs2['extra_body']['modalities'] = ['text']
-        if 'openrouter:image_generation' in kwargs2.get("tools", []):
-            kwargs2['extra_body']['modalities'].append('image')
-        if "gemini-3" in self.model.lower():
-            kwargs2["parallel_tool_calls"] = True
+            # Last round with tool_calls — force break
+            if is_last:
+                logger.warning(
+                    "Round %d/%d (last): LLM returned tool_calls despite tool_choice='none'. "
+                    "Executing tools then force-breaking.", round_num, max_rounds
+                )
+                forced_break = True
+                break
 
-        tool_response_text, tool_reasoning_text, _, tool_response_reasoning_details, tool_response_model_extra = await self.call_client(kwargs2)
+        # ====================================================================
+        # Build final result
+        # ====================================================================
 
-        logger.info(
-            "Phase 2: Second LLM call completed. response_text length=%d, has_reasoning=%s",
-            len(tool_response_text or ''), bool(tool_reasoning_text)
-        )
+        combined_pre_text = "".join(all_pre_texts)
 
-        # Log phase 2 reasoning output
-        if tool_reasoning_text:
-            logger.info(
-                "Phase 2 reasoning output: length=%d preview=%s",
-                len(tool_reasoning_text), tool_reasoning_text[:500]
+        if not has_tools:
+            # --- No tools: simple response ---
+            self.completion = response_text
+            self.reasoning = reasoning_text
+            self.response_parts = [ResponsePart(type="text", content=response_text or "")]
+
+            # Handle transparent OpenRouter image gen (no tool_calls but image gen tool present)
+            if self.openrouter_tools and response_text:
+                has_image_gen_tool = any(t.get("type") == OpenRouterToolType.IMAGE_GENERATION.value for t in self.openrouter_tools)
+                if has_image_gen_tool and model_extra:
+                    await OpenRouterImageGeneration.handle_tool_response_content(
+                        response_text, self.ctx, model_extra=model_extra,
+                    )
+
+            return PipelineResult(
+                text=response_text,
+                reasoning=reasoning_text,
+                images=self.collected_images,
+                response_parts=self.response_parts,
+                has_tools=False,
+                pre_text=response_text,
+                pre_text_complete=not self._is_text_incomplete(response_text or ""),
             )
+
+        # --- Has tools: combine results across rounds ---
+
+        if forced_break:
+            # All rounds had tool_calls — no final response text
+            final_text = combined_pre_text
+            final_response_text = None
         else:
-            logger.info("Phase 2: No reasoning output from model")
+            # The last round had no tool_calls — its text is the final response
+            final_response_text = response_text
+            is_replacement = (
+                combined_pre_text
+                and final_response_text
+                and final_response_text.strip().startswith(combined_pre_text.strip())
+            )
+            if is_replacement:
+                final_text = final_response_text
+            else:
+                final_text = combined_pre_text + (final_response_text or "")
 
-        await self.msg_list.add_assistant(
-            content=tool_response_text,
-            reasoning_details=tool_response_reasoning_details,
-            index=len(self.msg_list) + 1
-        )
+        # Combine reasoning from all rounds
+        final_reasoning = None
+        if len(accumulated_reasoning) == 1:
+            final_reasoning = accumulated_reasoning[0]
+        elif len(accumulated_reasoning) > 1:
+            final_reasoning = "\n\n".join(accumulated_reasoning)
 
-        # Process OpenRouter server tool results (handles image sending for OpenRouter path)
-        if openrouter_tool_calls and tool_response_text:
+        # Process OpenRouter server tool results
+        if last_or_tool_calls and (final_response_text or combined_pre_text):
             await self._process_openrouter_tool_results(
-                openrouter_tool_calls,
-                tool_response_text,
-                model_extra=tool_response_model_extra or first_call_model_extra,
+                last_or_tool_calls,
+                final_response_text or combined_pre_text,
+                model_extra=last_or_model_extra or first_round_model_extra,
             )
-
-        # Determine final text output based on Gemini replacement pattern
-        is_replacement = False
-        if response_text and tool_response_text and tool_response_text.strip().startswith(response_text.strip()):
-            is_replacement = True
-
-        if is_replacement:
-            final_text = tool_response_text
-        else:
-            final_text = (response_text or "") + (tool_response_text or "")
-
-        # Combine reasoning
-        final_reasoning = reasoning_text
-        if reasoning_text and tool_reasoning_text:
-            final_reasoning = reasoning_text + "\n\n" + tool_reasoning_text
-        elif tool_reasoning_text:
-            final_reasoning = tool_reasoning_text
 
         # Build response parts
-        is_incomplete = self._is_text_incomplete(response_text or "")
+        is_incomplete = self._is_text_incomplete(first_round_text or "")
 
         if is_incomplete:
-            # Pre-text is incomplete — combine final text + images into one message
             part = ResponsePart(
                 type="text_and_images",
                 content=final_text,
@@ -747,49 +789,30 @@ class LLMPipeline:
             )
             self.response_parts = [part]
         else:
-            # Pre-text was already sent (or will be sent by the caller).
-            # Send final text + images as a single combined message.
             part = ResponsePart(
                 type="text_and_images",
-                content=tool_response_text or "",
+                content=final_response_text or combined_pre_text,
                 images=self.collected_images,
             )
             self.response_parts = [part] if part else []
 
         logger.info(
-            "Phase 2 complete: num_parts=%d, is_incomplete=%s, final_text_length=%d, images=%d",
-            len(self.response_parts), is_incomplete, len(final_text or ''),
-            len(self.collected_images)
+            "Loop complete: has_tools=%s, forced_break=%s, final_text_length=%d, images=%d, response_parts=%d",
+            has_tools, forced_break, len(final_text or ''), len(self.collected_images), len(self.response_parts)
         )
 
         self.completion = final_text
         self.reasoning = final_reasoning
-        self._phase2_done = True
 
-        # Handle transparent OpenRouter image gen (no tool_calls)
-        if not response_tool_calls and self.openrouter_tools:
-            has_image_gen_tool = any(t.get("type") == OpenRouterToolType.IMAGE_GENERATION.value for t in self.openrouter_tools)
-            if has_image_gen_tool and first_call_model_extra:
-                await OpenRouterImageGeneration.handle_tool_response_content(
-                    response_text or "", self.ctx, model_extra=first_call_model_extra,
-                )
-
-        return final_text, final_reasoning, self.collected_images
-
-    # ------------------------------------------------------------------    
-    # Legacy API — kept for backward compatibility
-    # ------------------------------------------------------------------
-    async def create_completion(self) -> Tuple[Optional[str], Optional[str]]:
-        """Legacy: runs both phases and returns the combined text + reasoning."""
-        pre_text, reasoning, has_tools, _ = await self.phase1()
-        if not has_tools:
-            self.completion = pre_text
-            self.reasoning = reasoning
-            self.response_parts = [ResponsePart(type="text", content=pre_text or "")]
-            return self.completion, self.reasoning
-
-        final_text, final_reasoning, images = await self.phase2()
-        return self.completion, self.reasoning
+        return PipelineResult(
+            text=final_text,
+            reasoning=final_reasoning,
+            images=self.collected_images,
+            response_parts=self.response_parts,
+            has_tools=True,
+            pre_text=first_round_text,
+            pre_text_complete=not is_incomplete,
+        )
 
     def _collect_images_from_tool(self, tool_function_name: str) -> List[Dict]:
         """Collect generated/edited images from an image-producing tool.
@@ -950,24 +973,3 @@ class LLMPipeline:
 
     async def get_response_parts(self) -> List[ResponsePart]:
         return self.response_parts
-
-    async def run(self) -> Tuple[List[ResponsePart] | None, str | None, str | None]:
-        try:
-            response_text, reasoning_text = await self.create_completion()
-            return self.response_parts, response_text, reasoning_text
-        except httpx.ReadTimeout:
-            logger.error(f"LLM request to {self.model} timed out.")
-            await self.ctx.react_quietly("💤", message="`aiuser` request timed out")
-        except openai.RateLimitError:
-            logger.warning(f"LLM request to {self.model} was rate-limited.")
-            await self.ctx.react_quietly("💤", message="`aiuser` request ratelimited")
-        except openai.APIConnectionError as e:
-            logger.error(f"LLM API connection error: {e}")
-            await self.ctx.react_quietly("⚠️", message="`aiuser` could not connect to LLM API")
-        except openai.APIStatusError as e:
-            logger.error(f"LLM API error (Status {e.status_code}): {e.response.text if e.response else 'No response body'}")
-            await self.ctx.react_quietly("⚠️", message=f"`aiuser` LLM API error (Status {e.status_code})")
-        except Exception:
-            logger.exception("Unexpected error during LLM processing")
-            await self.ctx.react_quietly("⚠️", message="`aiuser` request failed")
-        return [], None, None

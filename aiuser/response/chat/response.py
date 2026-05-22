@@ -13,7 +13,7 @@ from redbot.core import Config, commands
 
 from aiuser.config.constants import REGEX_RUN_TIMEOUT
 from aiuser.messages_list.messages import MessagesList
-from aiuser.response.chat.llm_pipeline import LLMPipeline, ResponsePart
+from aiuser.response.chat.llm_pipeline import LLMPipeline, ResponsePart, PipelineResult
 from aiuser.types.abc import MixinMeta
 from aiuser.utils.utilities import to_thread, resolve_emojis_for_discord, escape_unescaped_backticks, collapse_lines
 
@@ -111,24 +111,19 @@ async def send_reasoning(ctx: commands.Context, reasoning: str, can_reply: bool,
     return True
 
 async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_list: MessagesList) -> bool:
-    """Create and send a chat response using the two-phase pipeline.
+    """Create and send a chat response using the tool-calling loop pipeline.
 
-    Phase 1: first LLM call.
-    - If no tool calls: send text as a single message, done.
-    - If tool calls and pre-text is complete: send pre-text immediately (early output),
-      then proceed to phase 2.
-    - If tool calls and pre-text incomplete: wait for phase 2 to send combined message.
-
-    Phase 2: execute tools + second LLM call.
-    - Sends final text + images as a single combined Discord message
-      (embed with file attachments).
+    The pipeline runs a configurable number of LLM rounds, executing tools
+    between rounds. If no tools are called, the response is sent immediately.
+    If tools are called and first-round text is complete, it is sent early
+    while the loop continues executing tools.
     """
     pipeline = LLMPipeline(cog, ctx, messages=messages_list)
 
-    # ---- Phase 1: First LLM call ----
-    pre_text, reasoning, has_tools, is_incomplete = await pipeline.phase1()
+    # ---- Run the tool-calling loop ----
+    result = await pipeline.run()
 
-    if not pre_text and not has_tools:
+    if not result.text and not result.has_tools:
         return False
 
     recent_authors = [
@@ -138,6 +133,7 @@ async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_l
 
     # Send reasoning if present (always before any response text)
     # Hardcoded disable: _SEND_REASONING_TO_DISCORD must be True to send reasoning to Discord
+    reasoning = result.reasoning
     if reasoning and _SEND_REASONING_TO_DISCORD:
         try:
             cleaned_reasoning = await remove_patterns_from_response(ctx, cog.config, reasoning, recent_authors)
@@ -151,26 +147,26 @@ async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_l
     elif reasoning and not _SEND_REASONING_TO_DISCORD:
         logger.info("Reasoning output suppressed (Discord reasoning disabled)")
 
-    if not has_tools:
+    if not result.has_tools:
         # No tool calls — single response, send it and done
-        if pre_text:
+        if result.text:
             try:
-                cleaned_pre = await remove_patterns_from_response(ctx, cog.config, pre_text, recent_authors)
+                cleaned_text = await remove_patterns_from_response(ctx, cog.config, result.text, recent_authors)
             except Exception:
-                cleaned_pre = None
-            if cleaned_pre:
-                cleaned_pre = collapse_lines(cleaned_pre, replacement=r'\n\n')
-                cleaned_pre = escape_unescaped_backticks(cleaned_pre)
-                cleaned_pre = await resolve_emojis_for_discord(ctx, cleaned_pre)
-                return await send_response(ctx, cleaned_pre, messages_list.can_reply, recent_authors)
+                cleaned_text = None
+            if cleaned_text:
+                cleaned_text = collapse_lines(cleaned_text, replacement=r'\n\n')
+                cleaned_text = escape_unescaped_backticks(cleaned_text)
+                cleaned_text = await resolve_emojis_for_discord(ctx, cleaned_text)
+                return await send_response(ctx, cleaned_text, messages_list.can_reply, recent_authors)
         return True
 
     # ---- Has tool calls ----
     # Early output: if pre-text doesn't look incomplete, send it immediately
     sent_early = False
-    if pre_text and not is_incomplete:
+    if result.pre_text and result.pre_text_complete:
         try:
-            cleaned_pre = await remove_patterns_from_response(ctx, cog.config, pre_text, recent_authors)
+            cleaned_pre = await remove_patterns_from_response(ctx, cog.config, result.pre_text, recent_authors)
         except Exception:
             cleaned_pre = None
         if cleaned_pre:
@@ -180,20 +176,21 @@ async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_l
             await send_response(ctx, cleaned_pre, messages_list.can_reply, recent_authors)
             sent_early = True
 
-    # ---- Phase 2: tools + second LLM call ----
-    final_text, final_reasoning, images = await pipeline.phase2()
+    # ---- Final output: text + images ----
+    final_text = result.text
+    images = result.images
 
     logger.info(
-        "Phase 2 returned: final_text_length=%d, images=%d, response_parts=%d, sent_early=%s",
-        len(final_text or ''), len(images), len(pipeline.response_parts), sent_early
+        "Pipeline run complete: final_text_length=%d, images=%d, response_parts=%d, sent_early=%s",
+        len(final_text or ''), len(images), len(result.response_parts), sent_early
     )
 
     # If there's a combined final text or images, send them together
     text_to_send = final_text
-    if pipeline.response_parts and pipeline.response_parts[0].type == "text_and_images":
-        text_to_send = pipeline.response_parts[0].content
-        if not images and pipeline.response_parts[0].images:
-            images = pipeline.response_parts[0].images
+    if result.response_parts and result.response_parts[0].type == "text_and_images":
+        text_to_send = result.response_parts[0].content
+        if not images and result.response_parts[0].images:
+            images = result.response_parts[0].images
 
     logger.info(
         "Sending combined message: text_length=%d, images=%d, will_send=%s",
@@ -201,7 +198,7 @@ async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_l
     )
 
     if not text_to_send and not images:
-        logger.warning("No text or images to send after phase2 — bot will not reply!")
+        logger.warning("No text or images to send after pipeline run — bot will not reply!")
         return sent_early or False
 
     await send_single_combined_message(ctx, cog, text_to_send, images, messages_list.can_reply, recent_authors)
