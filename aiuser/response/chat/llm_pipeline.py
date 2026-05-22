@@ -31,6 +31,7 @@ from aiuser.functions.generate_image.tool_call import GenerateImageToolCall
 from aiuser.functions.edit_image.tool_call import EditImageToolCall
 from aiuser.messages_list.messages import MessagesList
 from aiuser.messages_list.entry import MessageEntry
+from aiuser.response.chat.function_call_view import FunctionCallView
 from aiuser.functions.openrouter import (
     OpenRouterWebSearch,
     OpenRouterWebFetch,
@@ -692,10 +693,11 @@ class LLMPipeline:
                 last_or_model_extra = model_extra
 
             # Execute local tools in parallel
+            tool_outputs = []
             try:
                 if local_tool_calls:
                     logger.info("Round %d: Executing %d local tool(s)", round_num, len(local_tool_calls))
-                    await self._process_and_add_tool_results(local_tool_calls)
+                    tool_outputs = await self._process_and_add_tool_results(local_tool_calls)
                     logger.info("Round %d: Local tool execution completed", round_num)
                 else:
                     logger.info("Round %d: No local tools to execute", round_num)
@@ -703,24 +705,32 @@ class LLMPipeline:
                 # Add synthetic tool results for OpenRouter server-side tools
                 for tc in openrouter_tool_calls:
                     logger.info("Round %d: Adding OpenRouter synthetic result: id=%s name=%s", round_num, tc.id, tc.function.name)
+                    or_result = f"OpenRouter server-side tool '{tc.function.name}' was executed. " \
+                                f"The results have been incorporated into the conversation history by OpenRouter."
                     await self.msg_list.add_tool_result(
                         name=tc.function.name,
                         tool_call_id=tc.id,
-                        content=f"OpenRouter server-side tool '{tc.function.name}' was executed. "
-                                f"The results have been incorporated into the conversation history by OpenRouter.",
+                        content=or_result,
                         index=len(self.msg_list) + 1
                     )
+                    tool_outputs.append({"name": tc.function.name, "result": or_result})
             except Exception:
-                # Update embed to failed status
+                # Update embed to failed status with outputs if available
                 if status_embed_msg:
                     finish_time = int(datetime.now(timezone.utc).timestamp())
-                    await self.update_function_call_embed(status_embed_msg, "failed", embed_start_time, finish_time)
+                    await self.update_function_call_embed(
+                        status_embed_msg, "failed", embed_start_time, finish_time,
+                        tool_outputs=tool_outputs
+                    )
                 raise
 
-            # Update embed to complete status
+            # Update embed to complete status with outputs
             if status_embed_msg:
                 finish_time = int(datetime.now(timezone.utc).timestamp())
-                await self.update_function_call_embed(status_embed_msg, "complete", embed_start_time, finish_time)
+                await self.update_function_call_embed(
+                    status_embed_msg, "complete", embed_start_time, finish_time,
+                    tool_outputs=tool_outputs
+                )
 
             # Last round with tool_calls — force break
             if is_last:
@@ -844,7 +854,14 @@ class LLMPipeline:
                 return tool_obj.get_generated_images()
         return []
 
-    async def _process_and_add_tool_results(self, tool_calls: List[ChatCompletionMessageToolCall]):
+    async def _process_and_add_tool_results(self, tool_calls: List[ChatCompletionMessageToolCall]) -> List[Dict[str, str]]:
+        """Execute tool calls, add results to context, and return output summaries.
+
+        Returns a list of {"name": str, "result": str} dicts suitable for
+        storing in the FunctionCallView cache.
+        """
+        tool_outputs: List[Dict[str, str]] = []
+
         async def process_single_tool(tool_call):
             tool_function_name = tool_call.function.name
             tool_call_id = tool_call.id
@@ -870,6 +887,7 @@ class LLMPipeline:
             # Handle exceptions from asyncio.gather (return_exceptions=True)
             if isinstance(result, Exception):
                 logger.error("Tool execution raised an unhandled exception: %s", result, exc_info=result)
+                tool_outputs.append({"name": "unknown", "result": f"Error: {result}"})
                 continue
             tool_call_id, tool_function_name, tool_result_content = result
 
@@ -886,6 +904,15 @@ class LLMPipeline:
                     "Tool '%s' returned %d multimodal content parts directly",
                     tool_function_name, len(tool_result_content)
                 )
+                # Summarize multimodal result for the outputs button
+                text_parts = [
+                    p.get("text", "") for p in tool_result_content
+                    if isinstance(p, dict) and p.get("type") == "text"
+                ]
+                result_summary = "\n".join(text_parts) if text_parts else "[multimodal content]"
+                tool_outputs.append({"name": tool_function_name, "result": result_summary})
+            else:
+                tool_outputs.append({"name": tool_function_name, "result": str(tool_result_content)})
 
             # Add tool result to context — this is the "user" turn with functionResponse
             # Per Gemini 3.5 Flash: id and name MUST match the preceding functionCall
@@ -900,6 +927,8 @@ class LLMPipeline:
 
         # Verify all function calls have matching function responses in context
         self._verify_tool_call_response_matching()
+
+        return tool_outputs
 
     def _verify_tool_call_response_matching(self):
         """Verify that every functionCall has a matching functionResponse in context.
@@ -1002,11 +1031,22 @@ class LLMPipeline:
     ) -> Tuple[Optional[discord.Message], Optional[int]]:
         """Send an embed announcing the function calls being made.
 
-        Returns a tuple of (sent_message, start_unix_timestamp) so the embed
-        can be edited later with status updates and localized timestamps.
+        Stores tool call inputs in the FunctionCallView cache and attaches
+        a View with a "View Inputs" button to the embed.
+
+        Returns a tuple of (sent_message, start_unix_timestamp).
         """
         start_time = int(datetime.now(timezone.utc).timestamp())
         embed = self._build_function_call_embed(tool_calls, "in_progress", start_time)
+
+        # Store inputs for the View button callback
+        inputs = []
+        for tc in tool_calls:
+            inputs.append({
+                "name": tc.function.name,
+                "args": tc.function.arguments or "{}",
+            })
+
         try:
             msg = await self.ctx.send(
                 embed=embed,
@@ -1014,6 +1054,11 @@ class LLMPipeline:
                     everyone=False, roles=False, users=False
                 ),
             )
+            if msg:
+                # Store inputs and attach view (inputs only, no outputs yet)
+                FunctionCallView.store_inputs(msg.id, inputs)
+                view = FunctionCallView(message_id=msg.id, has_outputs=False)
+                await msg.edit(view=view)
             return msg, start_time
         except Exception:
             logger.warning("Failed to send function call notification embed", exc_info=True)
@@ -1021,12 +1066,14 @@ class LLMPipeline:
 
     async def update_function_call_embed(
         self, embed_message: discord.Message, status: str,
-        start_time: int, finish_time: int
+        start_time: int, finish_time: int,
+        tool_outputs: Optional[List[Dict[str, str]]] = None
     ) -> None:
         """Edit the function call notification embed with a new status.
 
         Uses Discord's localized timestamp format (<t:UNIX:F>) so each user
-        sees the timestamps in their own timezone.
+        sees the timestamps in their own timezone.  When tool_outputs are
+        provided, stores them in the cache and adds a "View Outputs" button.
         """
         try:
             embed = embed_message.embeds[0]
@@ -1034,7 +1081,15 @@ class LLMPipeline:
             status_label = status.replace('_', ' ').title()
             new_footer = f"{emoji} {status_label} • Started <t:{start_time}:F> • Finished <t:{finish_time}:F>"
             embed.set_footer(text=new_footer)
-            await embed_message.edit(embed=embed)
+
+            # Build the view: always has View Inputs, conditionally add View Outputs
+            view = FunctionCallView(message_id=embed_message.id, has_outputs=bool(tool_outputs))
+
+            # Store outputs if provided
+            if tool_outputs:
+                FunctionCallView.store_outputs(embed_message.id, tool_outputs)
+
+            await embed_message.edit(embed=embed, view=view)
         except Exception:
             logger.warning("Failed to update function call notification embed", exc_info=True)
 

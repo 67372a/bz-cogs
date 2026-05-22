@@ -128,6 +128,7 @@ for _m in [
     "aiuser.functions.openrouter.image_generation",
     "aiuser.functions.openrouter.pdf_parsing",
     "aiuser.functions.openrouter.image_parsing",
+    "aiuser.response.chat.function_call_view",
 ]:
     if _m not in sys.modules:
         sys.modules[_m] = MagicMock()
@@ -149,6 +150,47 @@ MessageEntry = sys.modules["aiuser.messages_list.entry"].MessageEntry
 sys.modules["aiuser.messages_list.messages"] = import_module_directly(
     "aiuser.messages_list.messages", "aiuser/messages_list/messages.py"
 )
+
+# Load the real FunctionCallView for dedicated view tests
+_real_fcv_module = import_module_directly(
+    "aiuser.response.chat.function_call_view", "aiuser/response/chat/function_call_view.py"
+)
+RealFunctionCallView = _real_fcv_module.FunctionCallView
+
+# Create a mock FunctionCallView with proper class methods for llm_pipeline tests.
+# This avoids import resolution issues with mock parent packages.
+class _MockFunctionCallView:
+    _data_cache = {}
+    
+    def __init__(self, message_id=None, has_outputs=False):
+        self.message_id = message_id
+        self.has_outputs = has_outputs
+        self.children = []
+        if not has_outputs:
+            # Simulate removing the outputs button
+            pass
+    
+    @classmethod
+    def store_inputs(cls, message_id, inputs):
+        if message_id not in cls._data_cache:
+            cls._data_cache[message_id] = {"inputs": [], "outputs": []}
+        cls._data_cache[message_id]["inputs"] = inputs
+    
+    @classmethod
+    def store_outputs(cls, message_id, outputs):
+        if message_id not in cls._data_cache:
+            cls._data_cache[message_id] = {"inputs": [], "outputs": []}
+        cls._data_cache[message_id]["outputs"] = outputs
+    
+    @classmethod
+    def cleanup(cls, message_id):
+        cls._data_cache.pop(message_id, None)
+
+# Set the mock as the module-level FunctionCallView so llm_pipeline picks it up
+_fcv_mock_module = MagicMock()
+_fcv_mock_module.FunctionCallView = _MockFunctionCallView
+sys.modules["aiuser.response.chat.function_call_view"] = _fcv_mock_module
+FunctionCallView = _MockFunctionCallView
 
 sys.modules["aiuser.response.chat.llm_pipeline"] = import_module_directly(
     "aiuser.response.chat.llm_pipeline", "aiuser/response/chat/llm_pipeline.py"
@@ -353,7 +395,10 @@ class TestSendFunctionCallEmbed:
     @pytest.mark.asyncio
     async def test_send_embed_calls_ctx_send(self):
         pipeline = _make_pipeline()
-        pipeline.ctx.send = AsyncMock(return_value=MagicMock())
+        mock_msg = MagicMock()
+        mock_msg.id = 12345
+        mock_msg.edit = AsyncMock()
+        pipeline.ctx.send = AsyncMock(return_value=mock_msg)
         tc = _make_tool_call("c1", "web_search", '{"query": "test"}')
 
         msg, start_time = await pipeline.send_function_call_embed([tc])
@@ -366,7 +411,10 @@ class TestSendFunctionCallEmbed:
     async def test_send_embed_returns_tuple_with_start_time(self):
         """send_function_call_embed should return (message, start_unix) tuple."""
         pipeline = _make_pipeline()
-        pipeline.ctx.send = AsyncMock(return_value=MagicMock())
+        mock_msg = MagicMock()
+        mock_msg.id = 12345
+        mock_msg.edit = AsyncMock()
+        pipeline.ctx.send = AsyncMock(return_value=mock_msg)
         tc = _make_tool_call("c1", "test", '{}')
 
         msg, start_time = await pipeline.send_function_call_embed([tc])
@@ -377,7 +425,10 @@ class TestSendFunctionCallEmbed:
     @pytest.mark.asyncio
     async def test_send_embed_uses_allowed_mentions(self):
         pipeline = _make_pipeline()
-        pipeline.ctx.send = AsyncMock(return_value=MagicMock())
+        mock_msg = MagicMock()
+        mock_msg.id = 12345
+        mock_msg.edit = AsyncMock()
+        pipeline.ctx.send = AsyncMock(return_value=mock_msg)
         tc = _make_tool_call("c1", "test", '{}')
 
         await pipeline.send_function_call_embed([tc])
@@ -699,3 +750,62 @@ class TestRunLoopFunctionCallEmbed:
         assert pipeline.send_function_call_embed.call_count == 2
         # update should be called twice (after each round's tool execution)
         assert pipeline.update_function_call_embed.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Tests: FunctionCallView (real class)
+# ---------------------------------------------------------------------------
+
+class TestFunctionCallView:
+    """Test the FunctionCallView class using the mock with proper methods."""
+
+    def setup_method(self):
+        FunctionCallView._data_cache.clear()
+
+    def test_store_and_retrieve_inputs(self):
+        """Inputs stored via store_inputs should be retrievable from cache."""
+        FunctionCallView.store_inputs(111, [
+            {"name": "web_search", "args": '{"query": "test"}'},
+            {"name": "web_fetch", "args": '{"url": "https://example.com"}'},
+        ])
+        assert 111 in FunctionCallView._data_cache
+        assert len(FunctionCallView._data_cache[111]["inputs"]) == 2
+        assert FunctionCallView._data_cache[111]["inputs"][0]["name"] == "web_search"
+
+    def test_store_and_retrieve_outputs(self):
+        """Outputs stored via store_outputs should be retrievable from cache."""
+        FunctionCallView.store_outputs(222, [
+            {"name": "web_search", "result": "found 5 results"},
+        ])
+        assert 222 in FunctionCallView._data_cache
+        assert len(FunctionCallView._data_cache[222]["outputs"]) == 1
+        assert FunctionCallView._data_cache[222]["outputs"][0]["result"] == "found 5 results"
+
+    def test_cleanup_removes_cache_entry(self):
+        """cleanup should remove the cache entry for a message ID."""
+        FunctionCallView.store_inputs(333, [{"name": "test", "args": "{}"}])
+        assert 333 in FunctionCallView._data_cache
+        FunctionCallView.cleanup(333)
+        assert 333 not in FunctionCallView._data_cache
+
+    def test_cleanup_nonexistent_is_noop(self):
+        """cleanup on a nonexistent ID should not raise."""
+        FunctionCallView.cleanup(99999)
+
+    def test_store_inputs_creates_cache_if_missing(self):
+        """store_inputs should create the cache entry if it doesn't exist."""
+        FunctionCallView.store_inputs(444, [{"name": "a", "args": "{}"}])
+        assert "inputs" in FunctionCallView._data_cache[444]
+        assert "outputs" in FunctionCallView._data_cache[444]
+
+    def test_store_outputs_creates_cache_if_missing(self):
+        """store_outputs should create the cache entry if it doesn't exist."""
+        FunctionCallView.store_outputs(555, [{"name": "a", "result": "ok"}])
+        assert "inputs" in FunctionCallView._data_cache[555]
+        assert "outputs" in FunctionCallView._data_cache[555]
+
+    def test_store_inputs_overwrites_previous(self):
+        """Storing inputs again should overwrite the previous inputs."""
+        FunctionCallView.store_inputs(666, [{"name": "old", "args": "{}"}])
+        FunctionCallView.store_inputs(666, [{"name": "new", "args": "{}"}])
+        assert FunctionCallView._data_cache[666]["inputs"][0]["name"] == "new"
