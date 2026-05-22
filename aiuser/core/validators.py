@@ -7,6 +7,7 @@ from redbot.core import commands
 from aiuser.core.openai_utils import setup_openai_client
 from aiuser.types.abc import MixinMeta
 from aiuser.config.constants import SINGULAR_MENTION_PATTERN
+from aiuser.messages_list.messages import FUNCTION_CALL_EMBED_TITLE_REGEX
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
@@ -125,6 +126,9 @@ async def check_message_content(cog: MixinMeta, ctx: commands.Context) -> Tuple[
             cog.ignore_regex[ctx.guild.id].search(ctx.message.content)):
         return False, "Message matches ignore regex"
 
+    if await is_reply_to_function_call_embed(cog, ctx.message):
+        return False, "Reply to function call notification embed"
+
     return True, ""
 
 async def is_bot_mentioned_or_replied(cog: MixinMeta, message: discord.Message) -> bool:
@@ -132,3 +136,30 @@ async def is_bot_mentioned_or_replied(cog: MixinMeta, message: discord.Message) 
     if not await cog.config.guild(message.guild).reply_to_mentions_replies():
         return False
     return cog.bot.user in message.mentions
+
+
+async def is_reply_to_function_call_embed(cog: MixinMeta, message: discord.Message) -> bool:
+    """Check if message is a reply to a function call notification embed.
+
+    Returns True if the message is a reply to a bot message whose embed title
+    matches the function call notification pattern (e.g. "BotName is making
+    the following function calls...").  This prevents the bot from responding
+    to replies aimed at the transient function-call status embed.
+    """
+    if not message.reference:
+        return False
+    replied = getattr(message.reference, 'resolved', None)
+    if not isinstance(replied, discord.Message):
+        # Message may not be cached; try to fetch it
+        try:
+            replied = await message.channel.fetch_message(message.reference.message_id)
+        except (discord.HTTPException, AttributeError):
+            return False
+    if not isinstance(replied, discord.Message):
+        return False
+    if not replied.embeds:
+        return False
+    return any(
+        embed.title and FUNCTION_CALL_EMBED_TITLE_REGEX.search(embed.title)
+        for embed in replied.embeds
+    )

@@ -30,6 +30,7 @@ OPTIN_EMBED_TITLE = ":information_source: AI User Opt-In / Opt-Out"
 # already-cached messages are not prematurely dropped.
 CACHE_WINDOW_SECONDS = 180  # 3 minutes
 THOUGHTS_EMBED_TITLE_REGEX = re.compile(r'^.*\'s Thoughts$')
+FUNCTION_CALL_EMBED_TITLE_REGEX = re.compile(r'^.*is making the following function calls\.\.\.$')
 
 
 async def create_messages_list(
@@ -244,7 +245,10 @@ class MessagesList:
             )
             return False
 
-        if message.embeds and any(embed.title and THOUGHTS_EMBED_TITLE_REGEX.search(embed.title) for embed in message.embeds):
+        if message.embeds and any(embed.title and (
+            THOUGHTS_EMBED_TITLE_REGEX.search(embed.title) or
+            FUNCTION_CALL_EMBED_TITLE_REGEX.search(embed.title)
+        ) for embed in message.embeds):
             return False
 
         if self.ignore_regex and self.ignore_regex.search(message.content):
@@ -409,7 +413,10 @@ class MessagesList:
                 break
             if (msg.author.id == self.bot.user.id) and (msg.embeds and msg.embeds[0].title == OPTIN_EMBED_TITLE):
                 continue
-            if msg.embeds and msg.embeds[0].title and THOUGHTS_EMBED_TITLE_REGEX.search(msg.embeds[0].title):
+            if msg.embeds and msg.embeds[0].title and (
+                THOUGHTS_EMBED_TITLE_REGEX.search(msg.embeds[0].title) or
+                FUNCTION_CALL_EMBED_TITLE_REGEX.search(msg.embeds[0].title)
+            ):
                 continue
             # Insert each message at the end (after anchor, before trigger)
             await self.add_msg(msg, index=len(self.messages))
@@ -472,7 +479,10 @@ class MessagesList:
             if (msg.author.id == self.bot.user.id) and (msg.embeds and msg.embeds[0].title == OPTIN_EMBED_TITLE):
                 continue
             # Ignore reasoning
-            if msg.embeds and msg.embeds[0].title and THOUGHTS_EMBED_TITLE_REGEX.search(msg.embeds[0].title):
+            if msg.embeds and msg.embeds[0].title and (
+                THOUGHTS_EMBED_TITLE_REGEX.search(msg.embeds[0].title) or
+                FUNCTION_CALL_EMBED_TITLE_REGEX.search(msg.embeds[0].title)
+            ):
                 continue
             await self.add_msg(msg, index=1)
             last_msg = msg
@@ -487,7 +497,10 @@ class MessagesList:
             if (msg.author.id == self.bot.user.id) and (msg.embeds and msg.embeds[0].title == OPTIN_EMBED_TITLE):
                 continue
             # Ignore reasoning
-            if msg.embeds and msg.embeds[0].title and THOUGHTS_EMBED_TITLE_REGEX.search(msg.embeds[0].title):
+            if msg.embeds and msg.embeds[0].title and (
+                THOUGHTS_EMBED_TITLE_REGEX.search(msg.embeds[0].title) or
+                FUNCTION_CALL_EMBED_TITLE_REGEX.search(msg.embeds[0].title)
+            ):
                 continue
             await self.add_msg(msg, index=len(self.messages))
             last_msg = msg

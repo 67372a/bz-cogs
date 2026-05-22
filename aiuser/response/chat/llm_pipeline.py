@@ -2,10 +2,12 @@ import asyncio
 import json
 import logging
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 import hashlib
 import copy
 
+import discord
 import httpx
 import openai
 from openai.types.chat import ChatCompletion, ChatCompletionMessageToolCall
@@ -679,6 +681,9 @@ class LLMPipeline:
             has_tools = True
             all_pre_texts.append(response_text or "")
 
+            # NEW: Send function call notification embed
+            status_embed_msg = await self.send_function_call_embed(tool_calls)
+
             # Split into local vs OpenRouter server tools
             local_tool_calls = [tc for tc in tool_calls if not self._is_openrouter_tool_name(tc.function.name)]
             openrouter_tool_calls = [tc for tc in tool_calls if self._is_openrouter_tool_name(tc.function.name)]
@@ -687,23 +692,33 @@ class LLMPipeline:
                 last_or_model_extra = model_extra
 
             # Execute local tools in parallel
-            if local_tool_calls:
-                logger.info("Round %d: Executing %d local tool(s)", round_num, len(local_tool_calls))
-                await self._process_and_add_tool_results(local_tool_calls)
-                logger.info("Round %d: Local tool execution completed", round_num)
-            else:
-                logger.info("Round %d: No local tools to execute", round_num)
+            try:
+                if local_tool_calls:
+                    logger.info("Round %d: Executing %d local tool(s)", round_num, len(local_tool_calls))
+                    await self._process_and_add_tool_results(local_tool_calls)
+                    logger.info("Round %d: Local tool execution completed", round_num)
+                else:
+                    logger.info("Round %d: No local tools to execute", round_num)
 
-            # Add synthetic tool results for OpenRouter server-side tools
-            for tc in openrouter_tool_calls:
-                logger.info("Round %d: Adding OpenRouter synthetic result: id=%s name=%s", round_num, tc.id, tc.function.name)
-                await self.msg_list.add_tool_result(
-                    name=tc.function.name,
-                    tool_call_id=tc.id,
-                    content=f"OpenRouter server-side tool '{tc.function.name}' was executed. "
-                            f"The results have been incorporated into the conversation history by OpenRouter.",
-                    index=len(self.msg_list) + 1
-                )
+                # Add synthetic tool results for OpenRouter server-side tools
+                for tc in openrouter_tool_calls:
+                    logger.info("Round %d: Adding OpenRouter synthetic result: id=%s name=%s", round_num, tc.id, tc.function.name)
+                    await self.msg_list.add_tool_result(
+                        name=tc.function.name,
+                        tool_call_id=tc.id,
+                        content=f"OpenRouter server-side tool '{tc.function.name}' was executed. "
+                                f"The results have been incorporated into the conversation history by OpenRouter.",
+                        index=len(self.msg_list) + 1
+                    )
+            except Exception:
+                # Update embed to failed status
+                if status_embed_msg:
+                    await self.update_function_call_embed(status_embed_msg, "failed")
+                raise
+
+            # Update embed to complete status
+            if status_embed_msg:
+                await self.update_function_call_embed(status_embed_msg, "complete")
 
             # Last round with tool_calls — force break
             if is_last:
@@ -970,6 +985,86 @@ class LLMPipeline:
                 logger.info("Web search server tool was used")
             elif tool_name == OpenRouterToolType.WEB_FETCH.value:
                 logger.info("Web fetch server tool was used")
+
+    # ------------------------------------------------------------------
+    # Function call notification embeds
+    # ------------------------------------------------------------------
+    _STATUS_EMOJI = {
+        "in_progress": "🔄",
+        "complete": "✅",
+        "failed": "❌",
+    }
+
+    async def send_function_call_embed(
+        self, tool_calls: List[ChatCompletionMessageToolCall]
+    ) -> Optional[discord.Message]:
+        """Send an embed announcing the function calls being made.
+
+        Returns the sent message so it can be edited later with status updates.
+        """
+        embed = self._build_function_call_embed(tool_calls, "in_progress")
+        try:
+            msg = await self.ctx.send(
+                embed=embed,
+                allowed_mentions=discord.AllowedMentions(
+                    everyone=False, roles=False, users=False
+                ),
+            )
+            return msg
+        except Exception:
+            logger.warning("Failed to send function call notification embed", exc_info=True)
+            return None
+
+    async def update_function_call_embed(
+        self, embed_message: discord.Message, status: str
+    ) -> None:
+        """Edit the function call notification embed with a new status."""
+        try:
+            embed = embed_message.embeds[0]
+            emoji = self._STATUS_EMOJI.get(status, "")
+            footer_text = embed.footer.text or ""
+            # Replace the status in the footer
+            new_footer = f"{emoji} {status.replace('_', ' ').title()} • {datetime.now(timezone.utc).strftime('%I:%M %p')}"
+            embed.set_footer(text=new_footer)
+            await embed_message.edit(embed=embed)
+        except Exception:
+            logger.warning("Failed to update function call notification embed", exc_info=True)
+
+    def _build_function_call_embed(
+        self, tool_calls: List[ChatCompletionMessageToolCall], status: str
+    ) -> discord.Embed:
+        """Build the function call notification embed."""
+        bot_name = self.ctx.me.display_name or self.bot.user.name
+        embed = discord.Embed(
+            title=f"{bot_name} is making the following function calls...",
+            color=0x5865F2,  # Discord blurple
+        )
+
+        # Build the body as a bulleted list of function calls
+        lines = []
+        for tc in tool_calls:
+            name = tc.function.name
+            try:
+                args = json.loads(tc.function.arguments)
+                # Truncate args to ~100 chars for readability
+                args_str = json.dumps(args, default=str, ensure_ascii=False)
+                if len(args_str) > 100:
+                    args_str = args_str[:97] + "..."
+            except (json.JSONDecodeError, TypeError):
+                args_str = tc.function.arguments or "{}"
+                if len(args_str) > 100:
+                    args_str = args_str[:97] + "..."
+            lines.append(f"• **{name}** — `{args_str}`")
+
+        embed.description = "\n".join(lines) if lines else "*No function call details available*"
+
+        # Set footer with status and timestamp
+        emoji = self._STATUS_EMOJI.get(status, "")
+        footer_text = f"{emoji} {status.replace('_', ' ').title()} • {datetime.now(timezone.utc).strftime('%I:%M %p')}"
+        embed.set_footer(text=footer_text)
+        embed.timestamp = datetime.now(timezone.utc)
+
+        return embed
 
     async def get_response_parts(self) -> List[ResponsePart]:
         return self.response_parts
