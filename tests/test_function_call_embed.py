@@ -375,14 +375,35 @@ class TestBuildFunctionCallEmbed:
         embed = pipeline._build_function_call_embed([tc], "in_progress", 1700000000)
         assert embed is not None
 
-    def test_build_embed_footer_uses_discord_timestamp(self):
-        """Footer should contain Discord's localized timestamp format."""
+    def test_build_embed_footer_is_status_only(self):
+        """Footer should contain only the status label, no timestamps."""
         pipeline = _make_pipeline()
         tc = _make_tool_call("c1", "test", '{}')
         embed = pipeline._build_function_call_embed([tc], "in_progress", 1700000000)
-        # The embed is a mock, but we can verify set_footer was called
-        # by checking the mock's call history
-        assert embed is not None
+        # Verify set_footer was called with status-only text
+        # (check the last call since discord.Embed is a shared mock)
+        footer_text = embed.set_footer.call_args.kwargs.get("text", "")
+        assert "In Progress" in footer_text
+        assert "<t:" not in footer_text  # timestamps should NOT be in footer
+
+    def test_build_embed_description_contains_discord_timestamp(self):
+        """Description should contain Discord's localized timestamp format."""
+        pipeline = _make_pipeline()
+        tc = _make_tool_call("c1", "test", '{}')
+        embed = pipeline._build_function_call_embed([tc], "in_progress", 1700000000)
+        # Verify description contains the timestamp markup
+        assert "<t:1700000000:F>" in embed.description
+        assert "Started" in embed.description
+
+    def test_build_embed_description_has_function_calls_and_timestamp(self):
+        """Description should have both function call list and timestamp."""
+        pipeline = _make_pipeline()
+        tc = _make_tool_call("c1", "web_search", '{"query": "test"}')
+        embed = pipeline._build_function_call_embed([tc], "in_progress", 1700000000)
+        # Function call should be in the description
+        assert "web_search" in embed.description
+        # Timestamp should be at the bottom
+        assert embed.description.strip().endswith("<t:1700000000:F>")
 
 
 # ---------------------------------------------------------------------------
@@ -482,26 +503,73 @@ class TestUpdateFunctionCallEmbed:
         await pipeline.update_function_call_embed(embed_msg, "complete", 1700000000, 1700000060)
 
     @pytest.mark.asyncio
-    async def test_update_embed_footer_has_both_timestamps(self):
-        """The updated footer should contain both start and finish timestamps."""
+    async def test_update_embed_footer_is_status_only(self):
+        """The updated footer should contain only the status label."""
         pipeline = _make_pipeline()
         embed_msg = MagicMock()
         embed_msg.embeds = [MagicMock()]
         embed_msg.embeds[0].footer = MagicMock()
+        embed_msg.embeds[0].description = "• **test** — `{}`"
         embed_msg.edit = AsyncMock()
 
         await pipeline.update_function_call_embed(
             embed_msg, "complete", 1700000000, 1700000060
         )
 
-        # Verify set_footer was called with a string containing both timestamps
+        # Verify set_footer was called with status-only text
         embed_msg.embeds[0].set_footer.assert_called_once()
-        footer_call = embed_msg.embeds[0].set_footer.call_args
-        footer_text = footer_call.kwargs.get("text", footer_call[1].get("text", ""))
-        assert "1700000000" in footer_text
-        assert "1700000060" in footer_text
-        assert "Started" in footer_text
-        assert "Finished" in footer_text
+        footer_text = embed_msg.embeds[0].set_footer.call_args.kwargs.get("text", "")
+        assert "Complete" in footer_text
+        assert "<t:" not in footer_text  # timestamps should NOT be in footer
+
+    @pytest.mark.asyncio
+    async def test_update_embed_description_has_both_timestamps(self):
+        """The updated description should contain both start and finish timestamps."""
+        pipeline = _make_pipeline()
+        embed_msg = MagicMock()
+        embed_msg.embeds = [MagicMock()]
+        embed_msg.embeds[0].footer = MagicMock()
+        embed_msg.embeds[0].description = "• **test** — `{}`"
+        embed_msg.edit = AsyncMock()
+
+        await pipeline.update_function_call_embed(
+            embed_msg, "complete", 1700000000, 1700000060
+        )
+
+        # Verify description contains both timestamps
+        desc = embed_msg.embeds[0].description
+        assert "1700000000" in desc
+        assert "1700000060" in desc
+        assert "Started" in desc
+        assert "Finished" in desc
+        assert "<t:1700000000:F>" in desc
+        assert "<t:1700000060:F>" in desc
+
+    @pytest.mark.asyncio
+    async def test_update_embed_strips_old_timestamp_from_description(self):
+        """The update should replace the old timestamp line, not duplicate it."""
+        pipeline = _make_pipeline()
+        embed_msg = MagicMock()
+        embed_msg.embeds = [MagicMock()]
+        embed_msg.embeds[0].footer = MagicMock()
+        # Simulate the initial description with "Started" timestamp
+        embed_msg.embeds[0].description = (
+            "• **test** — `{}`\n\n🔄 Started <t:1700000000:F>"
+        )
+        embed_msg.edit = AsyncMock()
+
+        await pipeline.update_function_call_embed(
+            embed_msg, "complete", 1700000000, 1700000060
+        )
+
+        desc = embed_msg.embeds[0].description
+        # Should have the base description
+        assert "• **test**" in desc
+        # Should have both timestamps in one line
+        assert "Started <t:1700000000:F>" in desc
+        assert "Finished <t:1700000060:F>" in desc
+        # Should NOT have the old "Started" line duplicated
+        assert desc.count("Started") == 1
 
 
 # ---------------------------------------------------------------------------

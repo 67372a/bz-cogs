@@ -1071,16 +1071,38 @@ class LLMPipeline:
     ) -> None:
         """Edit the function call notification embed with a new status.
 
-        Uses Discord's localized timestamp format (<t:UNIX:F>) so each user
-        sees the timestamps in their own timezone.  When tool_outputs are
-        provided, stores them in the cache and adds a "View Outputs" button.
+        Timestamps are placed in the embed description (not the footer)
+        because Discord footers do not render <t:UNIX:F> markup.
+        When tool_outputs are provided, stores them in the cache and adds
+        a "View Outputs" button.
         """
         try:
             embed = embed_message.embeds[0]
             emoji = self._STATUS_EMOJI.get(status, "")
             status_label = status.replace('_', ' ').title()
-            new_footer = f"{emoji} {status_label} • Started <t:{start_time}:F> • Finished <t:{finish_time}:F>"
-            embed.set_footer(text=new_footer)
+
+            # Footer: status only (no timestamps)
+            embed.set_footer(text=f"{emoji} {status_label}")
+
+            # Strip any existing timestamp line from the description
+            # (the "Started" line appended by _build_function_call_embed)
+            desc = embed.description or ""
+            parts = desc.split("\n\n")
+            # Keep only the function-call bullet list (everything before the
+            # last \n\n block that contains a timestamp marker)
+            if len(parts) > 1 and any(
+                marker in parts[-1] for marker in ("Started", "🔄", "✅", "❌")
+            ):
+                base_desc = "\n\n".join(parts[:-1])
+            else:
+                base_desc = desc
+
+            # Append updated timestamp line at the bottom
+            timestamp_line = (
+                f"{emoji} Started <t:{start_time}:F>"
+                f" • Finished <t:{finish_time}:F>"
+            )
+            embed.description = f"{base_desc}\n\n{timestamp_line}"
 
             # Build the view: always has View Inputs, conditionally add View Outputs
             view = FunctionCallView(message_id=embed_message.id, has_outputs=bool(tool_outputs))
@@ -1099,8 +1121,8 @@ class LLMPipeline:
     ) -> discord.Embed:
         """Build the function call notification embed.
 
-        Uses Discord's localized timestamp format (<t:UNIX:F>) so each user
-        sees the start time in their own timezone.
+        Timestamps are placed in the embed description (not the footer)
+        because Discord footers do not render <t:UNIX:F> markup.
         """
         bot_name = self.ctx.me.display_name or self.bot.user.name
         embed = discord.Embed(
@@ -1124,13 +1146,16 @@ class LLMPipeline:
                     args_str = args_str[:97] + "..."
             lines.append(f"• **{name}** — `{args_str}`")
 
-        embed.description = "\n".join(lines) if lines else "*No function call details available*"
+        body = "\n".join(lines) if lines else "*No function call details available*"
 
-        # Set footer with status and localized start timestamp
+        # Append localized start timestamp at the bottom of the description
         emoji = self._STATUS_EMOJI.get(status, "")
+        timestamp_line = f"{emoji} Started <t:{start_time}:F>"
+        embed.description = f"{body}\n\n{timestamp_line}"
+
+        # Footer: status only (no timestamps)
         status_label = status.replace('_', ' ').title()
-        footer_text = f"{emoji} {status_label} • Started <t:{start_time}:F>"
-        embed.set_footer(text=footer_text)
+        embed.set_footer(text=f"{emoji} {status_label}")
         embed.timestamp = datetime.now(timezone.utc)
 
         return embed
