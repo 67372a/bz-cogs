@@ -17,6 +17,11 @@ import pytest
 # ---------------------------------------------------------------------------
 # Mock heavy dependencies before importing real modules
 # ---------------------------------------------------------------------------
+# Snapshot the entire sys.modules before any mocking so we can restore it
+# after all module-level imports.  This prevents pollution of other test
+# modules (e.g. test_format_variables.py) that need the real modules.
+_ORIG_SYS_MODULES_SNAPSHOT = dict(sys.modules)
+
 discord_mock = MagicMock()
 discord_mock.Embed = MagicMock()
 discord_mock.Color = MagicMock()
@@ -76,23 +81,29 @@ sys.modules.setdefault("tiktoken", MagicMock())
 # Mock other aiuser dependencies that messages.py imports
 _mocks_needed = [
     "aiuser.config.defaults",
-    "aiuser.config.models",
-    "aiuser.config.constants",
     "aiuser.messages_list.converter.converter",
-    "aiuser.messages_list.entry",
     "aiuser.messages_list.opt_view",
     "aiuser.types.abc",
-    "aiuser.types.enums",
     "aiuser.utils.utilities",
 ]
 for _m in _mocks_needed:
     if _m not in sys.modules:
         sys.modules[_m] = MagicMock()
 
-# Load real MessageEntry
+# Load real config modules (no heavy deps — just data/stdlib)
+sys.modules["aiuser.config.models"] = import_module_directly(
+    "aiuser.config.models", "aiuser/config/models.py"
+)
+sys.modules["aiuser.config.constants"] = import_module_directly(
+    "aiuser.config.constants", "aiuser/config/constants.py"
+)
 sys.modules["aiuser.messages_list.entry"] = import_module_directly(
     "aiuser.messages_list.entry", "aiuser/messages_list/entry.py"
 )
+sys.modules["aiuser.types.enums"] = import_module_directly(
+    "aiuser.types.enums", "aiuser/types/enums.py"
+)
+
 MessageEntry = sys.modules["aiuser.messages_list.entry"].MessageEntry
 
 # Load real MessagesList
@@ -143,6 +154,18 @@ sys.modules["aiuser.response.chat.llm_pipeline"] = import_module_directly(
     "aiuser.response.chat.llm_pipeline", "aiuser/response/chat/llm_pipeline.py"
 )
 LLMPipeline = sys.modules["aiuser.response.chat.llm_pipeline"].LLMPipeline
+
+# Restore only the modules that were added or changed by the mocking above.
+# Do NOT remove modules loaded by import_module_directly (MessagesList, LLMPipeline)
+# since the test classes below reference them and need their mock deps to stay.
+for _key in list(sys.modules.keys()):
+    _orig = _ORIG_SYS_MODULES_SNAPSHOT.get(_key)
+    if _orig is None:
+        # This module was added by mocking — remove it
+        del sys.modules[_key]
+    elif sys.modules[_key] is not _orig:
+        # This module was replaced — restore the original
+        sys.modules[_key] = _orig
 
 
 # ---------------------------------------------------------------------------
@@ -613,16 +636,20 @@ class TestCreateMessagesListLogging:
     @pytest.mark.asyncio
     async def test_create_messages_list_calls_log_messages(self):
         """create_messages_list should call log_messages() on the built list."""
-        create_messages_list = sys.modules["aiuser.messages_list.messages"].create_messages_list
+        # Get both create_messages_list and MessagesList from the same module
+        # reference, since other test files may have replaced sys.modules entry.
+        _msg_mod = sys.modules["aiuser.messages_list.messages"]
+        create_messages_list = _msg_mod.create_messages_list
+        _MessagesList = _msg_mod.MessagesList
 
         mock_cog = _make_mock_cog()
         mock_cog.backfill_anchors = {}
         ctx = _make_mock_ctx()
 
         # Mock the MessagesList._init, add_history, _append_dynamic_context
-        with patch.object(MessagesList, "_init", new_callable=AsyncMock) as mock_init, \
-             patch.object(MessagesList, "add_history", new_callable=AsyncMock) as mock_history, \
-             patch.object(MessagesList, "_append_dynamic_context") as mock_dyn, \
-             patch.object(MessagesList, "log_messages") as mock_log:
+        with patch.object(_MessagesList, "_init", new_callable=AsyncMock) as mock_init, \
+             patch.object(_MessagesList, "add_history", new_callable=AsyncMock) as mock_history, \
+             patch.object(_MessagesList, "_append_dynamic_context") as mock_dyn, \
+             patch.object(_MessagesList, "log_messages") as mock_log:
             result = await create_messages_list(mock_cog, ctx)
             mock_log.assert_called_once()

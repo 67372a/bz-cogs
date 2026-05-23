@@ -19,6 +19,7 @@ _packages = [
     "aiuser.types",
     "aiuser.functions",
     "aiuser.functions.openrouter",
+    "aiuser.utils",
 ]
 for pkg in _packages:
     if pkg not in sys.modules:
@@ -99,6 +100,11 @@ sys.modules["aiuser.functions.openrouter.pdf_parsing"] = import_module_directly(
 )
 sys.modules["aiuser.functions.openrouter.image_parsing"] = import_module_directly(
     "aiuser.functions.openrouter.image_parsing", "aiuser/functions/openrouter/image_parsing.py"
+)
+
+# Load the real image_cache module (it has no heavy deps)
+sys.modules["aiuser.utils.image_cache"] = import_module_directly(
+    "aiuser.utils.image_cache", "aiuser/utils/image_cache.py"
 )
 
 # Re-export

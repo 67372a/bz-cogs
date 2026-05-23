@@ -36,6 +36,9 @@ def _ensure_package(name: str):
         sys.modules[name] = _make_mock_package(name)
 
 
+# Snapshot sys.modules before any mocking to restore after collection
+_ORIG_SYS_MODULES_SNAPSHOT = dict(sys.modules)
+
 # Pre-register packages so imports don't trigger real __init__.py
 for _pkg in [
     "aiuser", "aiuser.types", "aiuser.config", "aiuser.messages_list",
@@ -143,6 +146,15 @@ sys.modules["aiuser.config.constants"] = MagicMock()
 
 _messages_mod = _load_module("aiuser.messages_list.messages", "aiuser/messages_list/messages.py")
 MessagesList = _messages_mod.MessagesList
+
+# Restore sys.modules to avoid polluting other test modules.
+# Keep modules loaded by _load_module (MessagesList, etc.)
+for _key in list(sys.modules.keys()):
+    _orig = _ORIG_SYS_MODULES_SNAPSHOT.get(_key)
+    if _orig is None:
+        del sys.modules[_key]
+    elif sys.modules[_key] is not _orig:
+        sys.modules[_key] = _orig
 
 
 # ---------------------------------------------------------------------------

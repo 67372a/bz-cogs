@@ -10,6 +10,10 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 
 # --- Mock discord before importing anything else ---
+# Snapshot entire sys.modules so we can restore after collection to avoid
+# polluting other test modules (e.g. test_format_variables.py).
+_ORIG_SYS_MODULES_SNAPSHOT = dict(sys.modules)
+
 discord_mock = MagicMock()
 discord_mock.Embed = MagicMock()
 discord_mock.Color = MagicMock()
@@ -34,6 +38,10 @@ from aiuser.types.openrouter_types import (
     serialize_parameters,
     deserialize_parameters,
 )
+
+# Restore the full sys.modules snapshot to avoid polluting other test modules.
+sys.modules.clear()
+sys.modules.update(_ORIG_SYS_MODULES_SNAPSHOT)
 
 
 class TestOpenRouterWebSearch:
@@ -253,6 +261,11 @@ class TestImageContentBuilding:
 
 class TestImageFetchAndProcess:
     """Tests for fetch_image with mocked aiohttp responses."""
+
+    def setup_method(self):
+        """Clear the image cache before each test to prevent cross-test contamination."""
+        from aiuser.utils.image_cache import image_cache
+        image_cache.clear()
 
     @staticmethod
     def _make_mock_get(mock_response):
