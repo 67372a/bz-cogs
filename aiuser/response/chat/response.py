@@ -20,9 +20,6 @@ from aiuser.utils.utilities import to_thread, resolve_emojis_for_discord, escape
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
-# Hardcoded toggle: set to True to re-enable sending model reasoning to Discord
-_SEND_REASONING_TO_DISCORD = False
-
 # Use to_thread to compile & apply a regex pattern
 @to_thread(timeout=REGEX_RUN_TIMEOUT)
 def compile_and_apply(pattern_str: str, text: str) -> str:
@@ -110,24 +107,6 @@ async def _attach_reasoning_view(message: Optional[discord.Message], reasoning_s
     except Exception:
         logger.warning("Failed to attach reasoning view to response message", exc_info=True)
 
-async def send_reasoning(ctx: commands.Context, reasoning: str, can_reply: bool, mentionable_users) -> bool:
-    allowed = AllowedMentions(everyone=False, roles=False, users=[ctx.message.author])
-
-    if len(reasoning) > 4092:
-        total_embed_count = math.ceil(len(reasoning) / 4092)
-
-        for i in range(0, len(reasoning), 4092):
-            embed = Embed(title=f"{ctx.bot.user.name}'s Thoughts", description = f"||{reasoning[i:i + 4092]}||")
-            embed.set_footer(text=f"{int((i + 4092) / 4092)} of {total_embed_count}")
-            await ctx.send(embed=embed, allowed_mentions=allowed)
-    elif can_reply and await should_reply(ctx):
-        await ctx.message.reply(embed=Embed(title=f"{ctx.bot.user.name}'s Thoughts", description = f"||{reasoning}||"), mention_author=False, allowed_mentions=allowed)
-    elif ctx.interaction:
-        await ctx.interaction.followup.send(embed=Embed(title=f"{ctx.bot.user.name}'s Thoughts", description = f"||{reasoning}||"), allowed_mentions=allowed)
-    else:
-        await ctx.send(embed=Embed(title=f"{ctx.bot.user.name}'s Thoughts", description = f"||{reasoning}||"), allowed_mentions=allowed)
-    return True
-
 async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_list: MessagesList) -> bool:
     """Create and send a chat response using the tool-calling loop pipeline.
 
@@ -148,22 +127,6 @@ async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_l
         msg.author async for msg in ctx.channel.history(limit=20)
         if msg.author != ctx.guild.me
     ]
-
-    # Send reasoning if present (always before any response text)
-    # Hardcoded disable: _SEND_REASONING_TO_DISCORD must be True to send reasoning to Discord
-    reasoning = result.reasoning
-    if reasoning and _SEND_REASONING_TO_DISCORD:
-        try:
-            cleaned_reasoning = await remove_patterns_from_response(ctx, cog.config, reasoning, recent_authors)
-        except Exception:
-            cleaned_reasoning = None
-        if cleaned_reasoning:
-            cleaned_reasoning = collapse_lines(cleaned_reasoning, replacement=r'\n')
-            cleaned_reasoning = escape_unescaped_backticks(cleaned_reasoning)
-            cleaned_reasoning = await resolve_emojis_for_discord(ctx, cleaned_reasoning)
-            await send_reasoning(ctx, cleaned_reasoning, messages_list.can_reply, recent_authors)
-    elif reasoning and not _SEND_REASONING_TO_DISCORD:
-        logger.info("Reasoning output suppressed (Discord reasoning disabled)")
 
     if not result.has_tools:
         # No tool calls — single response, send it and done
