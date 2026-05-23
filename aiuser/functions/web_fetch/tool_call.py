@@ -17,13 +17,16 @@ logger = logging.getLogger("red.bz_cogs.aiuser")
 class WebFetchToolCall(ToolCall):
     schema = ToolCallSchema(function=Function(
         name="web_fetch",
-        description="Fetches and returns the text content from one or more URLs. Use this to read the contents of web pages.",
+        description="Read a webpage's full content as clean markdown. Use after web_search_exa " \
+        "when highlights are insufficient OR to read any URL specific URLs provided. Best for: " \
+        "Extracting full content from known URLs. Batch multiple URLs in one call. " \
+        "Returns: Clean text content and metadata from the page(s).",
         parameters=Parameters(
             properties={
                 "urls": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "List of URLs to fetch content from",
+                    "description": "URLs to read. Batch multiple URLs in one call.",
                 },
             },
             required=["urls"],
