@@ -388,12 +388,17 @@ class TestBuildFunctionCallEmbed:
         embed = pipeline._build_function_call_embed([], "in_progress", 1700000000)
         assert embed is not None
 
-    def test_build_embed_truncates_long_arguments(self):
+    def test_build_embed_does_not_include_arguments(self):
+        """The initial embed should show only function names, not arguments."""
         pipeline = _make_pipeline()
         long_args = '{"query": "' + 'x' * 200 + '"}'
         tc = _make_tool_call("c1", "search", long_args)
         embed = pipeline._build_function_call_embed([tc], "in_progress", 1700000000)
         assert embed is not None
+        assert "search" in embed.description
+        # Arguments should NOT appear in the initial embed
+        assert "xxx" not in embed.description
+        assert "query" not in embed.description
 
     def test_build_embed_with_invalid_json_arguments(self):
         pipeline = _make_pipeline()
@@ -421,13 +426,15 @@ class TestBuildFunctionCallEmbed:
         assert "<t:1700000000:F>" in embed.description
         assert "Started" in embed.description
 
-    def test_build_embed_description_has_function_calls_and_timestamp(self):
-        """Description should have both function call list and timestamp."""
+    def test_build_embed_description_has_function_names_and_timestamp(self):
+        """Description should have function call names (no args) and timestamp."""
         pipeline = _make_pipeline()
         tc = _make_tool_call("c1", "web_search", '{"query": "test"}')
         embed = pipeline._build_function_call_embed([tc], "in_progress", 1700000000)
-        # Function call should be in the description
+        # Function call name should be in the description
         assert "web_search" in embed.description
+        # Arguments should NOT be in the description
+        assert "test" not in embed.description
         # Timestamp should be at the bottom
         assert embed.description.strip().endswith("<t:1700000000:F>")
 

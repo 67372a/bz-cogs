@@ -79,9 +79,6 @@ class FunctionCallView(discord.ui.View):
         for item in inputs:
             name = item["name"]
             args = item["args"]
-            # Truncate individual args to avoid hitting the 4096 limit
-            if len(args) > 500:
-                args = args[:497] + "..."
             description_parts.append(f"**{name}**\n```json\n{args}\n```")
 
         description = "\n".join(description_parts)

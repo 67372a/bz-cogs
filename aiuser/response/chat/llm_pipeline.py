@@ -1156,21 +1156,11 @@ class LLMPipeline:
             color=0x5865F2,  # Discord blurple
         )
 
-        # Build the body as a bulleted list of function calls
+        # Build the body as a bulleted list of function call names (no inputs)
         lines = []
         for tc in tool_calls:
             name = tc.function.name
-            try:
-                args = json.loads(tc.function.arguments)
-                # Truncate args to ~100 chars for readability
-                args_str = json.dumps(args, default=str, ensure_ascii=False)
-                if len(args_str) > 100:
-                    args_str = args_str[:97] + "..."
-            except (json.JSONDecodeError, TypeError):
-                args_str = tc.function.arguments or "{}"
-                if len(args_str) > 100:
-                    args_str = args_str[:97] + "..."
-            lines.append(f"• **{name}** — `{args_str}`")
+            lines.append(f"• **{name}**")
 
         body = "\n".join(lines) if lines else "*No function call details available*"
 
