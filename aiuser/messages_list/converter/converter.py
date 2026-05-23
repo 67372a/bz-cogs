@@ -1,5 +1,6 @@
 import logging
 import re
+from datetime import timezone
 
 from discord import Message
 from redbot.core import commands
@@ -236,7 +237,8 @@ class MessageConverter():
 
             title = f', title "{message.attachments[0].title}"' if message.attachments[0].title else ""
             description = f', description "{message.attachments[0].description}"' if message.attachments[0].description else ""
-            content = f'[MESSAGE_ID={message.id} TIMESTAMP={message.created_at.isoformat()} USER_ID={message.author.id} USERNAME="{message.author.name}" NICKNAME="{message.author.display_name}"] sent an attachment with filename "{message.attachments[0].filename}"{title}{description}'
+            timestamp = message.created_at.astimezone(timezone.utc).replace(microsecond=0).strftime('%Y-%m-%dT%H:%M:%SZ')
+            content = f'[MESSAGE_ID={message.id} TIMESTAMP={timestamp} USER_ID={message.author.id} USERNAME="{message.author.name}" NICKNAME="{message.author.display_name}"] sent an attachment with filename "{message.attachments[0].filename}"{title}{description}'
             await self.add_entry(content, res, role)
 
         content = format_text_content(message)

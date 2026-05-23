@@ -1,4 +1,5 @@
 import logging
+from datetime import timezone
 from io import BytesIO, TextIOWrapper
 import base64
 from xml.sax.saxutils import escape
@@ -26,8 +27,9 @@ def _get_msg_header(message: Message) -> str:
     elif message.reference and getattr(message.reference, 'message_id', None):
         reply_info = f' reply_to_id="{message.reference.message_id}"'
 
+    timestamp = message.created_at.astimezone(timezone.utc).replace(microsecond=0).strftime('%Y-%m-%dT%H:%M:%SZ')
     return (f'<message id="{message.id}" '
-            f'timestamp="{message.created_at.isoformat()}" '
+            f'timestamp="{timestamp}" '
             f'author_id="{message.author.id}" '
             f'username="{author_name}" '
             f'displayname="{display_name}"{reply_info}>')
