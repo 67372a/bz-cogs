@@ -38,7 +38,7 @@ class WebFetchProvider(ABC):
 
     @staticmethod
     @abstractmethod
-    async def fetch(urls: list[str], bot: Red, ctx: commands.Context, config: dict) -> str:
+    async def fetch(urls: list[str], guiding_query: str, bot: Red, ctx: commands.Context, config: dict) -> str:
         ...
 
 
@@ -50,7 +50,7 @@ class NoneProvider(WebFetchProvider):
     """No-op provider returned when no backend is configured."""
 
     @staticmethod
-    async def fetch(urls: list[str], bot: Red, ctx: commands.Context, config: dict) -> str:
+    async def fetch(urls: list[str], guiding_query: str, bot: Red, ctx: commands.Context, config: dict) -> str:
         return "Error: No web fetch backend has been configured. Ask the bot owner to set one with `[p]aiuser functions web_fetch_backend`."
 
 
@@ -62,7 +62,7 @@ class ExaFetchProvider(WebFetchProvider):
     """Fetch page contents via Exa API using the exa-py SDK."""
 
     @staticmethod
-    async def fetch(urls: list[str], bot: Red, ctx: commands.Context, config: dict) -> str:
+    async def fetch(urls: list[str], guiding_query: str, bot: Red, ctx: commands.Context, config: dict) -> str:
         api_key = (await bot.get_shared_api_tokens("exa")).get("api_key")
         if not api_key:
             return "Error: Exa API key is not configured. The bot owner needs to set it with `[p]set api exa api_key,YOUR_KEY`."
@@ -81,10 +81,14 @@ class ExaFetchProvider(WebFetchProvider):
             kwargs["summary"] = config.get("summary")
         if config.get("highlights"):
             kwargs["highlights"] = config.get("highlights")
+        if guiding_query:
+            kwargs["highlights"]["guiding_query"] = guiding_query
         if config.get("livecrawl_timeout"):
             kwargs["livecrawl_timeout"] = config.get("livecrawl_timeout")
         if config.get("max_age_hours"):
             kwargs["max_age_hours"] = config.get("max_age_hours")
+
+
 
         try:
             results = exa.get_contents(urls, **kwargs)
@@ -118,7 +122,7 @@ class ScrapeFetchProvider(WebFetchProvider):
     """Fetch page contents by directly scraping URLs with trafilatura."""
 
     @staticmethod
-    async def fetch(urls: list[str], bot: Red, ctx: commands.Context, config: dict) -> str:
+    async def fetch(urls: list[str], guiding_query: str, bot: Red, ctx: commands.Context, config: dict) -> str:
         results = []
         for url in urls:
             try:

@@ -19,29 +19,35 @@ class WebSearchToolCall(ToolCall):
         name="web_search",
         description="Search the web for any topic and get clean, ready-to-use content. Best for: " \
         "Finding current information, news, facts, people, companies, or answering questions about " \
-        "any topic. Returns: Clean text content from top search results. Query tips: describe the " \
-        "ideal page, not keywords. \"blog post comparing React and Vue performance\" not " \
-        "\"React vs Vue\". Use category:people / category:company to search through Linkedin " \
-        "profiles / companies respectively. If highlights are insufficient, follow up with " \
+        "any topic. Returns: Clean text content from top search results. Search Query tips: should describe the " \
+        "ideal page, not keywords. For example, \"blog post comparing React and Vue performance.\" " \
+        "Use category:people / category:company to search through Linkedin profiles / companies " \
+        "respectively. If highlights are insufficient, follow up with " \
         "web_fetch_exa on the best URLs.",
         parameters=Parameters(
             properties={
-                "query": {
+                "search_query": {
                     "type": "string",
-                    "description": "Natural language search query. Should be a semantically rich "
+                    "description": "Natural language search query. Must be a semantically rich "
                     "description of the ideal page, not just keywords. Optionally include "
                     "category:<type> (company, people) to focus results — e.g. 'category:people "
                     "John Doe software engineer'.",
                 },
+                "guiding_query": {
+                    "type": "string",
+                    "description": "Optional natural-language description of what to have highlights focus on.",
+                },
             },
-            required=["query"],
+            required=["search_query"],
         )))
     function_name = "web_search"
 
     async def _handle(self, arguments):
-        query = arguments.get("query", "")
-        if not query:
-            return "Error: No search query provided."
+        search_query = arguments.get("search_query", "")
+        if not search_query:
+            return "Error: No search_query provided."
+        
+        guiding_query = arguments.get("guiding_query", None)
 
         backend = await self.config.guild(self.ctx.guild).web_search_backend()
         if not backend:
@@ -50,6 +56,6 @@ class WebSearchToolCall(ToolCall):
         config_raw = await self.config.guild(self.ctx.guild).web_search_config()
         config = json.loads(config_raw) if config_raw else {}
 
-        logger.info("web_search: backend=%s query=%s", backend, query[:100])
+        logger.info("web_search: backend=%s search_query=%s guiding_query=%s", backend, search_query, guiding_query)
         provider = get_search_provider(backend)
-        return await provider.search(query, self.bot, self.ctx, config)
+        return await provider.search(search_query, guiding_query, self.bot, self.ctx, config)

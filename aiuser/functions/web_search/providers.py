@@ -47,7 +47,7 @@ class WebSearchProvider(ABC):
 
     @staticmethod
     @abstractmethod
-    async def search(query: str, bot: Red, ctx: commands.Context, config: dict) -> str:
+    async def search(search_query: str, guiding_query: str, bot: Red, ctx: commands.Context, config: dict) -> str:
         ...
 
 
@@ -59,7 +59,7 @@ class NoneProvider(WebSearchProvider):
     """No-op provider returned when no backend is configured."""
 
     @staticmethod
-    async def search(query: str, bot: Red, ctx: commands.Context, config: dict) -> str:
+    async def search(search_query: str, guiding_query: str, bot: Red, ctx: commands.Context, config: dict) -> str:
         return "Error: No web search backend has been configured. Ask the bot owner to set one with `[p]aiuser functions web_search_backend`."
 
 
@@ -71,7 +71,7 @@ class ExaSearchProvider(WebSearchProvider):
     """Search via Exa API using the exa-py SDK."""
 
     @staticmethod
-    async def search(query: str, bot: Red, ctx: commands.Context, config: dict) -> str:
+    async def search(search_query: str, guiding_query: str, bot: Red, ctx: commands.Context, config: dict) -> str:
         api_key = (await bot.get_shared_api_tokens("exa")).get("api_key")
         if not api_key:
             return "Error: Exa API key is not configured. The bot owner needs to set it with `[p]set api exa api_key,YOUR_KEY`."
@@ -93,13 +93,15 @@ class ExaSearchProvider(WebSearchProvider):
         if config.get("max_age_hours"):
             kwargs["max_age_hours"] = config.get("max_age_hours")
 
+        if kwargs["contents"].get("highlights") and guiding_query:
+            kwargs["contents"]["highlights"]["guiding_query"] = guiding_query
 
         for opt in ("include_domains", "exclude_domains", "start_published_date", "end_published_date"):
             if config.get(opt) is not None:
                 kwargs[opt] = config[opt]
 
         try:
-            results = exa.search(query, **kwargs)
+            results = exa.search(search_query, **kwargs)
         except Exception:
             logger.exception("Exa search failed")
             return "An error occurred while searching the web with Exa."
@@ -130,16 +132,16 @@ class SerperSearchProvider(WebSearchProvider):
     """Search via Serper.dev (Google)."""
 
     @staticmethod
-    async def search(query: str, bot: Red, ctx: commands.Context, config: dict) -> str:
+    async def search(search_query: str, guiding_query: str, bot: Red, ctx: commands.Context, config: dict) -> str:
         api_key = (await bot.get_shared_api_tokens("serper")).get("api_key")
         if not api_key:
             return "Error: Serper.dev API key is not configured. The bot owner needs to set it with `[p]set api serper api_key,YOUR_KEY`."
 
-        return await SerperSearchProvider._execute_serper(query, api_key, ctx)
+        return await SerperSearchProvider._execute_serper(search_query, api_key, ctx)
 
     @staticmethod
-    async def _execute_serper(query: str, api_key: str, ctx: commands.Context) -> str:
-        payload = json.dumps({"q": query})
+    async def _execute_serper(search_query: str, api_key: str, ctx: commands.Context) -> str:
+        payload = json.dumps({"q": search_query})
         headers = {"X-API-KEY": api_key, "Content-Type": "application/json"}
 
         try:
@@ -168,7 +170,7 @@ class SerperSearchProvider(WebSearchProvider):
         link = first_result.get("link")
 
         try:
-            text_content = await SerperSearchProvider._scrape_page(link, query, ctx)
+            text_content = await SerperSearchProvider._scrape_page(link, search_query, ctx)
             return f"Use the following relevant information to generate your response: {text_content}"
         except Exception:
             logger.debug(f"Failed scraping URL {link}", exc_info=True)
@@ -178,13 +180,13 @@ class SerperSearchProvider(WebSearchProvider):
             return f"Use the following relevant information to generate your response: {first_result.get('snippet', 'N/A')}"
 
     @staticmethod
-    async def _scrape_page(link: str, query: str, ctx: commands.Context) -> str:
+    async def _scrape_page(link: str, search_query: str, ctx: commands.Context) -> str:
         headers = {
             "Cache-Control": "no-cache",
             "Referer": "https://www.google.com/",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
         }
-        logger.info(f"Requesting {link} from Google query \"{query}\" in {ctx.guild.name}")
+        logger.info(f"Requesting {link} from Google query \"{search_query}\" in {ctx.guild.name}")
         async with aiohttp.ClientSession(headers=headers) as session:
             async with session.get(link) as response:
                 response.raise_for_status()

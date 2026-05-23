@@ -30,7 +30,7 @@ class WebFetchToolCall(ToolCall):
                 },
                 "guiding_query": {
                     "type": "string",
-                    "description": "Optional query to guide highlight retrieval, only use if looking for specific information.",
+                    "description": "Optional natural-language description of what to have highlights focus on.",
                 },
             },
             required=["urls"],
@@ -57,4 +57,4 @@ class WebFetchToolCall(ToolCall):
 
         logger.info("web_fetch: backend=%s urls=%s guiding_query=%s", backend, urls, guiding_query)
         provider = get_fetch_provider(backend)
-        return await provider.fetch(urls, self.bot, self.ctx, config)
+        return await provider.fetch(urls, guiding_query, self.bot, self.ctx, config)
