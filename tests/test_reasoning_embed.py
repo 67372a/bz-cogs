@@ -4,6 +4,7 @@ Verifies that:
 - _split_text_to_embed_chunks correctly splits long text
 - _extract_reasoning_from_details extracts reasoning from structured details
 - FunctionCallView.view_reasoning() sends multiple embeds for long reasoning (no truncation)
+- FunctionCallView.view_outputs() sends multiple embeds for long outputs (no truncation)
 - ResponseView.view_reasoning() sends multiple embeds for long reasoning (no truncation)
 - The fallback path in send_single_combined_message attaches reasoning view
 """
@@ -422,6 +423,169 @@ class TestFunctionCallViewReasoning:
         assert interaction.response.send_message.call_count == 1
         call_args = interaction.response.send_message.call_args
         assert call_args.kwargs.get("embed") is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: FunctionCallView outputs (no truncation)
+# ---------------------------------------------------------------------------
+
+class TestFunctionCallViewOutputs:
+    """Test that FunctionCallView.view_outputs() sends full outputs without truncation."""
+
+    @pytest.mark.asyncio
+    async def test_view_outputs_no_outputs_sends_message(self):
+        """When no outputs are cached, sends a plain message."""
+        view_cls = _real_fcv.FunctionCallView
+        view_cls._data_cache.clear()
+        msg_id = 99999
+        view = view_cls(message_id=msg_id, has_outputs=True, has_reasoning=False)
+        button = MagicMock()
+        interaction = MagicMock()
+        interaction.response = MagicMock()
+        interaction.response.send_message = AsyncMock()
+
+        await view.view_outputs(interaction, button)
+
+        assert interaction.response.send_message.call_count == 1
+        call_args = interaction.response.send_message.call_args
+        assert call_args.kwargs.get("embed") is None
+
+    def _make_view_with_outputs(self, outputs: list):
+        view_cls = _real_fcv.FunctionCallView
+        view_cls._data_cache.clear()
+        msg_id = 54321
+        view_cls._data_cache[msg_id] = {
+            "inputs": [],
+            "outputs": outputs,
+            "reasoning": "",
+        }
+        view = view_cls(message_id=msg_id, has_outputs=True, has_reasoning=False)
+        return view, msg_id
+
+    @pytest.mark.asyncio
+    async def test_short_outputs_single_embed(self):
+        """Short outputs should fit in a single embed."""
+        outputs = [
+            {"name": "web_search", "result": "Search result text"},
+            {"name": "web_fetch", "result": "Fetched page content"},
+        ]
+        view, msg_id = self._make_view_with_outputs(outputs)
+        button = MagicMock()
+        interaction = MagicMock()
+        interaction.response = MagicMock()
+        interaction.response.send_message = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        await view.view_outputs(interaction, button)
+
+        assert interaction.response.send_message.call_count == 1
+        assert interaction.followup.send.call_count == 0
+        call_args = interaction.response.send_message.call_args
+        embed = call_args.kwargs.get("embed") or call_args[0][0]
+        assert "web_search" in embed.description
+        assert "web_fetch" in embed.description
+
+    @pytest.mark.asyncio
+    async def test_long_output_no_truncation(self):
+        """A very long single output should not be truncated — it should be split across embeds."""
+        long_result = "A" * 8000
+        outputs = [{"name": "web_fetch", "result": long_result}]
+        view, msg_id = self._make_view_with_outputs(outputs)
+        button = MagicMock()
+        interaction = MagicMock()
+        interaction.response = MagicMock()
+        interaction.response.send_message = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        await view.view_outputs(interaction, button)
+
+        assert interaction.response.send_message.call_count == 1
+        assert interaction.followup.send.call_count >= 1
+
+        # Reconstruct full text from all embeds
+        all_text = ""
+        first_call = interaction.response.send_message.call_args
+        first_embed = first_call.kwargs.get("embed") or first_call[0][0]
+        all_text += first_embed.description
+        for call in interaction.followup.send.call_args_list:
+            embed = call.kwargs.get("embed") or call[0][0]
+            all_text += embed.description
+
+        # Full output text should be present (no truncation)
+        assert len(all_text) >= len(long_result)
+
+    @pytest.mark.asyncio
+    async def test_no_truncation_markers(self):
+        """Verify no '(truncated)' or '...' truncation markers in any embed."""
+        large_result = "X" * 5000
+        outputs = [
+            {"name": "tool_a", "result": large_result},
+            {"name": "tool_b", "result": "Y" * 3000},
+        ]
+        view, msg_id = self._make_view_with_outputs(outputs)
+        button = MagicMock()
+        interaction = MagicMock()
+        interaction.response = MagicMock()
+        interaction.response.send_message = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        await view.view_outputs(interaction, button)
+
+        all_embeds = []
+        first_call = interaction.response.send_message.call_args
+        all_embeds.append(first_call.kwargs.get("embed") or first_call[0][0])
+        for call in interaction.followup.send.call_args_list:
+            all_embeds.append(call.kwargs.get("embed") or call[0][0])
+
+        for embed in all_embeds:
+            desc = embed.description or ""
+            assert "(truncated)" not in desc
+            assert not desc.endswith("...")
+
+    @pytest.mark.asyncio
+    async def test_individual_result_not_capped_at_500(self):
+        """Individual results should not be capped at 500 characters."""
+        result_600 = "B" * 600
+        outputs = [{"name": "big_tool", "result": result_600}]
+        view, msg_id = self._make_view_with_outputs(outputs)
+        button = MagicMock()
+        interaction = MagicMock()
+        interaction.response = MagicMock()
+        interaction.response.send_message = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        await view.view_outputs(interaction, button)
+
+        call_args = interaction.response.send_message.call_args
+        embed = call_args.kwargs.get("embed") or call_args[0][0]
+        # The full 600 chars should be present (not truncated to 497 + "...")
+        assert "B" * 600 in embed.description
+
+    @pytest.mark.asyncio
+    async def test_followup_chunks_are_ephemeral(self):
+        """All followup embeds should be sent as ephemeral."""
+        outputs = [{"name": "tool", "result": "A" * 8000}]
+        view, msg_id = self._make_view_with_outputs(outputs)
+        button = MagicMock()
+        interaction = MagicMock()
+        interaction.response = MagicMock()
+        interaction.response.send_message = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        await view.view_outputs(interaction, button)
+
+        # First response should be ephemeral
+        first_call = interaction.response.send_message.call_args
+        assert first_call.kwargs.get("ephemeral") is True
+
+        # All followups should be ephemeral
+        for call in interaction.followup.send.call_args_list:
+            assert call.kwargs.get("ephemeral") is True
 
 
 # ---------------------------------------------------------------------------

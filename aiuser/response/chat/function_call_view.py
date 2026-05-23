@@ -189,26 +189,31 @@ class FunctionCallView(discord.ui.View):
                 "No function call outputs available yet.", ephemeral=True
             )
 
-        embed = discord.Embed(
-            title="📄 Function Call Outputs",
-            color=0x57F287,
-        )
-
         description_parts = []
         for item in outputs:
             name = item["name"]
             result = item["result"]
-            # Truncate individual results
-            if len(result) > 500:
-                result = result[:497] + "..."
             description_parts.append(f"**{name}**\n```\n{result}\n```")
 
         description = "\n".join(description_parts)
-        if len(description) > EMBED_DESCRIPTION_MAX_CHARS:
-            description = description[: EMBED_DESCRIPTION_MAX_CHARS - 20] + "\n\n...(truncated)"
+        chunks = _split_text_to_embed_chunks(description)
 
-        embed.description = description
+        # First chunk uses interaction.response (required for ephemeral)
+        embed = discord.Embed(
+            title="📄 Function Call Outputs",
+            description=chunks[0],
+            color=0x57F287,
+        )
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        # Remaining chunks sent via followup (ephemeral by default after initial ephemeral response)
+        for chunk in chunks[1:]:
+            embed = discord.Embed(
+                title="📄 Function Call Outputs (continued)",
+                description=chunk,
+                color=0x57F287,
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
 
     @classmethod
     def store_inputs(cls, message_id: int, inputs: List[Dict[str, str]]):
