@@ -17,6 +17,7 @@ from aiuser.response.chat.llm_pipeline import LLMPipeline, ResponsePart, Pipelin
 from aiuser.response.chat.function_call_view import ResponseView
 from aiuser.types.abc import MixinMeta
 from aiuser.utils.utilities import to_thread, resolve_emojis_for_discord, escape_unescaped_backticks, collapse_lines
+from aiuser.utils.latex_converter import convert_latex_to_plain
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
@@ -138,6 +139,7 @@ async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_l
             if cleaned_text:
                 cleaned_text = collapse_lines(cleaned_text, replacement=r'\n\n')
                 cleaned_text = escape_unescaped_backticks(cleaned_text)
+                cleaned_text = convert_latex_to_plain(cleaned_text)
                 cleaned_text = await resolve_emojis_for_discord(ctx, cleaned_text)
                 sent_msg = await send_response(ctx, cleaned_text, messages_list.can_reply, recent_authors)
                 await _attach_reasoning_view(sent_msg, result.reasoning_steps)
@@ -155,6 +157,7 @@ async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_l
         if cleaned_pre:
             cleaned_pre = collapse_lines(cleaned_pre, replacement=r'\n\n')
             cleaned_pre = escape_unescaped_backticks(cleaned_pre)
+            cleaned_pre = convert_latex_to_plain(cleaned_pre)
             cleaned_pre = await resolve_emojis_for_discord(ctx, cleaned_pre)
             sent_msg = await send_response(ctx, cleaned_pre, messages_list.can_reply, recent_authors)
             await _attach_reasoning_view(sent_msg, result.reasoning_steps)
@@ -228,6 +231,7 @@ async def send_single_combined_message(
         if cleaned_text:
             cleaned_text = collapse_lines(cleaned_text, replacement=r'\n\n')
             cleaned_text = escape_unescaped_backticks(cleaned_text)
+            cleaned_text = convert_latex_to_plain(cleaned_text)
             cleaned_text = await resolve_emojis_for_discord(ctx, cleaned_text)
 
     # Handle the 3 cases

@@ -30,6 +30,15 @@ XML_SYSTEM_PROMPT_APPENDIX = (
     "Respond naturally in with text, inclusive of markdown and emojis as is relevant, adhering to the persona described above."
 )
 
+MATH_NOTATION_INSTRUCTIONS = (
+    "MATH NOTATION:\n"
+    "Do NOT use LaTeX formatting ($...$, $$...$$, \\frac, \\sum, etc.) in your responses. "
+    "Instead, use plain Unicode math symbols where possible: ×, ÷, ≥, ≤, ≈, √, ², ³, α, β, π, "
+    "→, ←, ∫, Σ, etc. For fractions, write them as (numerator)/(denominator). "
+    "For complex mathematical expressions that cannot be expressed in Unicode, "
+    "use a fenced code block (```...```)."
+)
+
 CITATION_INSTRUCTIONS = (
     "CITATION REQUIREMENTS:\n"
     "When you use information from web_search or web_fetch tools, you MUST include "
