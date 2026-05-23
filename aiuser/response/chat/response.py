@@ -304,13 +304,15 @@ async def send_single_combined_message(
     except discord.HTTPException as e:
         logger.error(f"[Combined] Failed to send combined reply: {e}")
         # Fallback: send text and images separately
+        sent_msg = None
         if cleaned_text:
-            await send_response(ctx, cleaned_text, can_reply, recent_authors)
+            sent_msg = await send_response(ctx, cleaned_text, can_reply, recent_authors)
         for f in files:
             try:
                 await ctx.message.reply(file=f, mention_author=False, allowed_mentions=allowed)
             except Exception as e2:
                 logger.error(f"[Combined] Failed to send image {f.filename}: {e2}")
+        await _attach_reasoning_view(sent_msg, reasoning_steps)
         return bool(cleaned_text or files)
 
     except Exception as e:

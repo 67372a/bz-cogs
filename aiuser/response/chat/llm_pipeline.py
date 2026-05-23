@@ -113,6 +113,38 @@ def is_response_unsatisfactory(response: ChatCompletion) -> bool:
     return False
 
 
+def _extract_reasoning_from_details(reasoning_details: list) -> Optional[str]:
+    """Extract a plain-text reasoning string from structured reasoning_details.
+
+    Some LLM providers (e.g. OpenAI o1/o3) return reasoning in a structured
+    ``reasoning_details`` list rather than the ``reasoning`` string attribute.
+    This helper concatenates any text/reasoning content parts into a single string.
+
+    Args:
+        reasoning_details: List of reasoning detail dicts or objects.
+
+    Returns:
+        Concatenated reasoning text, or None if no text could be extracted.
+    """
+    parts = []
+    for detail in reasoning_details:
+        if isinstance(detail, dict):
+            # Dict form: look for 'reasoning', 'text', or 'summary' keys
+            for key in ("reasoning", "text", "summary"):
+                val = detail.get(key)
+                if isinstance(val, str) and val.strip():
+                    parts.append(val.strip())
+                    break
+        else:
+            # Object form (e.g. pydantic model)
+            for attr in ("reasoning", "text", "summary"):
+                val = getattr(detail, attr, None)
+                if isinstance(val, str) and val.strip():
+                    parts.append(val.strip())
+                    break
+    return "\n\n".join(parts) if parts else None
+
+
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
 
@@ -673,6 +705,13 @@ class LLMPipeline:
             # Track reasoning across rounds
             if reasoning_text:
                 accumulated_reasoning.append(reasoning_text)
+            elif reasoning_details:
+                # Fallback: extract reasoning from structured reasoning_details
+                # when the 'reasoning' attribute is not available
+                extracted = _extract_reasoning_from_details(reasoning_details)
+                if extracted:
+                    accumulated_reasoning.append(extracted)
+                    reasoning_text = extracted  # Update for downstream consumers
 
             # --- No tool calls — loop complete ---
             if not tool_calls:
