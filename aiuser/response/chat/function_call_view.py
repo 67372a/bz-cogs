@@ -115,7 +115,7 @@ class FunctionCallView(discord.ui.View):
 
         embed = discord.Embed(
             title="🧠 Model Reasoning",
-            description=f"||{display_reasoning}||",
+            description=display_reasoning,
             color=0xFEE75C,
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -254,9 +254,9 @@ class ResponseView(discord.ui.View):
                 display = display[:497] + "..."
 
             if label:
-                description_parts.append(f"**{label}**\n||{display}||")
+                description_parts.append(f"**{label}**\n{display}")
             else:
-                description_parts.append(f"||{display}||")
+                description_parts.append(display)
 
         description = "\n\n".join(description_parts)
         if len(description) > EMBED_DESCRIPTION_MAX_CHARS:
