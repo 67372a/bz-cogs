@@ -613,7 +613,7 @@ class LLMPipeline:
 
         max_rounds = await self.config.guild(self.ctx.guild).max_tool_rounds()
         if not max_rounds or max_rounds < 1:
-            max_rounds = 2
+            max_rounds = 3
 
         tools_available = bool(self.available_tools_schemas or self.openrouter_tools)
 
