@@ -291,7 +291,7 @@ class TestMessageEntryToolCallIdType:
             assert entry.tool_call_id == tc_id
 
     def test_assistant_entry_with_tool_calls(self):
-        tc = _make_tool_call("call_1", "web_search", '{"query": "test"}')
+        tc = _make_tool_call("call_1", "web_search", '{"search_query": "test"}')
         entry = MessageEntry("assistant", None, tool_calls=[tc])
         assert entry.tool_calls == [tc]
         assert entry.tool_call_id is None
@@ -309,7 +309,7 @@ class TestGetJsonToolCallSerialization:
     """Verify that get_json() correctly serializes tool calls with id/name for Gemini 3.5 Flash."""
 
     def test_assistant_message_with_tool_calls_has_id(self):
-        tc = _make_tool_call("call_abc", "web_search", '{"query": "test"}')
+        tc = _make_tool_call("call_abc", "web_search", '{"search_query": "test"}')
         ml = _make_messages_list(messages=[
             MessageEntry("assistant", None, tool_calls=[tc]),
         ])
@@ -334,7 +334,7 @@ class TestGetJsonToolCallSerialization:
 
     def test_full_tool_call_and_response_cycle(self):
         """Test a complete tool call → tool result cycle in get_json()."""
-        tc1 = _make_tool_call("call_1", "web_search", '{"query": "python"}')
+        tc1 = _make_tool_call("call_1", "web_search", '{"search_query": "python"}')
         tc2 = _make_tool_call("call_2", "web_fetch", '{"urls": ["https://example.com"]}')
         ml = _make_messages_list(messages=[
             MessageEntry("system", "You are helpful."),
@@ -560,7 +560,7 @@ class TestWebSearchToolCallHandling:
         config = MagicMock()
         ctx = MagicMock()
         tool = WebSearchToolCall(config=config, ctx=ctx)
-        result = await tool._handle({"query": ""})
+        result = await tool._handle({"search_query": ""})
         assert "Error" in result
 
     @pytest.mark.asyncio
@@ -576,7 +576,7 @@ class TestWebSearchToolCallHandling:
         ctx.guild = MagicMock()
 
         tool = WebSearchToolCall(config=config, ctx=ctx)
-        result = await tool._handle({"query": "test query"})
+        result = await tool._handle({"search_query": "test query"})
         assert isinstance(result, str)
         assert len(result) > 0
 
@@ -697,7 +697,7 @@ class TestProcessAndAddToolResultsExceptionHandling:
         pipeline.enabled_tools = []
         pipeline.collected_images = []
 
-        tc = _make_tool_call("call_abc", "web_search", '{"query": "test"}')
+        tc = _make_tool_call("call_abc", "web_search", '{"search_query": "test"}')
         pipeline.run_tool = AsyncMock(return_value="search results here")
 
         with caplog.at_level(logging.INFO, logger="red.bz_cogs.aiuser"):
@@ -724,7 +724,7 @@ class TestAddAssistantAndToolResult:
     @pytest.mark.asyncio
     async def test_add_assistant_stores_tool_calls(self):
         ml = _make_messages_list()
-        tc = _make_tool_call("call_1", "web_search", '{"query": "test"}')
+        tc = _make_tool_call("call_1", "web_search", '{"search_query": "test"}')
         await ml.add_assistant(None, tool_calls=[tc], index=len(ml) + 1)
         assert len(ml.messages) == 1
         assert ml.messages[0].role == "assistant"
@@ -769,7 +769,7 @@ class TestAddAssistantAndToolResult:
         """Test the full pattern: assistant with 2 tool_calls, then 2 tool results."""
         ml = _make_messages_list()
 
-        tc1 = _make_tool_call("call_1", "web_search", '{"query": "python"}')
+        tc1 = _make_tool_call("call_1", "web_search", '{"search_query": "python"}')
         tc2 = _make_tool_call("call_2", "web_fetch", '{"urls": ["https://example.com"]}')
 
         await ml.add_assistant(None, tool_calls=[tc1, tc2], index=len(ml) + 1)
@@ -804,7 +804,7 @@ class TestGeminiFunctionCallingRequirements:
     """Verify compliance with Gemini 3.5 Flash strict response matching."""
 
     def test_id_and_name_match_in_get_json(self):
-        tc = _make_tool_call("call_gemini_1", "web_search", '{"query": "test"}')
+        tc = _make_tool_call("call_gemini_1", "web_search", '{"search_query": "test"}')
         ml = _make_messages_list(messages=[
             MessageEntry("assistant", None, tool_calls=[tc]),
             MessageEntry("tool", "results", tool_call_id="call_gemini_1", name="web_search"),
@@ -836,7 +836,7 @@ class TestGeminiFunctionCallingRequirements:
 
     def test_all_three_web_tools_in_single_cycle(self):
         """Test a complete cycle with web_search, web_fetch, and web_answer."""
-        tc1 = _make_tool_call("call_ws", "web_search", '{"query": "test"}')
+        tc1 = _make_tool_call("call_ws", "web_search", '{"search_query": "test"}')
         tc2 = _make_tool_call("call_wf", "web_fetch", '{"urls": ["https://a.com"]}')
         tc3 = _make_tool_call("call_wa", "web_answer", '{"question": "What?"}')
 
@@ -880,7 +880,7 @@ class TestToolResultLogging:
         pipeline.collected_images = []
         pipeline.run_tool = AsyncMock(return_value="result text")
 
-        tc = _make_tool_call("call_log_test", "web_search", '{"query": "test"}')
+        tc = _make_tool_call("call_log_test", "web_search", '{"search_query": "test"}')
 
         with caplog.at_level(logging.INFO, logger="red.bz_cogs.aiuser"):
             await pipeline._process_and_add_tool_results([tc])
@@ -896,7 +896,7 @@ class TestToolResultLogging:
         pipeline.collected_images = []
         pipeline.run_tool = AsyncMock(return_value="result")
 
-        tc = _make_tool_call("call_args", "web_search", '{"query": "hello world"}')
+        tc = _make_tool_call("call_args", "web_search", '{"search_query": "hello world"}')
 
         with caplog.at_level(logging.INFO, logger="red.bz_cogs.aiuser"):
             await pipeline._process_and_add_tool_results([tc])
@@ -911,7 +911,7 @@ class TestToolResultLogging:
         pipeline.collected_images = []
         pipeline.run_tool = AsyncMock(return_value="result")
 
-        tc1 = _make_tool_call("call_a", "web_search", '{"query": "a"}')
+        tc1 = _make_tool_call("call_a", "web_search", '{"search_query": "a"}')
         tc2 = _make_tool_call("call_b", "web_fetch", '{"urls": ["https://b.com"]}')
 
         with caplog.at_level(logging.INFO, logger="red.bz_cogs.aiuser"):
