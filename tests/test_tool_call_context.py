@@ -47,6 +47,7 @@ _sub_pkgs = [
     "aiuser.functions.openrouter",
     "aiuser.functions.generate_image",
     "aiuser.functions.edit_image",
+    "aiuser.functions.attach_files",
     "aiuser.functions.web_search",
     "aiuser.functions.web_fetch",
     "aiuser.functions.web_answer",
@@ -548,8 +549,8 @@ class TestWebSearchToolCallHandling:
 
     def test_schema_has_query_parameter(self):
         params = WebSearchToolCall.schema.function.parameters
-        assert "query" in params.properties
-        assert "query" in params.required
+        assert "search_query" in params.properties
+        assert "search_query" in params.required
 
     def test_schema_type_is_function(self):
         assert WebSearchToolCall.schema.type == "function"
