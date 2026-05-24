@@ -29,6 +29,7 @@ from aiuser.functions.tool_call import ToolCall
 from aiuser.functions.types import ToolCallSchema
 from aiuser.functions.generate_image.tool_call import GenerateImageToolCall
 from aiuser.functions.edit_image.tool_call import EditImageToolCall
+from aiuser.functions.attach_files.tool_call import AttachFilesToolCall
 from aiuser.messages_list.messages import MessagesList
 from aiuser.messages_list.entry import MessageEntry
 from aiuser.response.chat.function_call_view import FunctionCallView, ResponseView
@@ -892,10 +893,21 @@ class LLMPipeline:
         or an empty list if the tool is not an image-producing tool.
         """
         for tool_obj in self.enabled_tools:
-            if tool_obj.function_name == tool_function_name and (
-                isinstance(tool_obj, GenerateImageToolCall) or isinstance(tool_obj, EditImageToolCall)
-            ):
-                return tool_obj.get_generated_images()
+            if tool_obj.function_name == tool_function_name:
+                if isinstance(tool_obj, (GenerateImageToolCall, EditImageToolCall)):
+                    return tool_obj.get_generated_images()
+        return []
+
+    def _collect_attached_files_from_tool(self, tool_function_name: str) -> List[Dict]:
+        """Collect attached files (e.g. code files) from a file-producing tool.
+
+        Returns the list of file dicts (and clears the tool's internal list),
+        or an empty list if the tool does not produce file attachments.
+        """
+        for tool_obj in self.enabled_tools:
+            if tool_obj.function_name == tool_function_name:
+                if isinstance(tool_obj, AttachFilesToolCall):
+                    return tool_obj.get_attached_files()
         return []
 
     async def _process_and_add_tool_results(self, tool_calls: List[ChatCompletionMessageToolCall]) -> List[Dict[str, str]]:
@@ -957,6 +969,14 @@ class LLMPipeline:
                 tool_outputs.append({"name": tool_function_name, "result": result_summary})
             else:
                 tool_outputs.append({"name": tool_function_name, "result": str(tool_result_content)})
+
+            # Collect any file attachments from the tool (e.g. attach_files)
+            # This runs for ALL tools regardless of return type, so tools that
+            # return a string result but also produce files will still have them
+            # collected.
+            tool_files = self._collect_attached_files_from_tool(tool_function_name)
+            for f in tool_files:
+                self.collected_images.append(f)
 
             # Add tool result to context — this is the "user" turn with functionResponse
             # Per Gemini 3.5 Flash: id and name MUST match the preceding functionCall
