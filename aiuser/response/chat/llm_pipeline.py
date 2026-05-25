@@ -954,9 +954,6 @@ class LLMPipeline:
                 # content inside the function response, not outside it."
                 # The tool has already built the correct structure — use it
                 # directly.  Still collect images for Discord sending.
-                tool_images = self._collect_images_from_tool(tool_function_name)
-                for img in tool_images:
-                    self.collected_images.append(img)
                 logger.info(
                     "Tool '%s' returned %d multimodal content parts directly",
                     tool_function_name, len(tool_result_content)
@@ -970,6 +967,14 @@ class LLMPipeline:
                 tool_outputs.append({"name": tool_function_name, "result": result_summary})
             else:
                 tool_outputs.append({"name": tool_function_name, "result": str(tool_result_content)})
+
+            # Collect generated images from the tool (e.g. generate_image,
+            # edit_image, mermaid_diagram).  This runs for ALL tools regardless
+            # of return type, so tools that return a string result but also
+            # produce images will still have them collected.
+            tool_images = self._collect_images_from_tool(tool_function_name)
+            for img in tool_images:
+                self.collected_images.append(img)
 
             # Collect any file attachments from the tool (e.g. attach_files)
             # This runs for ALL tools regardless of return type, so tools that
