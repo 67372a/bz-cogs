@@ -35,8 +35,9 @@ def to_thread(timeout=300):
         @functools.wraps(func)
         async def wrapper(*args, **kwargs):
             loop = asyncio.get_event_loop()
+            func_call = functools.partial(func, *args, **kwargs)
             result = await asyncio.wait_for(
-                loop.run_in_executor(None, func, *args, **kwargs), timeout
+                loop.run_in_executor(None, func_call), timeout
             )
             return result
 
