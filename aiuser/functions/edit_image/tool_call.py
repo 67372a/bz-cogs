@@ -645,13 +645,21 @@ class EditImageToolCall(ToolCall):
             logger.warning(
                 f"[EditImage] No images found in response for guild {self.ctx.guild.name}"
             )
-            # Fallback: check if there's text content describing the issue
-            if response.choices and response.choices[0].message.content:
-                content = response.choices[0].message.content
+            finish_reason = response.choices[0].finish_reason if response.choices else "unknown"
+            text_content = (
+                response.choices[0].message.content
+                if response.choices and response.choices[0].message.content
+                else None
+            )
+            if text_content:
                 return (
-                    f"The image edit model returned: {content[:500]}"
+                    f"No image was produced after editing. finish_reason: {finish_reason}. "
+                    f"Model output: {text_content[:500]}"
                 )
-            return "Error: No image was generated after editing. The model may not support image editing or returned an empty response."
+            return (
+                f"No image was produced after editing. finish_reason: {finish_reason}. "
+                f"The model did not return any text response."
+            )
 
         # Build multimodal function response content parts.
         # Per Gemini 3.5 Flash guidance: "include multimodal content inside
