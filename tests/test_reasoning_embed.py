@@ -1,15 +1,17 @@
-"""Tests for reasoning embed changes.
+"""Tests for reasoning embed and file fallback changes.
 
 Verifies that:
-- _split_text_to_embed_chunks correctly splits long text
+- _send_content_or_file sends embed for short content, file for long content
 - _extract_reasoning_from_details extracts reasoning from structured details
-- FunctionCallView.view_reasoning() sends multiple embeds for long reasoning (no truncation)
-- FunctionCallView.view_outputs() sends multiple embeds for long outputs (no truncation)
-- ResponseView.view_reasoning() sends multiple embeds for long reasoning (no truncation)
+- FunctionCallView.view_reasoning() sends embed for short, file for long reasoning
+- FunctionCallView.view_outputs() sends embed for short, file for long outputs
+- FunctionCallView.view_inputs() sends embed for short, file for long inputs
+- ResponseView.view_reasoning() sends embed for short, file for long reasoning
 - The fallback path in send_single_combined_message attaches reasoning view
 """
 
 import asyncio
+import io
 import sys
 from types import ModuleType
 from unittest.mock import MagicMock, AsyncMock
@@ -71,6 +73,23 @@ discord_mock.Colour = MagicMock()
 discord_mock.AllowedMentions = MagicMock()
 discord_mock.HTTPException = type("HTTPException", (Exception,), {})
 
+
+class _FakeFile:
+    """Mock for discord.File that captures the bytes and filename."""
+    def __init__(self, fp, filename=None):
+        self.fp = fp
+        self.filename = filename
+        # Read the bytes so tests can inspect them, then seek back
+        if hasattr(fp, 'read'):
+            fp.seek(0)
+            self.content = fp.read()
+            fp.seek(0)  # Reset so tests can read fp again
+        else:
+            self.content = fp
+
+
+discord_mock.File = _FakeFile
+
 # Set up discord.ui mock
 _ui_mock = MagicMock()
 discord_mock.ui = _ui_mock
@@ -120,6 +139,8 @@ for _m in [
     "aiuser.functions.types", "aiuser.functions.tool_call",
     "aiuser.functions.generate_image.tool_call",
     "aiuser.functions.edit_image.tool_call",
+    "aiuser.functions.attach_files.tool_call",
+    "aiuser.functions.scrape.tool_call",
     "aiuser.functions.openrouter",
     "aiuser.functions.openrouter.web_search",
     "aiuser.functions.openrouter.web_fetch",
@@ -174,91 +195,109 @@ if "aiuser.functions.mermaid" not in sys.modules:
 if "aiuser.functions.mermaid.tool_call" not in sys.modules:
     sys.modules["aiuser.functions.mermaid.tool_call"] = MagicMock()
 
+# Ensure aiuser.utils.utilities mock has attributes needed by llm_pipeline imports
+# (may be a plain MagicMock from prior test files that don't set these)
+_utils_mock = sys.modules.get("aiuser.utils.utilities")
+if _utils_mock is not None and not hasattr(_utils_mock, "get_enabled_tools"):
+    _utils_mock.get_enabled_tools = MagicMock()
+
 _real_pipeline = import_module_directly(
     "aiuser.response.chat.llm_pipeline",
     "aiuser/response/chat/llm_pipeline.py",
 )
 
-_split_text_to_embed_chunks = _real_fcv._split_text_to_embed_chunks
+_send_content_or_file = _real_fcv._send_content_or_file
 _extract_reasoning_from_details = _real_pipeline._extract_reasoning_from_details
+EMBED_DESCRIPTION_MAX_CHARS = _real_fcv.EMBED_DESCRIPTION_MAX_CHARS
 
 
 # ---------------------------------------------------------------------------
-# Tests: _split_text_to_embed_chunks
+# Tests: _send_content_or_file
 # ---------------------------------------------------------------------------
 
-class TestSplitTextToEmbedChunks:
-    """Test that _split_text_to_embed_chunks correctly splits text."""
+class TestSendContentOrFile:
+    """Test that _send_content_or_file sends embed for short content, file for long."""
 
-    def test_short_text_single_chunk(self):
-        text = "Short reasoning"
-        chunks = _split_text_to_embed_chunks(text)
-        assert len(chunks) == 1
-        assert chunks[0] == text
+    def _make_interaction(self):
+        interaction = MagicMock()
+        interaction.response = MagicMock()
+        interaction.response.send_message = AsyncMock()
+        return interaction
 
-    def test_exact_limit_single_chunk(self):
-        text = "A" * 4096
-        chunks = _split_text_to_embed_chunks(text)
-        assert len(chunks) == 1
-        assert chunks[0] == text
+    @pytest.mark.asyncio
+    async def test_short_content_sends_embed(self):
+        interaction = self._make_interaction()
+        content = "Short content"
+        await _send_content_or_file(
+            interaction, "Test Title", content, 0x5865F2, "test.txt"
+        )
+        assert interaction.response.send_message.call_count == 1
+        call_args = interaction.response.send_message.call_args
+        embed = call_args.kwargs.get("embed")
+        assert embed is not None
+        assert embed.description == content
+        assert embed.title == "Test Title"
+        assert call_args.kwargs.get("file") is None
+        assert call_args.kwargs.get("ephemeral") is True
 
-    def test_over_limit_splits(self):
-        text = "A" * 5000
-        chunks = _split_text_to_embed_chunks(text)
-        assert len(chunks) == 2
-        assert len(chunks[0]) <= 4096
-        assert len(chunks[1]) <= 4096
-        assert "".join(chunks) == text
+    @pytest.mark.asyncio
+    async def test_exact_limit_sends_embed(self):
+        interaction = self._make_interaction()
+        content = "A" * EMBED_DESCRIPTION_MAX_CHARS
+        await _send_content_or_file(
+            interaction, "Test Title", content, 0x5865F2, "test.txt"
+        )
+        assert interaction.response.send_message.call_count == 1
+        call_args = interaction.response.send_message.call_args
+        embed = call_args.kwargs.get("embed")
+        assert embed is not None
+        assert call_args.kwargs.get("file") is None
 
-    def test_splits_on_paragraph_boundary(self):
-        paragraph = "A" * 2000
-        text = paragraph + "\n\n" + "B" * 3000
-        chunks = _split_text_to_embed_chunks(text)
-        assert len(chunks) == 2
-        assert chunks[0] == paragraph
-        assert "B" in chunks[1]
+    @pytest.mark.asyncio
+    async def test_long_content_sends_file(self):
+        interaction = self._make_interaction()
+        content = "A" * (EMBED_DESCRIPTION_MAX_CHARS + 1)
+        await _send_content_or_file(
+            interaction, "Test Title", content, 0x5865F2, "test.txt"
+        )
+        assert interaction.response.send_message.call_count == 1
+        call_args = interaction.response.send_message.call_args
+        # Should have an embed with size notice
+        embed = call_args.kwargs.get("embed")
+        assert embed is not None
+        assert "too large" in embed.description.lower()
+        # Character count is comma-formatted (e.g. "4,097")
+        expected_count = f"{EMBED_DESCRIPTION_MAX_CHARS + 1:,}"
+        assert expected_count in embed.description
+        # Should have a file
+        file = call_args.kwargs.get("file")
+        assert file is not None
+        assert file.filename == "test.txt"
+        assert isinstance(file.fp, io.BytesIO)
+        assert call_args.kwargs.get("ephemeral") is True
 
-    def test_splits_on_line_break(self):
-        line = "A" * 200
-        lines_text = "\n".join([line] * 30)  # 30 * 201 = 6030 chars
-        chunks = _split_text_to_embed_chunks(lines_text)
-        assert len(chunks) >= 2
-        for chunk in chunks:
-            assert len(chunk) <= 4096
-        # All original content should be preserved
-        rejoined = "\n".join(chunks)
-        # The split may strip leading newlines, but content should be intact
-        assert line in chunks[0]
-        assert line in chunks[-1]
+    @pytest.mark.asyncio
+    async def test_file_contains_full_content(self):
+        interaction = self._make_interaction()
+        content = "Full content here " * 500  # ~9000 chars
+        await _send_content_or_file(
+            interaction, "Test Title", content, 0x5865F2, "test.txt"
+        )
+        call_args = interaction.response.send_message.call_args
+        file = call_args.kwargs.get("file")
+        file_content = file.fp.read().decode("utf-8")
+        assert file_content == content
 
-    def test_very_long_text_many_chunks(self):
-        text = "X" * 20000
-        chunks = _split_text_to_embed_chunks(text)
-        assert len(chunks) >= 5
-        for chunk in chunks:
-            assert len(chunk) <= 4096
-        assert "".join(chunks) == text
-
-    def test_empty_text(self):
-        chunks = _split_text_to_embed_chunks("")
-        assert len(chunks) == 1
-        assert chunks[0] == ""
-
-    def test_custom_max_chars(self):
-        text = "A" * 200
-        chunks = _split_text_to_embed_chunks(text, max_chars=100)
-        assert len(chunks) == 2
-        assert len(chunks[0]) <= 100
-        assert len(chunks[1]) <= 100
-        assert "".join(chunks) == text
-
-    def test_no_truncation_markers_in_output(self):
-        """Verify the function never adds truncation markers."""
-        text = "A" * 10000
-        chunks = _split_text_to_embed_chunks(text)
-        for chunk in chunks:
-            assert "truncated" not in chunk.lower()
-            assert "..." not in chunk
+    @pytest.mark.asyncio
+    async def test_empty_content_sends_embed(self):
+        interaction = self._make_interaction()
+        await _send_content_or_file(
+            interaction, "Test Title", "", 0x5865F2, "test.txt"
+        )
+        call_args = interaction.response.send_message.call_args
+        embed = call_args.kwargs.get("embed")
+        assert embed is not None
+        assert embed.description == ""
 
 
 # ---------------------------------------------------------------------------
@@ -331,11 +370,11 @@ class TestExtractReasoningFromDetails:
 
 
 # ---------------------------------------------------------------------------
-# Tests: FunctionCallView reasoning (no truncation)
+# Tests: FunctionCallView reasoning
 # ---------------------------------------------------------------------------
 
 class TestFunctionCallViewReasoning:
-    """Test that FunctionCallView.view_reasoning() sends full reasoning without truncation."""
+    """Test that FunctionCallView.view_reasoning() sends embed for short, file for long."""
 
     def _make_view_with_reasoning(self, reasoning: str):
         view_cls = _real_fcv.FunctionCallView
@@ -349,15 +388,19 @@ class TestFunctionCallViewReasoning:
         view = view_cls(message_id=msg_id, has_outputs=False, has_reasoning=True)
         return view, msg_id
 
-    @pytest.mark.asyncio
-    async def test_short_reasoning_single_embed(self):
-        view, msg_id = self._make_view_with_reasoning("Short reasoning text")
-        button = MagicMock()
+    def _make_interaction(self):
         interaction = MagicMock()
         interaction.response = MagicMock()
         interaction.response.send_message = AsyncMock()
         interaction.followup = MagicMock()
         interaction.followup.send = AsyncMock()
+        return interaction
+
+    @pytest.mark.asyncio
+    async def test_short_reasoning_single_embed(self):
+        view, msg_id = self._make_view_with_reasoning("Short reasoning text")
+        button = MagicMock()
+        interaction = self._make_interaction()
 
         await view.view_reasoning(interaction, button)
 
@@ -368,62 +411,46 @@ class TestFunctionCallViewReasoning:
         assert embed.description == "Short reasoning text"
 
     @pytest.mark.asyncio
-    async def test_long_reasoning_multiple_embeds(self):
-        reasoning = "A" * 8000
+    async def test_long_reasoning_sends_file(self):
+        reasoning = "A" * (EMBED_DESCRIPTION_MAX_CHARS + 1000)
         view, msg_id = self._make_view_with_reasoning(reasoning)
         button = MagicMock()
-        interaction = MagicMock()
-        interaction.response = MagicMock()
-        interaction.response.send_message = AsyncMock()
-        interaction.followup = MagicMock()
-        interaction.followup.send = AsyncMock()
+        interaction = self._make_interaction()
 
         await view.view_reasoning(interaction, button)
 
         assert interaction.response.send_message.call_count == 1
-        assert interaction.followup.send.call_count >= 1
-
-        # Reconstruct full text from all embeds
-        all_text = ""
-        first_call = interaction.response.send_message.call_args
-        first_embed = first_call.kwargs.get("embed") or first_call[0][0]
-        all_text += first_embed.description
-        for call in interaction.followup.send.call_args_list:
-            embed = call.kwargs.get("embed") or call[0][0]
-            all_text += embed.description
-
-        # Full reasoning should be present (no truncation)
-        assert len(all_text) >= len(reasoning)
+        assert interaction.followup.send.call_count == 0
+        call_args = interaction.response.send_message.call_args
+        # Should have embed with size notice
+        embed = call_args.kwargs.get("embed")
+        assert embed is not None
+        assert "too large" in embed.description.lower()
+        # Should have a file with full reasoning
+        file = call_args.kwargs.get("file")
+        assert file is not None
+        assert file.filename == "reasoning.txt"
+        file_content = file.fp.read().decode("utf-8")
+        assert file_content == reasoning
 
     @pytest.mark.asyncio
     async def test_no_truncation_markers(self):
         reasoning = "X" * 5000
         view, msg_id = self._make_view_with_reasoning(reasoning)
         button = MagicMock()
-        interaction = MagicMock()
-        interaction.response = MagicMock()
-        interaction.response.send_message = AsyncMock()
-        interaction.followup = MagicMock()
-        interaction.followup.send = AsyncMock()
+        interaction = self._make_interaction()
 
         await view.view_reasoning(interaction, button)
 
-        all_embeds = []
-        first_call = interaction.response.send_message.call_args
-        all_embeds.append(first_call.kwargs.get("embed") or first_call[0][0])
-        for call in interaction.followup.send.call_args_list:
-            all_embeds.append(call.kwargs.get("embed") or call[0][0])
-
-        for embed in all_embeds:
-            assert "(truncated)" not in (embed.description or "")
+        call_args = interaction.response.send_message.call_args
+        embed = call_args.kwargs.get("embed")
+        assert "(truncated)" not in (embed.description or "")
 
     @pytest.mark.asyncio
     async def test_empty_reasoning_sends_message(self):
         view, msg_id = self._make_view_with_reasoning("")
         button = MagicMock()
-        interaction = MagicMock()
-        interaction.response = MagicMock()
-        interaction.response.send_message = AsyncMock()
+        interaction = self._make_interaction()
 
         await view.view_reasoning(interaction, button)
 
@@ -433,29 +460,88 @@ class TestFunctionCallViewReasoning:
 
 
 # ---------------------------------------------------------------------------
-# Tests: FunctionCallView outputs (no truncation)
+# Tests: FunctionCallView inputs
 # ---------------------------------------------------------------------------
 
-class TestFunctionCallViewOutputs:
-    """Test that FunctionCallView.view_outputs() sends full outputs without truncation."""
+class TestFunctionCallViewInputs:
+    """Test that FunctionCallView.view_inputs() sends embed for short, file for long."""
 
-    @pytest.mark.asyncio
-    async def test_view_outputs_no_outputs_sends_message(self):
-        """When no outputs are cached, sends a plain message."""
+    def _make_view_with_inputs(self, inputs: list):
         view_cls = _real_fcv.FunctionCallView
         view_cls._data_cache.clear()
-        msg_id = 99999
-        view = view_cls(message_id=msg_id, has_outputs=True, has_reasoning=False)
-        button = MagicMock()
+        msg_id = 11111
+        view_cls._data_cache[msg_id] = {
+            "inputs": inputs,
+            "outputs": [],
+            "reasoning": "",
+        }
+        view = view_cls(message_id=msg_id, has_outputs=False, has_reasoning=False)
+        return view, msg_id
+
+    def _make_interaction(self):
         interaction = MagicMock()
         interaction.response = MagicMock()
         interaction.response.send_message = AsyncMock()
+        return interaction
 
-        await view.view_outputs(interaction, button)
+    @pytest.mark.asyncio
+    async def test_short_inputs_single_embed(self):
+        inputs = [
+            {"name": "web_search", "args": '{"query": "test"}'},
+        ]
+        view, msg_id = self._make_view_with_inputs(inputs)
+        button = MagicMock()
+        interaction = self._make_interaction()
+
+        await view.view_inputs(interaction, button)
+
+        assert interaction.response.send_message.call_count == 1
+        call_args = interaction.response.send_message.call_args
+        embed = call_args.kwargs.get("embed") or call_args[0][0]
+        assert "web_search" in embed.description
+        assert call_args.kwargs.get("file") is None
+
+    @pytest.mark.asyncio
+    async def test_long_inputs_sends_file(self):
+        inputs = [
+            {"name": "big_search", "args": '{"query": "' + "A" * 5000 + '"}'},
+        ]
+        view, msg_id = self._make_view_with_inputs(inputs)
+        button = MagicMock()
+        interaction = self._make_interaction()
+
+        await view.view_inputs(interaction, button)
+
+        assert interaction.response.send_message.call_count == 1
+        call_args = interaction.response.send_message.call_args
+        embed = call_args.kwargs.get("embed")
+        assert embed is not None
+        assert "too large" in embed.description.lower()
+        file = call_args.kwargs.get("file")
+        assert file is not None
+        assert file.filename == "inputs.txt"
+        file_content = file.fp.read().decode("utf-8")
+        assert "big_search" in file_content
+
+    @pytest.mark.asyncio
+    async def test_no_inputs_sends_message(self):
+        view, msg_id = self._make_view_with_inputs([])
+        button = MagicMock()
+        interaction = self._make_interaction()
+
+        await view.view_inputs(interaction, button)
 
         assert interaction.response.send_message.call_count == 1
         call_args = interaction.response.send_message.call_args
         assert call_args.kwargs.get("embed") is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: FunctionCallView outputs
+# ---------------------------------------------------------------------------
+
+class TestFunctionCallViewOutputs:
+    """Test that FunctionCallView.view_outputs() sends embed for short, file for long."""
 
     def _make_view_with_outputs(self, outputs: list):
         view_cls = _real_fcv.FunctionCallView
@@ -469,6 +555,30 @@ class TestFunctionCallViewOutputs:
         view = view_cls(message_id=msg_id, has_outputs=True, has_reasoning=False)
         return view, msg_id
 
+    def _make_interaction(self):
+        interaction = MagicMock()
+        interaction.response = MagicMock()
+        interaction.response.send_message = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
+        return interaction
+
+    @pytest.mark.asyncio
+    async def test_view_outputs_no_outputs_sends_message(self):
+        """When no outputs are cached, sends a plain message."""
+        view_cls = _real_fcv.FunctionCallView
+        view_cls._data_cache.clear()
+        msg_id = 99999
+        view = view_cls(message_id=msg_id, has_outputs=True, has_reasoning=False)
+        button = MagicMock()
+        interaction = self._make_interaction()
+
+        await view.view_outputs(interaction, button)
+
+        assert interaction.response.send_message.call_count == 1
+        call_args = interaction.response.send_message.call_args
+        assert call_args.kwargs.get("embed") is None
+
     @pytest.mark.asyncio
     async def test_short_outputs_single_embed(self):
         """Short outputs should fit in a single embed."""
@@ -478,11 +588,7 @@ class TestFunctionCallViewOutputs:
         ]
         view, msg_id = self._make_view_with_outputs(outputs)
         button = MagicMock()
-        interaction = MagicMock()
-        interaction.response = MagicMock()
-        interaction.response.send_message = AsyncMock()
-        interaction.followup = MagicMock()
-        interaction.followup.send = AsyncMock()
+        interaction = self._make_interaction()
 
         await view.view_outputs(interaction, button)
 
@@ -494,38 +600,34 @@ class TestFunctionCallViewOutputs:
         assert "web_fetch" in embed.description
 
     @pytest.mark.asyncio
-    async def test_long_output_no_truncation(self):
-        """A very long single output should not be truncated — it should be split across embeds."""
+    async def test_long_output_sends_file(self):
+        """A very long output should be sent as a file."""
         long_result = "A" * 8000
         outputs = [{"name": "web_fetch", "result": long_result}]
         view, msg_id = self._make_view_with_outputs(outputs)
         button = MagicMock()
-        interaction = MagicMock()
-        interaction.response = MagicMock()
-        interaction.response.send_message = AsyncMock()
-        interaction.followup = MagicMock()
-        interaction.followup.send = AsyncMock()
+        interaction = self._make_interaction()
 
         await view.view_outputs(interaction, button)
 
         assert interaction.response.send_message.call_count == 1
-        assert interaction.followup.send.call_count >= 1
-
-        # Reconstruct full text from all embeds
-        all_text = ""
-        first_call = interaction.response.send_message.call_args
-        first_embed = first_call.kwargs.get("embed") or first_call[0][0]
-        all_text += first_embed.description
-        for call in interaction.followup.send.call_args_list:
-            embed = call.kwargs.get("embed") or call[0][0]
-            all_text += embed.description
-
-        # Full output text should be present (no truncation)
-        assert len(all_text) >= len(long_result)
+        assert interaction.followup.send.call_count == 0
+        call_args = interaction.response.send_message.call_args
+        # Should have embed with size notice
+        embed = call_args.kwargs.get("embed")
+        assert embed is not None
+        assert "too large" in embed.description.lower()
+        # Should have a file with full output
+        file = call_args.kwargs.get("file")
+        assert file is not None
+        assert file.filename == "outputs.txt"
+        file_content = file.fp.read().decode("utf-8")
+        assert "web_fetch" in file_content
+        assert long_result in file_content
 
     @pytest.mark.asyncio
     async def test_no_truncation_markers(self):
-        """Verify no '(truncated)' or '...' truncation markers in any embed."""
+        """Verify no '(truncated)' or '...' truncation markers."""
         large_result = "X" * 5000
         outputs = [
             {"name": "tool_a", "result": large_result},
@@ -533,24 +635,15 @@ class TestFunctionCallViewOutputs:
         ]
         view, msg_id = self._make_view_with_outputs(outputs)
         button = MagicMock()
-        interaction = MagicMock()
-        interaction.response = MagicMock()
-        interaction.response.send_message = AsyncMock()
-        interaction.followup = MagicMock()
-        interaction.followup.send = AsyncMock()
+        interaction = self._make_interaction()
 
         await view.view_outputs(interaction, button)
 
-        all_embeds = []
-        first_call = interaction.response.send_message.call_args
-        all_embeds.append(first_call.kwargs.get("embed") or first_call[0][0])
-        for call in interaction.followup.send.call_args_list:
-            all_embeds.append(call.kwargs.get("embed") or call[0][0])
-
-        for embed in all_embeds:
-            desc = embed.description or ""
-            assert "(truncated)" not in desc
-            assert not desc.endswith("...")
+        call_args = interaction.response.send_message.call_args
+        embed = call_args.kwargs.get("embed")
+        desc = embed.description or ""
+        assert "(truncated)" not in desc
+        assert not desc.endswith("...")
 
     @pytest.mark.asyncio
     async def test_individual_result_not_capped_at_500(self):
@@ -559,11 +652,7 @@ class TestFunctionCallViewOutputs:
         outputs = [{"name": "big_tool", "result": result_600}]
         view, msg_id = self._make_view_with_outputs(outputs)
         button = MagicMock()
-        interaction = MagicMock()
-        interaction.response = MagicMock()
-        interaction.response.send_message = AsyncMock()
-        interaction.followup = MagicMock()
-        interaction.followup.send = AsyncMock()
+        interaction = self._make_interaction()
 
         await view.view_outputs(interaction, button)
 
@@ -573,34 +662,25 @@ class TestFunctionCallViewOutputs:
         assert "B" * 600 in embed.description
 
     @pytest.mark.asyncio
-    async def test_followup_chunks_are_ephemeral(self):
-        """All followup embeds should be sent as ephemeral."""
+    async def test_file_is_ephemeral(self):
+        """File message should be sent as ephemeral."""
         outputs = [{"name": "tool", "result": "A" * 8000}]
         view, msg_id = self._make_view_with_outputs(outputs)
         button = MagicMock()
-        interaction = MagicMock()
-        interaction.response = MagicMock()
-        interaction.response.send_message = AsyncMock()
-        interaction.followup = MagicMock()
-        interaction.followup.send = AsyncMock()
+        interaction = self._make_interaction()
 
         await view.view_outputs(interaction, button)
 
-        # First response should be ephemeral
         first_call = interaction.response.send_message.call_args
         assert first_call.kwargs.get("ephemeral") is True
 
-        # All followups should be ephemeral
-        for call in interaction.followup.send.call_args_list:
-            assert call.kwargs.get("ephemeral") is True
-
 
 # ---------------------------------------------------------------------------
-# Tests: ResponseView reasoning (no truncation)
+# Tests: ResponseView reasoning
 # ---------------------------------------------------------------------------
 
 class TestResponseViewReasoning:
-    """Test that ResponseView.view_reasoning() sends full reasoning without truncation."""
+    """Test that ResponseView.view_reasoning() sends embed for short, file for long."""
 
     def _make_view_with_steps(self, steps: list):
         view_cls = _real_fcv.ResponseView
@@ -610,15 +690,19 @@ class TestResponseViewReasoning:
         view = view_cls(message_id=msg_id, has_reasoning=True)
         return view, msg_id
 
-    @pytest.mark.asyncio
-    async def test_single_short_step(self):
-        view, msg_id = self._make_view_with_steps(["Simple reasoning"])
-        button = MagicMock()
+    def _make_interaction(self):
         interaction = MagicMock()
         interaction.response = MagicMock()
         interaction.response.send_message = AsyncMock()
         interaction.followup = MagicMock()
         interaction.followup.send = AsyncMock()
+        return interaction
+
+    @pytest.mark.asyncio
+    async def test_single_short_step(self):
+        view, msg_id = self._make_view_with_steps(["Simple reasoning"])
+        button = MagicMock()
+        interaction = self._make_interaction()
 
         await view.view_reasoning(interaction, button)
 
@@ -633,84 +717,63 @@ class TestResponseViewReasoning:
         steps = ["Reasoning for round 1", "Reasoning for round 2", "Final reasoning"]
         view, msg_id = self._make_view_with_steps(steps)
         button = MagicMock()
-        interaction = MagicMock()
-        interaction.response = MagicMock()
-        interaction.response.send_message = AsyncMock()
-        interaction.followup = MagicMock()
-        interaction.followup.send = AsyncMock()
+        interaction = self._make_interaction()
 
         await view.view_reasoning(interaction, button)
 
-        all_text = ""
-        first_call = interaction.response.send_message.call_args
-        first_embed = first_call.kwargs.get("embed") or first_call[0][0]
-        all_text += first_embed.description or ""
-        for call in interaction.followup.send.call_args_list:
-            embed = call.kwargs.get("embed") or call[0][0]
-            all_text += embed.description or ""
-
-        assert "Round 1" in all_text
-        assert "Round 2" in all_text
-        assert "Final Response" in all_text
-        assert "Reasoning for round 1" in all_text
-        assert "Reasoning for round 2" in all_text
-        assert "Final reasoning" in all_text
+        call_args = interaction.response.send_message.call_args
+        embed = call_args.kwargs.get("embed") or call_args[0][0]
+        desc = embed.description or ""
+        assert "Round 1" in desc
+        assert "Round 2" in desc
+        assert "Final Response" in desc
+        assert "Reasoning for round 1" in desc
+        assert "Reasoning for round 2" in desc
+        assert "Final reasoning" in desc
 
     @pytest.mark.asyncio
-    async def test_long_steps_no_truncation(self):
-        long_step = "A" * 2000
+    async def test_long_steps_sends_file(self):
+        long_step = "A" * 3000
         steps = [long_step, long_step]
         view, msg_id = self._make_view_with_steps(steps)
         button = MagicMock()
-        interaction = MagicMock()
-        interaction.response = MagicMock()
-        interaction.response.send_message = AsyncMock()
-        interaction.followup = MagicMock()
-        interaction.followup.send = AsyncMock()
+        interaction = self._make_interaction()
 
         await view.view_reasoning(interaction, button)
 
-        all_text = ""
-        first_call = interaction.response.send_message.call_args
-        first_embed = first_call.kwargs.get("embed") or first_call[0][0]
-        all_text += first_embed.description or ""
-        for call in interaction.followup.send.call_args_list:
-            embed = call.kwargs.get("embed") or call[0][0]
-            all_text += embed.description or ""
-
+        assert interaction.response.send_message.call_count == 1
+        assert interaction.followup.send.call_count == 0
+        call_args = interaction.response.send_message.call_args
+        embed = call_args.kwargs.get("embed")
+        assert embed is not None
+        assert "too large" in embed.description.lower()
+        file = call_args.kwargs.get("file")
+        assert file is not None
+        assert file.filename == "reasoning.txt"
+        file_content = file.fp.read().decode("utf-8")
         # Both long steps should be fully present
-        assert all_text.count(long_step) == 2
+        assert long_step in file_content
+        assert file_content.count(long_step) == 2
 
     @pytest.mark.asyncio
     async def test_no_truncation_markers(self):
         steps = ["X" * 5000]
         view, msg_id = self._make_view_with_steps(steps)
         button = MagicMock()
-        interaction = MagicMock()
-        interaction.response = MagicMock()
-        interaction.response.send_message = AsyncMock()
-        interaction.followup = MagicMock()
-        interaction.followup.send = AsyncMock()
+        interaction = self._make_interaction()
 
         await view.view_reasoning(interaction, button)
 
-        all_embeds = []
-        first_call = interaction.response.send_message.call_args
-        all_embeds.append(first_call.kwargs.get("embed") or first_call[0][0])
-        for call in interaction.followup.send.call_args_list:
-            all_embeds.append(call.kwargs.get("embed") or call[0][0])
-
-        for embed in all_embeds:
-            desc = embed.description or ""
-            assert "(truncated)" not in desc
+        call_args = interaction.response.send_message.call_args
+        embed = call_args.kwargs.get("embed")
+        desc = embed.description or ""
+        assert "(truncated)" not in desc
 
     @pytest.mark.asyncio
     async def test_empty_steps_sends_message(self):
         view, msg_id = self._make_view_with_steps([])
         button = MagicMock()
-        interaction = MagicMock()
-        interaction.response = MagicMock()
-        interaction.response.send_message = AsyncMock()
+        interaction = self._make_interaction()
 
         await view.view_reasoning(interaction, button)
 

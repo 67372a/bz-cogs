@@ -11,9 +11,12 @@ Provides buttons on the function call notification embed:
 Provides a button on the response embed:
 - 🧠 View Reasoning: Sends an ephemeral message with per-step reasoning
   sections (Round 1, Round 2, ..., Final Response).
+
+When content exceeds Discord's embed description limit (4096 characters),
+it is sent as an attached .txt file instead.
 """
 
-import json
+import io
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -25,53 +28,42 @@ logger = logging.getLogger("red.bz_cogs.aiuser")
 EMBED_DESCRIPTION_MAX_CHARS = 4096
 
 
-def _split_text_to_embed_chunks(text: str, max_chars: int = EMBED_DESCRIPTION_MAX_CHARS) -> List[str]:
-    """Split text into chunks that fit within Discord embed description limits.
+async def _send_content_or_file(
+    interaction: discord.Interaction,
+    title: str,
+    content: str,
+    color: int,
+    file_name: str = "content.txt",
+):
+    """Send content as an embed if it fits, otherwise as a file attachment.
 
-    Attempts to split on paragraph boundaries (\\n\\n) first, then line breaks (\\n),
-    then falls back to hard character splitting. Each chunk is at most *max_chars*
-    characters so it can be placed in an embed description without truncation.
+    If *content* fits within the Discord embed description limit it is sent
+    as a normal embed.  When the content exceeds the limit a short embed
+    noting the size is sent together with a ``discord.File`` attachment
+    containing the full text.
 
     Args:
-        text: The full text to split.
-        max_chars: Maximum characters per chunk (default: 4096).
-
-    Returns:
-        A list of text chunks, each <= max_chars characters.
+        interaction: The Discord interaction to respond to.
+        title: Embed title.
+        content: The full text content to display.
+        color: Embed colour value.
+        file_name: Filename for the attached file (default ``content.txt``).
     """
-    if len(text) <= max_chars:
-        return [text]
-
-    chunks: List[str] = []
-    remaining = text
-
-    while remaining:
-        if len(remaining) <= max_chars:
-            chunks.append(remaining)
-            break
-
-        # Try to find a good split point within the character limit
-        segment = remaining[:max_chars]
-
-        # Prefer splitting on paragraph boundaries
-        split_pos = segment.rfind("\n\n")
-        if split_pos > max_chars // 4:
-            chunks.append(remaining[:split_pos])
-            remaining = remaining[split_pos:].lstrip("\n")
-            continue
-
-        # Fall back to line breaks
-        split_pos = segment.rfind("\n")
-        if split_pos > max_chars // 4:
-            chunks.append(remaining[:split_pos])
-            remaining = remaining[split_pos + 1:]
-            continue
-
-        # Last resort: hard split at max_chars
-        chunks.append(segment)
-        remaining = remaining[max_chars:]
-
-    return chunks
+    if len(content) <= EMBED_DESCRIPTION_MAX_CHARS:
+        embed = discord.Embed(title=title, description=content, color=color)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    else:
+        embed = discord.Embed(
+            title=title,
+            description=(
+                f"Content is {len(content):,} characters — "
+                "too large for a single embed. See attached file."
+            ),
+            color=color,
+        )
+        file_bytes = content.encode("utf-8")
+        file = discord.File(io.BytesIO(file_bytes), filename=file_name)
+        await interaction.response.send_message(embed=embed, file=file, ephemeral=True)
 
 
 class FunctionCallView(discord.ui.View):
@@ -119,11 +111,6 @@ class FunctionCallView(discord.ui.View):
                 "No function call data available.", ephemeral=True
             )
 
-        embed = discord.Embed(
-            title="📋 Function Call Inputs",
-            color=0x5865F2,
-        )
-
         description_parts = []
         for item in inputs:
             name = item["name"]
@@ -131,11 +118,13 @@ class FunctionCallView(discord.ui.View):
             description_parts.append(f"**{name}**\n```json\n{args}\n```")
 
         description = "\n".join(description_parts)
-        if len(description) > EMBED_DESCRIPTION_MAX_CHARS:
-            description = description[: EMBED_DESCRIPTION_MAX_CHARS - 20] + "\n\n...(truncated)"
-
-        embed.description = description
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await _send_content_or_file(
+            interaction,
+            title="📋 Function Call Inputs",
+            content=description,
+            color=0x5865F2,
+            file_name="inputs.txt",
+        )
 
     @discord.ui.button(
         label="View Reasoning",
@@ -154,23 +143,13 @@ class FunctionCallView(discord.ui.View):
                 "No reasoning available for this step.", ephemeral=True
             )
 
-        chunks = _split_text_to_embed_chunks(reasoning)
-        # First chunk uses interaction.response (required for ephemeral)
-        embed = discord.Embed(
+        await _send_content_or_file(
+            interaction,
             title="🧠 Model Reasoning",
-            description=chunks[0],
+            content=reasoning,
             color=0xFEE75C,
+            file_name="reasoning.txt",
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-        # Remaining chunks sent via followup (ephemeral by default after initial ephemeral response)
-        for chunk in chunks[1:]:
-            embed = discord.Embed(
-                title="🧠 Model Reasoning (continued)",
-                description=chunk,
-                color=0xFEE75C,
-            )
-            await interaction.followup.send(embed=embed, ephemeral=True)
 
     @discord.ui.button(
         label="View Outputs",
@@ -196,24 +175,13 @@ class FunctionCallView(discord.ui.View):
             description_parts.append(f"**{name}**\n```\n{result}\n```")
 
         description = "\n".join(description_parts)
-        chunks = _split_text_to_embed_chunks(description)
-
-        # First chunk uses interaction.response (required for ephemeral)
-        embed = discord.Embed(
+        await _send_content_or_file(
+            interaction,
             title="📄 Function Call Outputs",
-            description=chunks[0],
+            content=description,
             color=0x57F287,
+            file_name="outputs.txt",
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-        # Remaining chunks sent via followup (ephemeral by default after initial ephemeral response)
-        for chunk in chunks[1:]:
-            embed = discord.Embed(
-                title="📄 Function Call Outputs (continued)",
-                description=chunk,
-                color=0x57F287,
-            )
-            await interaction.followup.send(embed=embed, ephemeral=True)
 
     @classmethod
     def store_inputs(cls, message_id: int, inputs: List[Dict[str, str]]):
@@ -308,24 +276,13 @@ class ResponseView(discord.ui.View):
                 description_parts.append(step_reasoning)
 
         full_description = "\n\n".join(description_parts)
-        chunks = _split_text_to_embed_chunks(full_description)
-
-        # First chunk uses interaction.response (required for ephemeral)
-        embed = discord.Embed(
+        await _send_content_or_file(
+            interaction,
             title="🧠 Model Reasoning",
-            description=chunks[0],
+            content=full_description,
             color=0xFEE75C,
+            file_name="reasoning.txt",
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-        # Remaining chunks sent via followup
-        for chunk in chunks[1:]:
-            embed = discord.Embed(
-                title="🧠 Model Reasoning (continued)",
-                description=chunk,
-                color=0xFEE75C,
-            )
-            await interaction.followup.send(embed=embed, ephemeral=True)
 
     @classmethod
     def store_reasoning_steps(cls, message_id: int, steps: List[str]):
