@@ -9,9 +9,9 @@ from aiuser.functions.types import Function, Parameters, ToolCallSchema
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
-# Discord file size limits
-MAX_SINGLE_FILE_SIZE = 25 * 1024 * 1024  # 25 MB per file
-MAX_TOTAL_FILES = 10  # Maximum number of files per call
+# Fallback defaults (overridden by guild config)
+DEFAULT_MAX_FILES = 10
+DEFAULT_MAX_FILE_SIZE_MB = 25
 
 
 attach_files_tool_call_schema = ToolCallSchema(
@@ -79,6 +79,24 @@ class AttachFilesToolCall(ToolCall):
         super().__init__(config, ctx)
         self.attached_files: List[Dict] = []
 
+    async def _get_max_files(self) -> int:
+        """Return the configured max number of files for this guild."""
+        try:
+            val = await self.config.guild(self.ctx.guild).attach_files_max_files()
+            return val if val and val > 0 else DEFAULT_MAX_FILES
+        except Exception:
+            return DEFAULT_MAX_FILES
+
+    async def _get_max_file_size_bytes(self) -> int:
+        """Return the configured max single-file size in bytes for this guild."""
+        try:
+            mb = await self.config.guild(self.ctx.guild).attach_files_max_file_size_mb()
+            if mb and mb > 0:
+                return mb * 1024 * 1024
+            return DEFAULT_MAX_FILE_SIZE_MB * 1024 * 1024
+        except Exception:
+            return DEFAULT_MAX_FILE_SIZE_MB * 1024 * 1024
+
     def get_attached_files(self) -> List[Dict]:
         """Return stored attached file data and clear the internal list.
 
@@ -95,12 +113,15 @@ class AttachFilesToolCall(ToolCall):
 
     async def _handle(self, arguments: dict) -> str:
         files_input = arguments.get("files", [])
+        max_files = await self._get_max_files()
+        max_size_bytes = await self._get_max_file_size_bytes()
+        max_size_mb = max_size_bytes / (1024 * 1024)
 
         if not files_input:
             return "Error: No files were provided. Supply at least one file with 'filename' and 'content'."
 
-        if len(files_input) > MAX_TOTAL_FILES:
-            return f"Error: Too many files provided. Maximum allowed is {MAX_TOTAL_FILES}, got {len(files_input)}."
+        if len(files_input) > max_files:
+            return f"Error: Too many files provided. Maximum allowed is {max_files}, got {len(files_input)}."
 
         attached_names: List[str] = []
         errors: List[str] = []
@@ -131,11 +152,11 @@ class AttachFilesToolCall(ToolCall):
                 continue
 
             # Check file size
-            if len(file_bytes) > MAX_SINGLE_FILE_SIZE:
+            if len(file_bytes) > max_size_bytes:
                 size_mb = len(file_bytes) / (1024 * 1024)
                 errors.append(
                     f"File '{filename}': Size ({size_mb:.1f} MB) exceeds the "
-                    f"{MAX_SINGLE_FILE_SIZE // (1024 * 1024)} MB limit."
+                    f"{max_size_mb:.0f} MB limit."
                 )
                 continue
 

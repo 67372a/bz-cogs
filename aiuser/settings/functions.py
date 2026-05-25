@@ -90,6 +90,15 @@ class FunctionCallingSettings(MixinMeta):
         max_rounds = await self.config.guild(ctx.guild).max_tool_rounds()
         embed.add_field(name="Max Tool Rounds", value=f"`{max_rounds}`", inline=False)
 
+        # Attach Files config
+        attach_max_files = await self.config.guild(ctx.guild).attach_files_max_files()
+        attach_max_size = await self.config.guild(ctx.guild).attach_files_max_file_size_mb()
+        embed.add_field(
+            name="Attach Files Config",
+            value=f"Max files: `{attach_max_files}` • Max size: `{attach_max_size}` MB",
+            inline=False,
+        )
+
         embed.set_footer(text=f"Use {ctx.clean_prefix}aiuser functions --help to see all subcommands")
         await ctx.send(embed=embed)
 
@@ -285,6 +294,87 @@ class FunctionCallingSettings(MixinMeta):
         tool_names = [PinMessageToolCall.function_name]
 
         await self.toggle_function_helper(ctx, tool_names, "Pin Message")
+
+    @functions.command(name="attach_files")
+    async def toggle_attach_files_function(self, ctx: commands.Context):
+        """Enable/disable the functionality for the LLM to attach code/text files to responses.
+
+        When enabled, the LLM can output code and text files as downloadable
+        Discord attachments instead of pasting code inline in messages.
+        Configure limits with `attach_files_max_files` and `attach_files_max_file_size`.
+        """
+        from aiuser.functions.attach_files.tool_call import AttachFilesToolCall
+
+        tool_names = [AttachFilesToolCall.function_name]
+        await self.toggle_function_helper(ctx, tool_names, "Attach Files")
+
+    @functions.command(name="attach_files_max_files")
+    async def set_attach_files_max_files(self, ctx: commands.Context, max_files: int = 0):
+        """Set the maximum number of files the LLM can attach per call.
+
+        **Arguments**
+            - `max_files` maximum files per call (1–25, default: 10)
+
+        Use without arguments to view the current setting.
+        """
+        if max_files == 0:
+            current = await self.config.guild(ctx.guild).attach_files_max_files()
+            embed = discord.Embed(
+                title="Attach Files — Max Files",
+                description=f"`{current}` file(s) per call",
+                color=await ctx.embed_color(),
+            )
+            embed.add_field(
+                name="Set",
+                value=f"`{ctx.clean_prefix}aiuser functions attach_files_max_files <1-25>`",
+                inline=False,
+            )
+            return await ctx.send(embed=embed)
+
+        if max_files < 1 or max_files > 25:
+            return await ctx.send("Please provide a value between 1 and 25.")
+
+        await self.config.guild(ctx.guild).attach_files_max_files.set(max_files)
+        embed = discord.Embed(
+            title="Attach Files — Max Files",
+            description=f"Now set to: `{max_files}` file(s) per call",
+            color=await ctx.embed_color(),
+        )
+        await ctx.send(embed=embed)
+
+    @functions.command(name="attach_files_max_file_size")
+    async def set_attach_files_max_file_size(self, ctx: commands.Context, max_size_mb: int = 0):
+        """Set the maximum file size (in MB) for each attached file.
+
+        **Arguments**
+            - `max_size_mb` maximum size in megabytes (1–25, default: 25)
+
+        Use without arguments to view the current setting.
+        """
+        if max_size_mb == 0:
+            current = await self.config.guild(ctx.guild).attach_files_max_file_size_mb()
+            embed = discord.Embed(
+                title="Attach Files — Max File Size",
+                description=f"`{current}` MB per file",
+                color=await ctx.embed_color(),
+            )
+            embed.add_field(
+                name="Set",
+                value=f"`{ctx.clean_prefix}aiuser functions attach_files_max_file_size <1-25>`",
+                inline=False,
+            )
+            return await ctx.send(embed=embed)
+
+        if max_size_mb < 1 or max_size_mb > 25:
+            return await ctx.send("Please provide a value between 1 and 25 MB.")
+
+        await self.config.guild(ctx.guild).attach_files_max_file_size_mb.set(max_size_mb)
+        embed = discord.Embed(
+            title="Attach Files — Max File Size",
+            description=f"Now set to: `{max_size_mb}` MB per file",
+            color=await ctx.embed_color(),
+        )
+        await ctx.send(embed=embed)
 
     # ─── OpenRouter Server Tools ───────────────────────────────────────────────
 

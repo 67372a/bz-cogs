@@ -130,6 +130,8 @@ DEFAULT_GUILD = {
     "web_fetch_config": None,
     "web_answer_backend": None,
     "web_answer_config": None,
+    "attach_files_max_files": 10,
+    "attach_files_max_file_size_mb": 25,
 }
 
 DEFAULT_CHANNEL = {

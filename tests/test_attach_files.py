@@ -15,7 +15,7 @@ import asyncio
 import os
 import sys
 from types import ModuleType
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -82,10 +82,21 @@ AttachFilesToolCall = sys.modules["aiuser.functions.attach_files.tool_call"].Att
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_tool(config=None, ctx=None):
-    """Create an AttachFilesToolCall instance with mocked config and ctx."""
+def _make_tool(config=None, ctx=None, max_files=10, max_file_size_mb=25):
+    """Create an AttachFilesToolCall instance with mocked config and ctx.
+
+    Args:
+        config: Optional mock config. If None, a mock with proper async
+            guild config accessors for attach_files_max_files and
+            attach_files_max_file_size_mb is created.
+        ctx: Optional mock context.
+        max_files: Configured max files (default 10).
+        max_file_size_mb: Configured max file size in MB (default 25).
+    """
     if config is None:
         config = MagicMock()
+        config.guild.return_value.attach_files_max_files = AsyncMock(return_value=max_files)
+        config.guild.return_value.attach_files_max_file_size_mb = AsyncMock(return_value=max_file_size_mb)
     if ctx is None:
         ctx = MagicMock()
         ctx.guild = MagicMock()
@@ -327,6 +338,69 @@ class TestAttachFilesSuccess:
         result = _run_async(tool.run({"files": files}))
         assert "Error" in result
         assert "No files could be attached" in result
+
+
+# ---------------------------------------------------------------------------
+# Tests: Config-driven limits
+# ---------------------------------------------------------------------------
+
+class TestAttachFilesConfigLimits:
+    """Verify that max_files and max_file_size are read from guild config."""
+
+    def test_custom_max_files_respected(self):
+        """Tool respects a lower max_files from config."""
+        tool = _make_tool(max_files=3)
+        files = [{"filename": f"f{i}.txt", "content": "c"} for i in range(4)]
+        result = _run_async(tool.run({"files": files}))
+        assert "Error" in result
+        assert "Too many files" in result
+        assert "Maximum allowed is 3" in result
+
+    def test_custom_max_files_allows_within_limit(self):
+        """Tool allows files up to the configured limit."""
+        tool = _make_tool(max_files=2)
+        files = [{"filename": "a.py", "content": "x"}, {"filename": "b.py", "content": "y"}]
+        result = _run_async(tool.run({"files": files}))
+        assert "Successfully attached 2 file(s)" in result
+
+    def test_custom_max_file_size_respected(self):
+        """Tool respects a lower max_file_size from config (in MB)."""
+        tool = _make_tool(max_file_size_mb=1)
+        # Create a 2MB file
+        large_content = "x" * (2 * 1024 * 1024 + 1)
+        result = _run_async(tool.run({"files": [{"filename": "big.txt", "content": large_content}]}))
+        assert "Error" in result
+        assert "exceeds" in result
+
+    def test_custom_max_file_size_allows_within_limit(self):
+        """Tool allows files within the configured size limit."""
+        tool = _make_tool(max_file_size_mb=5)
+        # Create a 3MB file (within 5MB limit)
+        content = "x" * (3 * 1024 * 1024)
+        result = _run_async(tool.run({"files": [{"filename": "ok.txt", "content": content}]}))
+        assert "Successfully attached 1 file(s)" in result
+
+    def test_default_limits_when_config_returns_none(self):
+        """Tool falls back to defaults when config returns None."""
+        config = MagicMock()
+        config.guild.return_value.attach_files_max_files = AsyncMock(return_value=None)
+        config.guild.return_value.attach_files_max_file_size_mb = AsyncMock(return_value=None)
+        tool = _make_tool(config=config)
+        # Should use default max_files=10
+        files = [{"filename": f"f{i}.txt", "content": "c"} for i in range(10)]
+        result = _run_async(tool.run({"files": files}))
+        assert "Successfully attached 10 file(s)" in result
+
+    def test_default_limits_when_config_returns_zero(self):
+        """Tool falls back to defaults when config returns 0."""
+        config = MagicMock()
+        config.guild.return_value.attach_files_max_files = AsyncMock(return_value=0)
+        config.guild.return_value.attach_files_max_file_size_mb = AsyncMock(return_value=0)
+        tool = _make_tool(config=config)
+        # Should use default max_files=10
+        files = [{"filename": f"f{i}.txt", "content": "c"} for i in range(10)]
+        result = _run_async(tool.run({"files": files}))
+        assert "Successfully attached 10 file(s)" in result
 
 
 # ---------------------------------------------------------------------------
