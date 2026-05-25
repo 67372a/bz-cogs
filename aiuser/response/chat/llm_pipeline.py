@@ -30,6 +30,7 @@ from aiuser.functions.types import ToolCallSchema
 from aiuser.functions.generate_image.tool_call import GenerateImageToolCall
 from aiuser.functions.edit_image.tool_call import EditImageToolCall
 from aiuser.functions.attach_files.tool_call import AttachFilesToolCall
+from aiuser.functions.mermaid.tool_call import MermaidDiagramToolCall
 from aiuser.messages_list.messages import MessagesList
 from aiuser.messages_list.entry import MessageEntry
 from aiuser.response.chat.function_call_view import FunctionCallView, ResponseView
@@ -894,7 +895,7 @@ class LLMPipeline:
         """
         for tool_obj in self.enabled_tools:
             if tool_obj.function_name == tool_function_name:
-                if isinstance(tool_obj, (GenerateImageToolCall, EditImageToolCall)):
+                if isinstance(tool_obj, (GenerateImageToolCall, EditImageToolCall, MermaidDiagramToolCall)):
                     return tool_obj.get_generated_images()
         return []
 

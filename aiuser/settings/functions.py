@@ -99,6 +99,16 @@ class FunctionCallingSettings(MixinMeta):
             inline=False,
         )
 
+        # Mermaid Diagram config
+        mermaid_enabled = await self.config.guild(ctx.guild).function_calling_functions()
+        if "create_mermaid_diagram" in mermaid_enabled:
+            mermaid_theme = await self.config.guild(ctx.guild).mermaid_diagram_theme()
+            embed.add_field(
+                name="Mermaid Diagram Config",
+                value=f"Theme: `{mermaid_theme}`",
+                inline=False,
+            )
+
         embed.set_footer(text=f"Use {ctx.clean_prefix}aiuser functions --help to see all subcommands")
         await ctx.send(embed=embed)
 
@@ -372,6 +382,65 @@ class FunctionCallingSettings(MixinMeta):
         embed = discord.Embed(
             title="Attach Files — Max File Size",
             description=f"Now set to: `{max_size_mb}` MB per file",
+            color=await ctx.embed_color(),
+        )
+        await ctx.send(embed=embed)
+
+    @functions.command(name="mermaid_diagram")
+    async def toggle_mermaid_diagram_function(self, ctx: commands.Context):
+        """Enable/disable the LLM's ability to create Mermaid diagram images.
+
+        When enabled, the LLM can render Mermaid diagrams (flowcharts, sequence
+        diagrams, class diagrams, etc.) as PNG images attached to responses.
+        Uses the 'merm' library for local rendering — no external API needed.
+        """
+        from aiuser.functions.mermaid.tool_call import MermaidDiagramToolCall
+        tool_names = [MermaidDiagramToolCall.function_name]
+        await self.toggle_function_helper(ctx, tool_names, "Mermaid Diagram")
+
+    @functions.command(name="mermaid_diagram_theme")
+    async def set_mermaid_diagram_theme(self, ctx: commands.Context, theme: str = ""):
+        """Set the Mermaid diagram theme.
+
+        Available themes: default, dark, forest, neutral
+        Default: dark
+
+        **Arguments**
+            - `theme` the theme name (default: dark)
+
+        Use without arguments to view the current setting.
+        """
+        VALID_THEMES = {"default", "dark", "forest", "neutral"}
+
+        if not theme:
+            current = await self.config.guild(ctx.guild).mermaid_diagram_theme()
+            embed = discord.Embed(
+                title="Mermaid Diagram — Theme",
+                description=f"`{current}`",
+                color=await ctx.embed_color(),
+            )
+            embed.add_field(
+                name="Available Themes",
+                value=", ".join(f"`{t}`" for t in sorted(VALID_THEMES)),
+                inline=False,
+            )
+            embed.add_field(
+                name="Set",
+                value=f"`{ctx.clean_prefix}aiuser functions mermaid_diagram_theme <theme>`",
+                inline=False,
+            )
+            return await ctx.send(embed=embed)
+
+        theme = theme.lower().strip()
+        if theme not in VALID_THEMES:
+            return await ctx.send(
+                f"Invalid theme. Available themes: {', '.join(sorted(VALID_THEMES))}"
+            )
+
+        await self.config.guild(ctx.guild).mermaid_diagram_theme.set(theme)
+        embed = discord.Embed(
+            title="Mermaid Diagram — Theme",
+            description=f"Now set to: `{theme}`",
             color=await ctx.embed_color(),
         )
         await ctx.send(embed=embed)

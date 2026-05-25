@@ -168,6 +168,12 @@ _real_fcv = import_module_directly(
     "aiuser/response/chat/function_call_view.py",
 )
 
+# Mock mermaid package (needed by llm_pipeline imports)
+if "aiuser.functions.mermaid" not in sys.modules:
+    sys.modules["aiuser.functions.mermaid"] = MagicMock()
+if "aiuser.functions.mermaid.tool_call" not in sys.modules:
+    sys.modules["aiuser.functions.mermaid.tool_call"] = MagicMock()
+
 _real_pipeline = import_module_directly(
     "aiuser.response.chat.llm_pipeline",
     "aiuser/response/chat/llm_pipeline.py",

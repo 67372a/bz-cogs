@@ -132,6 +132,8 @@ DEFAULT_GUILD = {
     "web_answer_config": None,
     "attach_files_max_files": 10,
     "attach_files_max_file_size_mb": 25,
+    "mermaid_diagram_enabled": False,
+    "mermaid_diagram_theme": "dark",
 }
 
 DEFAULT_CHANNEL = {

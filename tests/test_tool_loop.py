@@ -152,6 +152,12 @@ sys.modules["aiuser.messages_list.messages"] = import_module_directly(
     "aiuser.messages_list.messages", "aiuser/messages_list/messages.py"
 )
 
+# Mock mermaid package (needed by llm_pipeline imports)
+if "aiuser.functions.mermaid" not in sys.modules:
+    sys.modules["aiuser.functions.mermaid"] = MagicMock()
+if "aiuser.functions.mermaid.tool_call" not in sys.modules:
+    sys.modules["aiuser.functions.mermaid.tool_call"] = MagicMock()
+
 sys.modules["aiuser.response.chat.llm_pipeline"] = import_module_directly(
     "aiuser.response.chat.llm_pipeline", "aiuser/response/chat/llm_pipeline.py"
 )

@@ -511,6 +511,10 @@ class TestPipelineFileCollection:
 
             sys.modules["aiuser.response.chat.function_call_view"] = MagicMock()
 
+            # Mock mermaid package (needed by llm_pipeline imports)
+            _ensure_package("aiuser.functions.mermaid")
+            sys.modules["aiuser.functions.mermaid.tool_call"] = MagicMock()
+
             sys.modules["aiuser.response.chat.llm_pipeline"] = import_module_directly(
                 "aiuser.response.chat.llm_pipeline", "aiuser/response/chat/llm_pipeline.py"
             )
