@@ -500,3 +500,56 @@ class TestMermaidDiagramPipelineIntegration:
 
         assert len(collected) == 1
         assert collected[0]["bytes"] == fake
+
+
+# ---------------------------------------------------------------------------
+# Tests: PNG background color
+# ---------------------------------------------------------------------------
+
+class TestMermaidDiagramPngBackground:
+    """Verify that PNG output uses a solid light-gray background."""
+
+    def test_svg2png_called_with_background_color(self):
+        """cairosvg.svg2png should be called with background_color='#f0f0f0'."""
+        from aiuser.functions.mermaid.tool_call import _render_mermaid_sync
+
+        fake_svg_str = _fake_svg().decode("utf-8")
+        fake_png = _fake_png()
+
+        mockcairo = MagicMock()
+        mockcairo.svg2png.return_value = fake_png
+
+        mock_merm = MagicMock()
+        mock_merm.render_diagram.return_value = fake_svg_str
+
+        with patch.dict("sys.modules", {
+            "merm": mock_merm,
+            "cairosvg": mockcairo,
+        }):
+            result_bytes, result_ext = _run_async(
+                _render_mermaid_sync(fake_svg_str, theme="dark")
+            )
+
+        assert result_ext == "png"
+        assert result_bytes == fake_png
+        mockcairo.svg2png.assert_called_once()
+        call_kwargs = mockcairo.svg2png.call_args
+        assert call_kwargs[1].get("background_color") == "#f0f0f0"
+
+    def test_svg_fallback_when_cairosvg_missing(self):
+        """SVG fallback should still work when cairosvg is not available."""
+        from aiuser.functions.mermaid.tool_call import _render_mermaid_sync
+
+        fake_svg_str = _fake_svg().decode("utf-8")
+
+        mock_merm = MagicMock()
+        mock_merm.render_diagram.return_value = fake_svg_str
+
+        # Set cairosvg to None so `import cairosvg` raises ImportError
+        with patch.dict("sys.modules", {"merm": mock_merm, "cairosvg": None}):
+            result_bytes, result_ext = _run_async(
+                _render_mermaid_sync(fake_svg_str, theme="dark")
+            )
+
+        assert result_ext == "svg"
+        assert result_bytes == fake_svg_str.encode("utf-8")

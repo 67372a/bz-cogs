@@ -166,7 +166,7 @@ def _render_mermaid_sync(code: str, theme: str = "dark") -> Tuple[bytes, str]:
     # Try to convert to PNG
     try:
         import cairosvg
-        png_bytes = cairosvg.svg2png(bytestring=svg.encode("utf-8"))
+        png_bytes = cairosvg.svg2png(bytestring=svg.encode("utf-8"), background_color="#f0f0f0")
         return png_bytes, "png"
     except ImportError:
         logger.info(
