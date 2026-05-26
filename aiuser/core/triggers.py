@@ -9,6 +9,7 @@ from aiuser.config.constants import (
     GROK_SECONDARY_TRIGGERS,
 )
 from aiuser.core.validators import is_bot_mentioned_or_replied
+from aiuser.messages_list.messages import is_function_call_or_thoughts_embed
 from aiuser.types.abc import MixinMeta
 
 
@@ -23,6 +24,10 @@ async def is_in_conversation(cog: MixinMeta, ctx: commands.Context) -> bool:
     cutoff_time = datetime.now(tz=timezone.utc) - timedelta(seconds=reply_time_seconds)
 
     async for message in ctx.channel.history(limit=10):
+        # Skip function call / thoughts embeds — they are transient status
+        # notifications and should never influence the conversation trigger.
+        if is_function_call_or_thoughts_embed(message):
+            continue
         if (
             message.author.id == cog.bot.user.id
             and len(message.embeds) == 0

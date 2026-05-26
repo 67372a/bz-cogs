@@ -7,7 +7,7 @@ from discord.ext import tasks
 
 from aiuser.config.constants import RANDOM_MESSAGE_TASK_RETRY_SECONDS
 from aiuser.config.defaults import DEFAULT_PROMPT
-from aiuser.messages_list.messages import create_messages_list
+from aiuser.messages_list.messages import create_messages_list, is_function_call_or_thoughts_embed
 from aiuser.types.abc import MixinMeta
 from aiuser.utils.utilities import format_variables
 
@@ -104,6 +104,11 @@ class RandomMessageTask(MixinMeta):
         if not await self.config.guild(guild).random_messages_enabled():
             return False
         if random.random() > await self.config.guild(guild).random_messages_percent():
+            return False
+
+        if is_function_call_or_thoughts_embed(last):
+            # Function call / thoughts embeds are transient status notifications
+            # and should never trigger a random reply.
             return False
 
         if last.author.id == guild.me.id:

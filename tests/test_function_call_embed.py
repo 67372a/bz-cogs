@@ -233,8 +233,8 @@ sys.modules["aiuser.response.chat.llm_pipeline"] = import_module_directly(
 )
 LLMPipeline = sys.modules["aiuser.response.chat.llm_pipeline"].LLMPipeline
 
-# Import the real FUNCTION_CALL_EMBED_TITLE_REGEX
-from aiuser.messages_list.messages import FUNCTION_CALL_EMBED_TITLE_REGEX
+# Import the real FUNCTION_CALL_EMBED_TITLE_REGEX and helper
+from aiuser.messages_list.messages import FUNCTION_CALL_EMBED_TITLE_REGEX, is_function_call_or_thoughts_embed
 
 
 # ---------------------------------------------------------------------------
@@ -360,6 +360,95 @@ class TestFunctionCallEmbedTitleRegex:
     def test_does_not_match_without_ellipsis(self):
         title = "TestBot is making the following function calls"
         assert FUNCTION_CALL_EMBED_TITLE_REGEX.search(title) is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: is_function_call_or_thoughts_embed
+# ---------------------------------------------------------------------------
+
+class TestIsFunctionCallOrThoughtsEmbed:
+    """Test the helper that checks if a Discord message is a function-call
+    or thoughts embed (used to prevent these from entering context or
+    triggering random replies).
+    """
+
+    def _make_message(self, embeds=None, content=""):
+        """Create a mock discord.Message with the given embeds."""
+        msg = MagicMock()
+        msg.embeds = embeds or []
+        msg.content = content
+        return msg
+
+    def _make_embed(self, title):
+        """Create a mock discord.Embed with the given title."""
+        embed = MagicMock()
+        embed.title = title
+        return embed
+
+    # --- Positive cases ---
+
+    def test_function_call_embed_detected(self):
+        msg = self._make_message(embeds=[
+            self._make_embed("TestBot is making the following function calls...")
+        ])
+        assert is_function_call_or_thoughts_embed(msg) is True
+
+    def test_thoughts_embed_detected(self):
+        msg = self._make_message(embeds=[
+            self._make_embed("TestBot's Thoughts")
+        ])
+        assert is_function_call_or_thoughts_embed(msg) is True
+
+    def test_function_call_embed_in_second_position(self):
+        """Function call embed that is NOT the first embed should still be detected."""
+        msg = self._make_message(embeds=[
+            self._make_embed("TestBot's Response"),
+            self._make_embed("TestBot is making the following function calls...")
+        ])
+        assert is_function_call_or_thoughts_embed(msg) is True
+
+    def test_thoughts_embed_in_second_position(self):
+        """Thoughts embed that is NOT the first embed should still be detected."""
+        msg = self._make_message(embeds=[
+            self._make_embed("Some other embed"),
+            self._make_embed("TestBot's Thoughts")
+        ])
+        assert is_function_call_or_thoughts_embed(msg) is True
+
+    def test_function_call_embed_with_no_title(self):
+        """Embed with None title should not cause an error."""
+        embed = MagicMock()
+        embed.title = None
+        msg = self._make_message(embeds=[embed])
+        assert is_function_call_or_thoughts_embed(msg) is False
+
+    def test_function_call_embed_with_empty_title(self):
+        """Embed with empty string title should not match."""
+        msg = self._make_message(embeds=[self._make_embed("")])
+        assert is_function_call_or_thoughts_embed(msg) is False
+
+    # --- Negative cases ---
+
+    def test_no_embeds_returns_false(self):
+        msg = self._make_message(embeds=[])
+        assert is_function_call_or_thoughts_embed(msg) is False
+
+    def test_response_embed_not_flagged(self):
+        msg = self._make_message(embeds=[
+            self._make_embed("TestBot's Response")
+        ])
+        assert is_function_call_or_thoughts_embed(msg) is False
+
+    def test_regular_text_message_not_flagged(self):
+        msg = self._make_message(embeds=[], content="Hello world")
+        assert is_function_call_or_thoughts_embed(msg) is False
+
+    def test_multiple_normal_embeds_not_flagged(self):
+        msg = self._make_message(embeds=[
+            self._make_embed("TestBot's Response"),
+            self._make_embed("Another Embed")
+        ])
+        assert is_function_call_or_thoughts_embed(msg) is False
 
 
 # ---------------------------------------------------------------------------

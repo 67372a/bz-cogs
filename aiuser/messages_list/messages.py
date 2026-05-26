@@ -33,6 +33,25 @@ THOUGHTS_EMBED_TITLE_REGEX = re.compile(r'^.*\'s Thoughts$')
 FUNCTION_CALL_EMBED_TITLE_REGEX = re.compile(r'^.*is making the following function calls\.\.\.$')
 
 
+def is_function_call_or_thoughts_embed(message: Message) -> bool:
+    """Return True if a Discord message is a function-call or thoughts embed.
+
+    Function-call embeds (e.g. ``"BotName is making the following function calls..."``)
+    and thoughts embeds (e.g. ``"BotName's Thoughts"``) are transient status
+    notifications that should never be added to LLM context or trigger random
+    replies.
+    """
+    if not message.embeds:
+        return False
+    return any(
+        embed.title and (
+            THOUGHTS_EMBED_TITLE_REGEX.search(embed.title)
+            or FUNCTION_CALL_EMBED_TITLE_REGEX.search(embed.title)
+        )
+        for embed in message.embeds
+    )
+
+
 async def create_messages_list(
     cog: MixinMeta, ctx: commands.Context, prompt: str = None, history: bool = True
 ):
@@ -245,10 +264,7 @@ class MessagesList:
             )
             return False
 
-        if message.embeds and any(embed.title and (
-            THOUGHTS_EMBED_TITLE_REGEX.search(embed.title) or
-            FUNCTION_CALL_EMBED_TITLE_REGEX.search(embed.title)
-        ) for embed in message.embeds):
+        if is_function_call_or_thoughts_embed(message):
             return False
 
         if self.ignore_regex and self.ignore_regex.search(message.content):
@@ -421,10 +437,7 @@ class MessagesList:
                 break
             if (msg.author.id == self.bot.user.id) and (msg.embeds and msg.embeds[0].title == OPTIN_EMBED_TITLE):
                 continue
-            if msg.embeds and msg.embeds[0].title and (
-                THOUGHTS_EMBED_TITLE_REGEX.search(msg.embeds[0].title) or
-                FUNCTION_CALL_EMBED_TITLE_REGEX.search(msg.embeds[0].title)
-            ):
+            if is_function_call_or_thoughts_embed(msg):
                 continue
             # Insert each message at the end (after anchor, before trigger)
             await self.add_msg(msg, index=len(self.messages))
@@ -487,10 +500,7 @@ class MessagesList:
             if (msg.author.id == self.bot.user.id) and (msg.embeds and msg.embeds[0].title == OPTIN_EMBED_TITLE):
                 continue
             # Ignore reasoning
-            if msg.embeds and msg.embeds[0].title and (
-                THOUGHTS_EMBED_TITLE_REGEX.search(msg.embeds[0].title) or
-                FUNCTION_CALL_EMBED_TITLE_REGEX.search(msg.embeds[0].title)
-            ):
+            if is_function_call_or_thoughts_embed(msg):
                 continue
             await self.add_msg(msg, index=1)
             last_msg = msg
@@ -505,10 +515,7 @@ class MessagesList:
             if (msg.author.id == self.bot.user.id) and (msg.embeds and msg.embeds[0].title == OPTIN_EMBED_TITLE):
                 continue
             # Ignore reasoning
-            if msg.embeds and msg.embeds[0].title and (
-                THOUGHTS_EMBED_TITLE_REGEX.search(msg.embeds[0].title) or
-                FUNCTION_CALL_EMBED_TITLE_REGEX.search(msg.embeds[0].title)
-            ):
+            if is_function_call_or_thoughts_embed(msg):
                 continue
             await self.add_msg(msg, index=len(self.messages))
             last_msg = msg
