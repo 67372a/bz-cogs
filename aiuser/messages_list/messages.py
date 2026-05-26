@@ -284,6 +284,7 @@ class MessagesList:
 
             self.messages.insert(insert_at, entry)
             self.messages_ids.add(message.id)
+            insert_at += 1  # advance so multi-entry messages keep their order
 
             if isinstance(entry.content, list):
                 for item in entry.content:
@@ -296,9 +297,14 @@ class MessagesList:
             else:
                 await self._add_tokens(entry.content)
 
-        # TODO: proper reply chaining
+        # Reply chaining: insert the parent message at the END of the context
+        # (before prefill) rather than at the original insert position, to
+        # avoid shifting earlier prefix messages and disrupting implicit caching.
+        # Only insert if the parent is not already in the context.
         if message.reference and isinstance(message.reference.resolved, discord.Message) and message.author.id != self.bot.user.id:
-            await self.add_msg(message.reference.resolved, index=insert_at)
+            parent = message.reference.resolved
+            if parent.id not in self.messages_ids:
+                await self.add_msg(parent, index=len(self.messages))
 
     async def add_system(self, content: str, index: int = None):
         if self.tokens > self.token_limit:
@@ -312,7 +318,8 @@ class MessagesList:
         if self.tokens > self.token_limit:
             return
         entry = MessageEntry("assistant", content, tool_calls=tool_calls, reasoning_details=reasoning_details)
-        insert_at = 0 if index is None else index
+        # Default to appending at end (not index 0) to preserve prefix stability
+        insert_at = len(self.messages) if index is None else index
         self.messages.insert(insert_at, entry)
         if isinstance(content, list):
             for item in content:
@@ -340,7 +347,8 @@ class MessagesList:
         if self.tokens > self.token_limit:
             return
         entry = MessageEntry("tool", content, tool_call_id=tool_call_id, name=name)
-        insert_at = 0 if index is None else index
+        # Default to appending at end (not index 0) to preserve prefix stability
+        insert_at = len(self.messages) if index is None else index
         self.messages.insert(insert_at, entry)
         if isinstance(content, list):
             for item in content:

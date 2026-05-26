@@ -665,12 +665,15 @@ class LLMPipeline:
             # --- Call LLM ---
             response_text, reasoning_text, tool_calls, reasoning_details, model_extra = await self.call_client(kwargs)
 
-            # Remove stop instruction (before adding assistant message)
+            # Remove stop instruction (before adding assistant message).
+            # Use identity-based removal (iterate backwards) to ensure we
+            # remove the actual stop_entry object, not a different message
+            # with equal content.
             if stop_entry:
-                try:
-                    self.msg_list.messages.remove(stop_entry)
-                except ValueError:
-                    pass
+                for i in range(len(self.msg_list.messages) - 1, -1, -1):
+                    if self.msg_list.messages[i] is stop_entry:
+                        del self.msg_list.messages[i]
+                        break
 
             # --- Logging ---
             logger.info(
