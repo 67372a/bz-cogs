@@ -49,24 +49,3 @@ def ensure_mock_package(name: str):
     """Ensure a dummy package entry exists in sys.modules for *name*."""
     if name not in sys.modules:
         sys.modules[name] = _make_mock_package(name)
-
-
-# Pre-register top-level aiuser package as a mock to prevent __init__ side effects
-ensure_mock_package("aiuser")
-
-# Now load the specific modules we need for testing
-_enums = import_module_directly("aiuser.types.enums", "aiuser/types/enums.py")
-_openrouter_types = import_module_directly(
-    "aiuser.types.openrouter_types", "aiuser/types/openrouter_types.py"
-)
-
-# Re-export so tests can do ``from mock_importer import OpenRouterToolType, ...``
-OpenRouterToolType = _enums.OpenRouterToolType  # noqa: F811
-
-WebSearchParameters = _openrouter_types.WebSearchParameters
-WebFetchParameters = _openrouter_types.WebFetchParameters
-ImageGenerationParameters = _openrouter_types.ImageGenerationParameters
-PdfParsingParameters = _openrouter_types.PdfParsingParameters
-build_openrouter_tool_dict = _openrouter_types.build_openrouter_tool_dict
-serialize_parameters = _openrouter_types.serialize_parameters
-deserialize_parameters = _openrouter_types.deserialize_parameters

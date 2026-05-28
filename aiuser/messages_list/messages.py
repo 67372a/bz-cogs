@@ -64,6 +64,7 @@ async def create_messages_list(
         await thread._init(prompt=prompt, skip_init_msg=True)
         if history:
             await thread.add_backfill_history(backfill_anchor)
+        await thread._insert_reply_context()
         thread._append_dynamic_context()
         thread.log_messages()
         return thread
@@ -71,6 +72,7 @@ async def create_messages_list(
     await thread._init(prompt=prompt)
     if history:
         await thread.add_history()
+    await thread._insert_reply_context()
     thread._append_dynamic_context()
     thread.log_messages()
     return thread
@@ -101,6 +103,7 @@ class MessagesList:
         self._dynamic_context: Optional[str] = None
         self._raw_persona: Optional[str] = None
         self._cache_window_active: bool = False
+        self._trigger_msg_start: Optional[int] = None  # index of trigger msg entries start
 
     def __len__(self):
         return len(self.messages)
@@ -165,6 +168,7 @@ class MessagesList:
         # 5. Add the init (triggering) message AFTER the system prompt
         if not prompt and not skip_init_msg:
             await self.add_msg(self.init_message, index=1)
+            self._trigger_msg_start = 1
 
         # 6. Build dynamic context (time, author, etc.) for later insertion
         #    as a trailing user message after history is loaded.
@@ -313,15 +317,6 @@ class MessagesList:
             else:
                 await self._add_tokens(entry.content)
 
-        # Reply chaining: insert the parent message at the END of the context
-        # (before prefill) rather than at the original insert position, to
-        # avoid shifting earlier prefix messages and disrupting implicit caching.
-        # Only insert if the parent is not already in the context.
-        if message.reference and isinstance(message.reference.resolved, discord.Message) and message.author.id != self.bot.user.id:
-            parent = message.reference.resolved
-            if parent.id not in self.messages_ids:
-                await self.add_msg(parent, index=len(self.messages))
-
     async def add_system(self, content: str, index: int = None):
         if self.tokens > self.token_limit:
             return
@@ -444,6 +439,7 @@ class MessagesList:
             last_msg = msg
 
         # Add the trigger message at the end
+        self._trigger_msg_start = len(self.messages)
         await self.add_msg(self.init_message, index=len(self.messages))
 
         # Ensure the conversation history ends with a user message
@@ -451,6 +447,60 @@ class MessagesList:
             self.messages.append(MessageEntry("user", "System Note: Please continue or respond to the latest context."))
 
         logger.info(f"Backfill complete: {len(self.messages)} messages ({self.tokens} tokens) from anchor {anchor.id} to trigger {self.init_message.id}")
+
+    async def _insert_reply_context(self):
+        """Insert the trigger message's reply parent just before the trigger.
+
+        Only the trigger (init) message is checked for a direct reply reference.
+        If the referenced message is not already in context, it is inserted
+        immediately before the trigger message entries.  This provides
+        contextual reference without disrupting the cache prefix of earlier
+        messages.
+        """
+        init_msg = self.init_message
+        if not init_msg.reference:
+            return
+        resolved = init_msg.reference.resolved
+        if not isinstance(resolved, discord.Message):
+            return
+        if resolved.id in self.messages_ids:
+            return
+        if self._trigger_msg_start is None:
+            return
+
+        converted = await self.converter.convert(resolved)
+        if not converted:
+            return
+
+        insert_at = self._trigger_msg_start
+        entries_inserted = 0
+        for entry in converted:
+            if self.tokens > self.token_limit:
+                break
+            self.messages.insert(insert_at, entry)
+            self.messages_ids.add(resolved.id)
+            insert_at += 1
+            entries_inserted += 1
+
+            if isinstance(entry.content, list):
+                for item in entry.content:
+                    if not isinstance(item, dict):
+                        continue
+                    if item.get("type") == "text":
+                        await self._add_tokens(item.get("text"))
+                    elif item.get("type") == "image_url":
+                        self.tokens += 756
+            else:
+                await self._add_tokens(entry.content)
+
+        # Shift trigger position forward by the entries we just inserted
+        self._trigger_msg_start = insert_at
+
+        if entries_inserted > 0:
+            logger.info(
+                "Inserted reply context for trigger %s: parent %s (%d entries) at index %d",
+                init_msg.id, resolved.id, entries_inserted, insert_at - entries_inserted
+            )
 
     async def _get_past_messages(self, limit, start_time):
         before_msgs = [
@@ -502,7 +552,11 @@ class MessagesList:
             # Ignore reasoning
             if is_function_call_or_thoughts_embed(msg):
                 continue
+            before_count = len(self.messages)
             await self.add_msg(msg, index=1)
+            entries_added = len(self.messages) - before_count
+            if self._trigger_msg_start is not None:
+                self._trigger_msg_start += entries_added
             last_msg = msg
 
         last_msg = self.init_message
