@@ -437,7 +437,7 @@ class LLMPipeline:
                     msg_copy[k] = v
             messages_for_log.append(msg_copy)
 
-        logger.info(
+        logger.debug(
             "=== Submitted Payload Start === model=%s channel=%s guild=%s user=%s messages=%d kwargs=%s ===",
             model, channel_id, guild_id, user_digest[:12],
             len(messages_json),
