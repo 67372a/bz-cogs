@@ -547,14 +547,31 @@ class LLMPipeline:
     @retry(
         wait=wait_random_exponential(min=1, max=5),
         stop=stop_after_attempt(4),
-        retry=retry_if_exception_type((openai.RateLimitError, openai.APIConnectionError, openai.InternalServerError))
-        or retry_if_result(is_response_unsatisfactory),
+        retry=(
+            retry_if_exception_type((openai.RateLimitError, openai.APIConnectionError, openai.InternalServerError))
+            | retry_if_result(is_response_unsatisfactory)
+        ),
     )
     async def _create_completion_with_retry(self, model = None, messages = None, user = None, stream=False, **kwargs) -> ChatCompletion:
         try:
             result = await self.openai_client.chat.completions.create(model=model, messages=messages, user=user, stream=stream, **kwargs)
             if not result.choices:
-                raise openai.APIError(f"API returned no choices: {result}")
+                # Log the details of the empty-choices edge case so the real
+                # upstream cause is preserved, then let tenacity retry it via
+                # ``is_response_unsatisfactory`` instead of crashing on an
+                # incorrectly-constructed ``openai.APIError``.
+                try:
+                    raw = result.model_dump_json(exclude_none=True)
+                except Exception:
+                    raw = repr(result)
+                logger.warning(
+                    "LLM response has no choices (edge case); will retry. id=%s model=%s object=%s raw=%s",
+                    getattr(result, "id", None),
+                    getattr(result, "model", None),
+                    getattr(result, "object", None),
+                    raw,
+                )
+                return result
             native_finish_reason = getattr(result.choices[0], "native_finish_reason", None) or result.choices[0].finish_reason
             logger.info(f"Finish reason: {result.choices[0].finish_reason}. Native finish reason: {native_finish_reason}")
             return result
