@@ -73,8 +73,41 @@ async def should_reply(ctx: commands.Context) -> bool:
             return True
     return False
 
-async def send_response(ctx: commands.Context, response: str, can_reply: bool, mentionable_users) -> Optional[discord.Message]:
-    """Send the response embed to Discord.
+async def _clean_response_text(ctx: commands.Context, cog: MixinMeta, text: str, recent_authors) -> Optional[str]:
+    """Run the full text-cleaning pipeline on a response string.
+
+    Applies (in order): regex removal patterns, line collapse, backtick
+    escaping, LaTeX-to-plain conversion, and Discord emoji resolution.
+
+    Returns the cleaned text, or None if cleaning produced nothing usable.
+    """
+    try:
+        cleaned = await remove_patterns_from_response(ctx, cog.config, text, recent_authors)
+    except Exception:
+        return None
+    if not cleaned:
+        return None
+    cleaned = collapse_lines(cleaned, replacement=r'\n\n')
+    cleaned = escape_unescaped_backticks(cleaned)
+    cleaned = convert_latex_to_plain(cleaned)
+    cleaned = await resolve_emojis_for_discord(ctx, cleaned)
+    return cleaned
+
+
+async def send_response(
+    ctx: commands.Context,
+    response: str,
+    can_reply: bool,
+    mentionable_users,
+    files: Optional[List[discord.File]] = None,
+) -> Optional[discord.Message]:
+    """Send the response embed to Discord, optionally with file attachments.
+
+    When ``files`` are provided, they are attached to the **first** message
+    sent (the one carrying the first embed chunk). This keeps file
+    attachments alongside the response text even when the text must be
+    split across multiple embeds (Discord caps embed descriptions at 4096
+    chars).
 
     Returns the sent message (or None) so callers can attach views.
     """
@@ -85,15 +118,31 @@ async def send_response(ctx: commands.Context, response: str, can_reply: bool, m
         total_embed_count = math.ceil(len(response) / 4096)
 
         for i in range(0, len(response), 4096):
-            embed = Embed(title=f"{ctx.bot.user.name}'s Response", description = response[i:i + 4096])
+            embed = Embed(title=f"{ctx.bot.user.name}'s Response", description=response[i:i + 4096])
             embed.set_footer(text=f"{int((i + 4096) / 4096)} of {total_embed_count}")
-            sent_message = await ctx.send(embed=embed, allowed_mentions=allowed)
+            # Attach files only to the first chunk so they accompany the
+            # response rather than being sent as standalone messages.
+            chunk_files = files if i == 0 else None
+            sent_message = await ctx.send(embed=embed, files=chunk_files, allowed_mentions=allowed)
     elif can_reply and await should_reply(ctx):
-        sent_message = await ctx.message.reply(embed=Embed(title=f"{ctx.bot.user.name}'s Response", description = response), mention_author=False, allowed_mentions=allowed)
+        sent_message = await ctx.message.reply(
+            embed=Embed(title=f"{ctx.bot.user.name}'s Response", description=response),
+            files=files,
+            mention_author=False,
+            allowed_mentions=allowed,
+        )
     elif ctx.interaction:
-        sent_message = await ctx.interaction.followup.send(embed=Embed(title=f"{ctx.bot.user.name}'s Response", description = response), allowed_mentions=allowed)
+        sent_message = await ctx.interaction.followup.send(
+            embed=Embed(title=f"{ctx.bot.user.name}'s Response", description=response),
+            files=files,
+            allowed_mentions=allowed,
+        )
     else:
-        sent_message = await ctx.send(embed=Embed(title=f"{ctx.bot.user.name}'s Response", description = response), allowed_mentions=allowed)
+        sent_message = await ctx.send(
+            embed=Embed(title=f"{ctx.bot.user.name}'s Response", description=response),
+            files=files,
+            allowed_mentions=allowed,
+        )
     return sent_message
 
 
@@ -132,15 +181,8 @@ async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_l
     if not result.has_tools:
         # No tool calls — single response, send it and done
         if result.text:
-            try:
-                cleaned_text = await remove_patterns_from_response(ctx, cog.config, result.text, recent_authors)
-            except Exception:
-                cleaned_text = None
+            cleaned_text = await _clean_response_text(ctx, cog, result.text, recent_authors)
             if cleaned_text:
-                cleaned_text = collapse_lines(cleaned_text, replacement=r'\n\n')
-                cleaned_text = escape_unescaped_backticks(cleaned_text)
-                cleaned_text = convert_latex_to_plain(cleaned_text)
-                cleaned_text = await resolve_emojis_for_discord(ctx, cleaned_text)
                 sent_msg = await send_response(ctx, cleaned_text, messages_list.can_reply, recent_authors)
                 await _attach_reasoning_view(sent_msg, result.reasoning_steps)
                 return True
@@ -150,15 +192,8 @@ async def create_chat_response(cog: MixinMeta, ctx: commands.Context, messages_l
     # Early output: if pre-text doesn't look incomplete, send it immediately
     sent_early = False
     if result.pre_text and result.pre_text_complete:
-        try:
-            cleaned_pre = await remove_patterns_from_response(ctx, cog.config, result.pre_text, recent_authors)
-        except Exception:
-            cleaned_pre = None
+        cleaned_pre = await _clean_response_text(ctx, cog, result.pre_text, recent_authors)
         if cleaned_pre:
-            cleaned_pre = collapse_lines(cleaned_pre, replacement=r'\n\n')
-            cleaned_pre = escape_unescaped_backticks(cleaned_pre)
-            cleaned_pre = convert_latex_to_plain(cleaned_pre)
-            cleaned_pre = await resolve_emojis_for_discord(ctx, cleaned_pre)
             sent_msg = await send_response(ctx, cleaned_pre, messages_list.can_reply, recent_authors)
             await _attach_reasoning_view(sent_msg, result.reasoning_steps)
             sent_early = True
@@ -201,17 +236,22 @@ async def send_single_combined_message(
     recent_authors,
     reasoning_steps: Optional[List[str]] = None,
 ) -> bool:
-    """Send a single Discord reply with an embed + optional image file attachments.
+    """Send a Discord reply with an embed + optional file attachments.
 
-    If text is empty but images exist, sends only the files.
-    If images are empty but text exists, sends only the embed.
-    If both, sends embed + files in a single message.
+    Handles three cases:
+      * text + files  -> embed(s) + files in one reply (files on first chunk)
+      * text only     -> embed(s) only
+      * files only    -> files only (no embed)
 
-    The message is always a reply to the original triggering message (ctx.message).
+    Long text (>4096 chars) is automatically split across multiple embeds by
+    ``send_response``; files are attached to the first message so they
+    accompany the response rather than being sent as standalone messages.
+
+    The message is always a reply to the original triggering message.
     """
     allowed = AllowedMentions(everyone=False, roles=False, users=[ctx.message.author])
 
-    # Build Discord file attachments
+    # Build Discord file attachments from image/file dicts
     files = []
     for img_data in images:
         if not isinstance(img_data, dict):
@@ -221,56 +261,51 @@ async def send_single_combined_message(
         if img_bytes:
             files.append(discord.File(fp=io.BytesIO(img_bytes), filename=filename))
 
-    # Clean text
-    cleaned_text = None
-    if text:
-        try:
-            cleaned_text = await remove_patterns_from_response(ctx, cog.config, text, recent_authors)
-        except Exception:
-            cleaned_text = None
-        if cleaned_text:
-            cleaned_text = collapse_lines(cleaned_text, replacement=r'\n\n')
-            cleaned_text = escape_unescaped_backticks(cleaned_text)
-            cleaned_text = convert_latex_to_plain(cleaned_text)
-            cleaned_text = await resolve_emojis_for_discord(ctx, cleaned_text)
+    cleaned_text = await _clean_response_text(ctx, cog, text, recent_authors) if text else None
 
-    # Handle the 3 cases
+    logger.info(
+        "[Combined] Branch decision: cleaned_text_len=%d, files=%d, "
+        "text_exceeds_4096=%s",
+        len(cleaned_text or ''), len(files), (len(cleaned_text or '') > 4096)
+    )
+
     try:
-        if cleaned_text and files:
-            # Combined: embed + files in one reply
-            embed = Embed(title=f"{ctx.bot.user.name}'s Response", description=cleaned_text)
-            sent_message = await ctx.message.reply(
-                embed=embed,
-                files=files,
-                mention_author=False,
-                allowed_mentions=allowed,
+        if cleaned_text:
+            # Text (with or without files): send_response handles pagination
+            # and attaches files to the first message.
+            sent_msg = await send_response(
+                ctx, cleaned_text, can_reply, recent_authors,
+                files=files or None,
             )
             logger.info(
-                f"[Combined] Sent text embed + {len(files)} image(s) in one reply "
-                f"to message {ctx.message.id}"
+                "[Combined] Sent text embed%s in reply to message %s",
+                f" + {len(files)} file(s)" if files else "",
+                ctx.message.id,
             )
-            # Cache image data URLs for future context turn re-ingestion
-            _cache_generated_images_in_response(ctx, cog, sent_message, images)
-            await _attach_reasoning_view(sent_message, reasoning_steps)
-            return True
-
-        elif cleaned_text:
-            # Text only
-            sent_msg = await send_response(ctx, cleaned_text, can_reply, recent_authors)
+            if files:
+                _cache_generated_images_in_response(ctx, cog, sent_msg, images)
             await _attach_reasoning_view(sent_msg, reasoning_steps)
             return True
 
         elif files:
-            # Images only
-            sent_message = await ctx.message.reply(files=files, mention_author=False, allowed_mentions=allowed)
-            logger.info(f"[Combined] Sent {len(files)} image(s) as reply to message {ctx.message.id}")
+            # Files only, no text
+            sent_message = await ctx.message.reply(
+                files=files, mention_author=False, allowed_mentions=allowed
+            )
+            logger.info(
+                "[Combined] Sent %d file(s) as reply to message %s",
+                len(files), ctx.message.id,
+            )
             _cache_generated_images_in_response(ctx, cog, sent_message, images)
             await _attach_reasoning_view(sent_message, reasoning_steps)
             return True
 
     except discord.HTTPException as e:
-        logger.error(f"[Combined] Failed to send combined reply: {e}")
-        # Fallback: send text and images separately
+        logger.error(
+            "[Combined] Failed to send combined reply: %s (status=%s, text_len=%d, files=%d)",
+            e, getattr(e, 'status', None), len(cleaned_text or ''), len(files)
+        )
+        # Fallback: send text and files separately
         sent_msg = None
         if cleaned_text:
             sent_msg = await send_response(ctx, cleaned_text, can_reply, recent_authors)
@@ -278,7 +313,7 @@ async def send_single_combined_message(
             try:
                 await ctx.message.reply(file=f, mention_author=False, allowed_mentions=allowed)
             except Exception as e2:
-                logger.error(f"[Combined] Failed to send image {f.filename}: {e2}")
+                logger.error(f"[Combined] Failed to send file {f.filename}: {e2}")
         await _attach_reasoning_view(sent_msg, reasoning_steps)
         return bool(cleaned_text or files)
 
