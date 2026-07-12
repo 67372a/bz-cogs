@@ -581,10 +581,22 @@ class GenerateImageToolCall(ToolCall):
 
         # Decode and store images for later sending by the response layer,
         # and build image_url content parts for the multimodal function response.
+        # Track content hashes to deduplicate images that differ only in
+        # encoding (e.g., Gemini returning the same image with different
+        # base64 payloads).
+        seen_content_hashes: set = set()
         for image_data_url in images:
             try:
                 decoded = self._decode_image_data(image_data_url)
                 if decoded:
+                    img_hash = hashlib.sha256(decoded["bytes"]).hexdigest()
+                    if img_hash in seen_content_hashes:
+                        logger.info(
+                            f"[DirectImageGen] Skipping duplicate image "
+                            f"(content hash={img_hash[:16]}...)"
+                        )
+                        continue
+                    seen_content_hashes.add(img_hash)
                     self.generated_images.append(decoded)
                     content_parts.append({
                         "image": image_data_url,
@@ -648,7 +660,10 @@ class GenerateImageToolCall(ToolCall):
             "avif": "avif",
         }
         ext = ext_map.get(fmt, "png")
-        filename = f"generated_{self.ctx.message.id}.{ext}"
+        # Include a short content hash in the filename so each unique image
+        # gets a distinct attachment name when sent to Discord.
+        short_hash = hashlib.sha256(image_bytes).hexdigest()[:8]
+        filename = f"generated_{self.ctx.message.id}_{short_hash}.{ext}"
 
         return {
             "bytes": image_bytes,
@@ -664,18 +679,37 @@ class GenerateImageToolCall(ToolCall):
         Each image entry has the format:
             {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
 
+        Duplicate images (identical base64 payload content) are automatically
+        filtered out using SHA-256 hashing of the encoded data.
+
         Args:
             response: The ChatCompletion response object.
 
         Returns:
-            List of base64 data URL strings (e.g., "data:image/png;base64,...").
+            Deduplicated list of base64 data URL strings (e.g., "data:image/png;base64,...").
         """
         images: List[str] = []
+        seen_hashes: set = set()  # SHA-256 of base64 payload for deduplication
 
         if not response.choices:
             return images
 
         message = response.choices[0].message
+
+        def _is_duplicate_data_url(url: str) -> bool:
+            """Return True if this data URL's payload was already seen."""
+            try:
+                sep = url.find(",")
+                if sep == -1:
+                    return False
+                payload = url[sep + 1:]
+                h = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+                if h in seen_hashes:
+                    return True
+                seen_hashes.add(h)
+                return False
+            except Exception:
+                return False
 
         # Primary extraction: model_extra.images
         model_extra = getattr(message, "model_extra", None)
@@ -691,11 +725,23 @@ class GenerateImageToolCall(ToolCall):
                         if isinstance(image_url_dict, dict):
                             url = image_url_dict.get("url")
                             if url and isinstance(url, str) and url.startswith("data:"):
-                                images.append(url)
+                                if _is_duplicate_data_url(url):
+                                    logger.info(
+                                        "[DirectImageGen] Skipping duplicate image from "
+                                        "model_extra (already seen)"
+                                    )
+                                else:
+                                    images.append(url)
             elif raw_images and isinstance(raw_images, str):
                 # Sometimes it might be a single image URL string
                 if raw_images.startswith("data:"):
-                    images.append(raw_images)
+                    if _is_duplicate_data_url(raw_images):
+                        logger.info(
+                            "[DirectImageGen] Skipping duplicate image from "
+                            "model_extra string (already seen)"
+                        )
+                    else:
+                        images.append(raw_images)
 
         # Secondary extraction: the message content may contain image URLs for some providers
         content = getattr(message, "content", None)
@@ -706,7 +752,12 @@ class GenerateImageToolCall(ToolCall):
             )
             for match in data_url_pattern.finditer(content):
                 url = match.group(1)
-                if url not in images:
+                if _is_duplicate_data_url(url):
+                    logger.info(
+                        "[DirectImageGen] Skipping duplicate image from "
+                        "message content (already seen)"
+                    )
+                else:
                     images.append(url)
 
         return images
