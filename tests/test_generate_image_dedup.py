@@ -476,3 +476,330 @@ class TestContentHashDedup:
                     stored.append(decoded)
 
         assert len(stored) == 2
+
+
+# ---------------------------------------------------------------------------
+# Helpers for pixel-level dedup tests (real PNG images via PIL)
+# ---------------------------------------------------------------------------
+
+try:
+    from PIL import Image as _PILImage
+    import io as _pil_io
+    _PIL_AVAILABLE = True
+except Exception:
+    _PIL_AVAILABLE = False
+
+
+def _make_real_png_bytes(
+    size=(8, 8),
+    color=(255, 0, 0, 255),
+    optimize=False,
+    add_text_metadata=False,
+) -> bytes:
+    """Create a real PNG image with PIL and return its raw bytes.
+
+    Different ``optimize`` / metadata settings produce different byte streams
+    for the same pixel data — this is the exact scenario that byte-level
+    dedup fails to catch but pixel-level dedup should.
+    """
+    img = _PILImage.new("RGBA", size, color)
+    buf = _pil_io.BytesIO()
+    kwargs = {"format": "PNG"}
+    if optimize:
+        kwargs["optimize"] = True
+    if add_text_metadata:
+        # Add PNG text metadata to force different bytes
+        img.info["png_text"] = {"Software": "test-bz-cogs", "Timestamp": "2026-01-01"}
+        from PIL.PngImagePlugin import PngInfo
+        pnginfo = PngInfo()
+        pnginfo.add_text("Software", "test-bz-cogs")
+        pnginfo.add_text("Timestamp", "2026-01-01T00:00:00Z")
+        kwargs["pnginfo"] = pnginfo
+    img.save(buf, **kwargs)
+    return buf.getvalue()
+
+
+def _make_real_png_data_url(
+    size=(8, 8),
+    color=(255, 0, 0, 255),
+    optimize=False,
+    add_text_metadata=False,
+) -> str:
+    """Create a real PNG data URL with PIL."""
+    raw = _make_real_png_bytes(size, color, optimize, add_text_metadata)
+    encoded = base64.b64encode(raw).decode("utf-8")
+    return f"data:image/png;base64,{encoded}"
+
+
+# ---------------------------------------------------------------------------
+# Tests: _compute_pixel_hash helper
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not _PIL_AVAILABLE, reason="PIL/Pillow not available")
+class TestComputePixelHash:
+    """Tests for the _compute_pixel_hash helper method."""
+
+    def test_identical_pixels_different_encoding_same_hash(self):
+        """Two PNGs with different bytes but identical pixels should have
+        the same pixel hash."""
+        tool = _make_tool_call()
+        png_a = _make_real_png_bytes(optimize=False)
+        png_b = _make_real_png_bytes(optimize=True, add_text_metadata=True)
+
+        # Sanity: bytes must differ (otherwise the test is meaningless)
+        assert png_a != png_b
+
+        hash_a = tool._compute_pixel_hash(png_a)
+        hash_b = tool._compute_pixel_hash(png_b)
+
+        assert hash_a is not None
+        assert hash_b is not None
+        assert hash_a == hash_b
+
+    def test_different_pixels_different_hash(self):
+        """Two PNGs with different pixel data should have different hashes."""
+        tool = _make_tool_call()
+        png_red = _make_real_png_bytes(color=(255, 0, 0, 255))
+        png_blue = _make_real_png_bytes(color=(0, 0, 255, 255))
+
+        hash_red = tool._compute_pixel_hash(png_red)
+        hash_blue = tool._compute_pixel_hash(png_blue)
+
+        assert hash_red is not None
+        assert hash_blue is not None
+        assert hash_red != hash_blue
+
+    def test_returns_none_for_invalid_image(self):
+        """Non-image bytes should return None (graceful degradation)."""
+        tool = _make_tool_call()
+        result = tool._compute_pixel_hash(b"not an image at all")
+        assert result is None
+
+    def test_returns_none_for_empty_bytes(self):
+        """Empty bytes should return None."""
+        tool = _make_tool_call()
+        result = tool._compute_pixel_hash(b"")
+        assert result is None
+
+    def test_different_sizes_different_hash(self):
+        """Images of different sizes should have different pixel hashes."""
+        tool = _make_tool_call()
+        png_small = _make_real_png_bytes(size=(4, 4))
+        png_large = _make_real_png_bytes(size=(8, 8))
+
+        hash_small = tool._compute_pixel_hash(png_small)
+        hash_large = tool._compute_pixel_hash(png_large)
+
+        assert hash_small != hash_large
+
+
+# ---------------------------------------------------------------------------
+# Tests: Pixel-level dedup in _extract_images_from_response (Layer 1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not _PIL_AVAILABLE, reason="PIL/Pillow not available")
+class TestExtractImagesPixelDedup:
+    """Tests for pixel-level deduplication in _extract_images_from_response.
+
+    These test the core bug fix: Gemini returning the same image twice with
+    different PNG encodings (different bytes, identical pixels).
+    """
+
+    def test_same_pixels_different_encoding_deduped(self):
+        """Two images with different bytes but identical pixels should be
+        deduplicated to one."""
+        tool = _make_tool_call()
+        url_a = _make_real_png_data_url(optimize=False)
+        url_b = _make_real_png_data_url(optimize=True, add_text_metadata=True)
+
+        # Sanity check: bytes differ, so byte-level dedup would NOT catch this
+        assert url_a != url_b
+
+        response = _make_response(
+            model_extra={
+                "images": [
+                    {"type": "image_url", "image_url": {"url": url_a}},
+                    {"type": "image_url", "image_url": {"url": url_b}},
+                ]
+            }
+        )
+        result = tool._extract_images_from_response(response)
+        assert len(result) == 1
+
+    def test_same_pixels_triplicate_different_encodings_deduped(self):
+        """Three copies of the same image with three different encodings
+        should be deduplicated to one."""
+        tool = _make_tool_call()
+        url_a = _make_real_png_data_url(optimize=False)
+        url_b = _make_real_png_data_url(optimize=True)
+        url_c = _make_real_png_data_url(add_text_metadata=True)
+
+        response = _make_response(
+            model_extra={
+                "images": [
+                    {"type": "image_url", "image_url": {"url": url_a}},
+                    {"type": "image_url", "image_url": {"url": url_b}},
+                    {"type": "image_url", "image_url": {"url": url_c}},
+                ]
+            }
+        )
+        result = tool._extract_images_from_response(response)
+        assert len(result) == 1
+
+    def test_different_pixels_not_deduped(self):
+        """Two images with different pixel data should both be returned."""
+        tool = _make_tool_call()
+        url_red = _make_real_png_data_url(color=(255, 0, 0, 255))
+        url_blue = _make_real_png_data_url(color=(0, 0, 255, 255))
+
+        response = _make_response(
+            model_extra={
+                "images": [
+                    {"type": "image_url", "image_url": {"url": url_red}},
+                    {"type": "image_url", "image_url": {"url": url_blue}},
+                ]
+            }
+        )
+        result = tool._extract_images_from_response(response)
+        assert len(result) == 2
+
+    def test_same_pixels_cross_path_deduped(self):
+        """The same image in model_extra and message content (with different
+        encodings) should be deduplicated."""
+        tool = _make_tool_call()
+        url_a = _make_real_png_data_url(optimize=False)
+        url_b = _make_real_png_data_url(optimize=True, add_text_metadata=True)
+
+        response = _make_response(
+            model_extra={
+                "images": [
+                    {"type": "image_url", "image_url": {"url": url_a}},
+                ]
+            },
+            content=f"Here is the image: {url_b}",
+        )
+        result = tool._extract_images_from_response(response)
+        assert len(result) == 1
+
+    def test_mixed_unique_and_pixel_duplicate(self):
+        """Three images: two unique, one is a pixel-duplicate of the first.
+        Should return two unique images."""
+        tool = _make_tool_call()
+        url_a = _make_real_png_data_url(color=(255, 0, 0, 255), optimize=False)
+        url_a_dup = _make_real_png_data_url(color=(255, 0, 0, 255), optimize=True, add_text_metadata=True)
+        url_b = _make_real_png_data_url(color=(0, 255, 0, 255))
+
+        response = _make_response(
+            model_extra={
+                "images": [
+                    {"type": "image_url", "image_url": {"url": url_a}},
+                    {"type": "image_url", "image_url": {"url": url_b}},
+                    {"type": "image_url", "image_url": {"url": url_a_dup}},
+                ]
+            }
+        )
+        result = tool._extract_images_from_response(response)
+        assert len(result) == 2
+
+
+# ---------------------------------------------------------------------------
+# Tests: Pixel-level dedup safety net in _handle decode loop (Layer 2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not _PIL_AVAILABLE, reason="PIL/Pillow not available")
+class TestHandlePixelDedupSafetyNet:
+    """Tests for the pixel-level dedup safety net in the _handle decode loop.
+
+    Even if Layer 1 (_extract_images_from_response) somehow passes through
+    two visually-identical images with different encodings, Layer 2 in _handle
+    should catch them via the seen_pixel_hashes set.
+    """
+
+    def test_pixel_duplicate_safety_net(self):
+        """Two data URLs with different bytes but identical pixels should
+        yield only one stored image in the decode loop."""
+        tool = _make_tool_call(message_id=42)
+
+        url_a = _make_real_png_data_url(optimize=False)
+        url_b = _make_real_png_data_url(optimize=True, add_text_metadata=True)
+
+        # Simulate the decode loop from _handle
+        seen_content_hashes = set()
+        seen_pixel_hashes = set()
+        stored = []
+
+        for url in [url_a, url_b]:
+            decoded = tool._decode_image_data(url)
+            if decoded:
+                img_hash = hashlib.sha256(decoded["bytes"]).hexdigest()
+                pixel_hash = tool._compute_pixel_hash(decoded["bytes"])
+
+                if img_hash in seen_content_hashes:
+                    continue
+                if pixel_hash and pixel_hash in seen_pixel_hashes:
+                    continue
+                seen_content_hashes.add(img_hash)
+                if pixel_hash:
+                    seen_pixel_hashes.add(pixel_hash)
+                stored.append(decoded)
+
+        assert len(stored) == 1
+
+    def test_pixel_unique_safety_net(self):
+        """Two images with different pixels should both be stored."""
+        tool = _make_tool_call(message_id=42)
+
+        url_red = _make_real_png_data_url(color=(255, 0, 0, 255))
+        url_blue = _make_real_png_data_url(color=(0, 0, 255, 255))
+
+        seen_content_hashes = set()
+        seen_pixel_hashes = set()
+        stored = []
+
+        for url in [url_red, url_blue]:
+            decoded = tool._decode_image_data(url)
+            if decoded:
+                img_hash = hashlib.sha256(decoded["bytes"]).hexdigest()
+                pixel_hash = tool._compute_pixel_hash(decoded["bytes"])
+
+                if img_hash in seen_content_hashes:
+                    continue
+                if pixel_hash and pixel_hash in seen_pixel_hashes:
+                    continue
+                seen_content_hashes.add(img_hash)
+                if pixel_hash:
+                    seen_pixel_hashes.add(pixel_hash)
+                stored.append(decoded)
+
+        assert len(stored) == 2
+
+    def test_byte_identical_caught_by_byte_hash(self):
+        """Byte-identical images should be caught by the fast byte-hash path,
+        without needing pixel comparison."""
+        tool = _make_tool_call(message_id=42)
+
+        url = _make_real_png_data_url()
+
+        seen_content_hashes = set()
+        seen_pixel_hashes = set()
+        stored = []
+
+        for _ in range(3):  # Same URL three times
+            decoded = tool._decode_image_data(url)
+            if decoded:
+                img_hash = hashlib.sha256(decoded["bytes"]).hexdigest()
+                pixel_hash = tool._compute_pixel_hash(decoded["bytes"])
+
+                if img_hash in seen_content_hashes:
+                    continue
+                if pixel_hash and pixel_hash in seen_pixel_hashes:
+                    continue
+                seen_content_hashes.add(img_hash)
+                if pixel_hash:
+                    seen_pixel_hashes.add(pixel_hash)
+                stored.append(decoded)
+
+        assert len(stored) == 1

@@ -581,22 +581,47 @@ class GenerateImageToolCall(ToolCall):
 
         # Decode and store images for later sending by the response layer,
         # and build image_url content parts for the multimodal function response.
-        # Track content hashes to deduplicate images that differ only in
-        # encoding (e.g., Gemini returning the same image with different
-        # base64 payloads).
+        #
+        # Two-tier deduplication (safety net — Layer 1 in
+        # _extract_images_from_response already deduplicates, but this catches
+        # any edge cases where the same image slips through with a different
+        # data URL encoding):
+        #   1. Byte hash: SHA-256 of decoded raw bytes (fast, catches
+        #      byte-identical duplicates).
+        #   2. Pixel hash: SHA-256 of canonical RGBA pixel data (catches
+        #      visually-identical images with different file encodings, e.g.
+        #      PNG metadata/compression/timestamps).
         seen_content_hashes: set = set()
-        for image_data_url in images:
+        seen_pixel_hashes: set = set()
+        for idx, image_data_url in enumerate(images):
             try:
                 decoded = self._decode_image_data(image_data_url)
                 if decoded:
                     img_hash = hashlib.sha256(decoded["bytes"]).hexdigest()
+                    pixel_hash = self._compute_pixel_hash(decoded["bytes"])
+
+                    logger.info(
+                        f"[DirectImageGen] DIAGNOSTIC image[{idx}]: "
+                        f"byte_hash={img_hash[:16]}... bytes={len(decoded['bytes'])} "
+                        f"pixel_hash={pixel_hash[:16] if pixel_hash else 'N/A'}..."
+                    )
+
                     if img_hash in seen_content_hashes:
                         logger.info(
                             f"[DirectImageGen] Skipping duplicate image "
-                            f"(content hash={img_hash[:16]}...)"
+                            f"(byte content hash={img_hash[:16]}...)"
+                        )
+                        continue
+                    if pixel_hash and pixel_hash in seen_pixel_hashes:
+                        logger.warning(
+                            f"[DirectImageGen] Skipping visually-identical image "
+                            f"(pixel hash={pixel_hash[:16]}..., byte hash={img_hash[:16]}... "
+                            f"differs but pixels match)"
                         )
                         continue
                     seen_content_hashes.add(img_hash)
+                    if pixel_hash:
+                        seen_pixel_hashes.add(pixel_hash)
                     self.generated_images.append(decoded)
                     content_parts.append({
                         "image": image_data_url,
@@ -672,6 +697,61 @@ class GenerateImageToolCall(ToolCall):
             "data_url": image_data_url,
         }
 
+    def _compute_pixel_hash(self, image_bytes: bytes) -> Optional[str]:
+        """Compute a canonical pixel-data hash for an image.
+
+        Decodes the image with PIL, converts it to RGBA, and hashes the raw
+        pixel bytes.  This catches visually-identical images that have
+        different file-level encodings (e.g. PNG metadata, compression
+        settings, timestamps) — the exact scenario where byte-level
+        deduplication fails.
+
+        Args:
+            image_bytes: Raw encoded image bytes (PNG, JPEG, WebP, etc.).
+
+        Returns:
+            Hex digest of the SHA-256 of the canonical RGBA pixel data, or
+            None if the image could not be decoded by PIL (in which case
+            callers should fall back to byte-level hashing).
+        """
+        try:
+            from PIL import Image
+            import io as _io
+            pil_img = Image.open(_io.BytesIO(image_bytes))
+            pil_img.load()
+            canonical = pil_img.convert("RGBA").tobytes()
+            return hashlib.sha256(canonical).hexdigest()
+        except Exception as e:
+            logger.debug(
+                f"[DirectImageGen] Could not compute pixel hash "
+                f"(falling back to byte hash): {e}"
+            )
+            return None
+
+    def _diag_log_url(self, source: str, index: int, url: str):
+        """DIAGNOSTIC: Log byte-level and pixel-level hashes for a data URL.
+
+        Helps identify whether duplicate-looking images differ only in PNG
+        encoding (metadata, compression) while having identical pixel data.
+        """
+        try:
+            sep = url.find(",")
+            payload = url[sep + 1:] if sep != -1 else url
+            raw_bytes = base64.b64decode(payload)
+            byte_hash = hashlib.sha256(raw_bytes).hexdigest()[:16]
+            pixel_hash_full = self._compute_pixel_hash(raw_bytes)
+            pixel_hash = pixel_hash_full[:16] if pixel_hash_full else "N/A"
+            logger.info(
+                f"[DirectImageGen] DIAGNOSTIC [{source}[{index}]]: "
+                f"byte_hash={byte_hash}... pixel_hash={pixel_hash}... "
+                f"bytes={len(raw_bytes)}"
+            )
+        except Exception as e:
+            logger.info(
+                f"[DirectImageGen] DIAGNOSTIC [{source}[{index}]]: "
+                f"failed to compute hashes: {e}"
+            )
+
     def _extract_images_from_response(self, response) -> List[str]:
         """Extract base64 image data URLs from an OpenRouter ChatCompletion response.
 
@@ -679,8 +759,17 @@ class GenerateImageToolCall(ToolCall):
         Each image entry has the format:
             {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
 
-        Duplicate images (identical base64 payload content) are automatically
-        filtered out using SHA-256 hashing of the encoded data.
+        Duplicate images are filtered using a two-tier strategy:
+          1. SHA-256 of the base64 payload string (catches byte-identical
+             duplicates, including those that appear in both model_extra and
+             message content).
+          2. SHA-256 of the decoded image's canonical RGBA pixel data (catches
+             visually-identical images that differ only in file-level encoding,
+             e.g. PNG metadata, compression settings, or timestamps — a known
+             Gemini behavior where the same image is returned twice with
+             different encodings).
+
+        If PIL cannot decode an image, only the byte-level hash is used.
 
         Args:
             response: The ChatCompletion response object.
@@ -689,7 +778,8 @@ class GenerateImageToolCall(ToolCall):
             Deduplicated list of base64 data URL strings (e.g., "data:image/png;base64,...").
         """
         images: List[str] = []
-        seen_hashes: set = set()  # SHA-256 of base64 payload for deduplication
+        seen_byte_hashes: set = set()  # SHA-256 of base64 payload string
+        seen_pixel_hashes: set = set()  # SHA-256 of canonical RGBA pixel data
 
         if not response.choices:
             return images
@@ -697,16 +787,41 @@ class GenerateImageToolCall(ToolCall):
         message = response.choices[0].message
 
         def _is_duplicate_data_url(url: str) -> bool:
-            """Return True if this data URL's payload was already seen."""
+            """Return True if this image was already seen.
+
+            Uses a two-tier dedup strategy:
+              1. Fast path: SHA-256 of the base64 payload string (catches
+                 byte-identical duplicates).
+              2. Pixel path: SHA-256 of the decoded image's canonical RGBA
+                 pixel data (catches visually-identical images that differ
+                 only in file-level encoding, e.g. PNG metadata/compression).
+
+            If PIL cannot decode the image, only the byte hash is used.
+            """
             try:
                 sep = url.find(",")
                 if sep == -1:
                     return False
                 payload = url[sep + 1:]
-                h = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-                if h in seen_hashes:
+                byte_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+                if byte_hash in seen_byte_hashes:
                     return True
-                seen_hashes.add(h)
+                # Byte hash is novel — check pixel hash for visual dedup.
+                # Only decode once we know the bytes are new, to avoid
+                # expensive PIL work for byte-identical duplicates.
+                raw_bytes = base64.b64decode(payload)
+                pixel_hash = self._compute_pixel_hash(raw_bytes)
+                if pixel_hash and pixel_hash in seen_pixel_hashes:
+                    logger.info(
+                        f"[DirectImageGen] Pixel-level duplicate detected in "
+                        f"extraction (byte hash differs, pixel hash="
+                        f"{pixel_hash[:16]}...)"
+                    )
+                    return True
+                # Novel image — record both hashes
+                seen_byte_hashes.add(byte_hash)
+                if pixel_hash:
+                    seen_pixel_hashes.add(pixel_hash)
                 return False
             except Exception:
                 return False
@@ -716,7 +831,11 @@ class GenerateImageToolCall(ToolCall):
         if model_extra and isinstance(model_extra, dict):
             raw_images = model_extra.get("images") or model_extra.get("image")
             if raw_images and isinstance(raw_images, list):
-                for img_entry in raw_images:
+                logger.info(
+                    f"[DirectImageGen] DIAGNOSTIC: model_extra.images list has "
+                    f"{len(raw_images)} entry/entries"
+                )
+                for i, img_entry in enumerate(raw_images):
                     if isinstance(img_entry, dict):
                         # Format: {"type": "image_url", "image_url": {"url": "data:..."}}
                         image_url_dict = img_entry.get("image_url") or img_entry.get(
@@ -725,6 +844,8 @@ class GenerateImageToolCall(ToolCall):
                         if isinstance(image_url_dict, dict):
                             url = image_url_dict.get("url")
                             if url and isinstance(url, str) and url.startswith("data:"):
+                                # DIAGNOSTIC: log byte hash of decoded payload
+                                self._diag_log_url("model_extra.images", i, url)
                                 if _is_duplicate_data_url(url):
                                     logger.info(
                                         "[DirectImageGen] Skipping duplicate image from "
@@ -735,6 +856,7 @@ class GenerateImageToolCall(ToolCall):
             elif raw_images and isinstance(raw_images, str):
                 # Sometimes it might be a single image URL string
                 if raw_images.startswith("data:"):
+                    self._diag_log_url("model_extra.string", 0, raw_images)
                     if _is_duplicate_data_url(raw_images):
                         logger.info(
                             "[DirectImageGen] Skipping duplicate image from "
@@ -750,8 +872,15 @@ class GenerateImageToolCall(ToolCall):
             data_url_pattern = re.compile(
                 r"(data:image/[a-zA-Z]+;base64,[^\s\"'\]\)]+)"
             )
-            for match in data_url_pattern.finditer(content):
+            content_matches = list(data_url_pattern.finditer(content))
+            if content_matches:
+                logger.info(
+                    f"[DirectImageGen] DIAGNOSTIC: message.content has "
+                    f"{len(content_matches)} data URL(s)"
+                )
+            for i, match in enumerate(content_matches):
                 url = match.group(1)
+                self._diag_log_url("message.content", i, url)
                 if _is_duplicate_data_url(url):
                     logger.info(
                         "[DirectImageGen] Skipping duplicate image from "
@@ -760,4 +889,8 @@ class GenerateImageToolCall(ToolCall):
                 else:
                     images.append(url)
 
+        logger.info(
+            f"[DirectImageGen] DIAGNOSTIC: _extract_images_from_response returning "
+            f"{len(images)} image(s) after dedup"
+        )
         return images
