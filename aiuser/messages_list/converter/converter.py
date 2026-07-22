@@ -14,7 +14,8 @@ from aiuser.messages_list.converter.helpers import (format_embed_text_content,
                                                     format_text_content,
                                                     format_generic_document,
                                                     format_binary_document,
-                                                    format_text_document)
+                                                    format_text_document,
+                                                    _get_msg_header)
 from aiuser.messages_list.converter.image.caption import transcribe_image
 from aiuser.messages_list.entry import MessageEntry
 
@@ -182,9 +183,11 @@ class MessageConverter():
                 filenames.append(attachment.filename)
 
             if all_content_parts:
-                # Add the message text content
+                # Add the message text content or metadata header
                 if message.content and message.content.strip():
                     all_content_parts.append({"type": "text", "text": format_text_content(message)})
+                elif message.author.id != message.guild.me.id:
+                    all_content_parts.append({"type": "text", "text": f'{_get_msg_header(message)}</message>'})
 
                 entry = MessageEntry(role, all_content_parts)
                 res.append(entry)

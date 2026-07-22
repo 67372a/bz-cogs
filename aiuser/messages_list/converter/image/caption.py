@@ -9,7 +9,7 @@ import numpy as np
 
 from aiuser.types.abc import MixinMeta
 from aiuser.types.enums import ScanImageMode
-from aiuser.messages_list.converter.helpers import format_text_content
+from aiuser.messages_list.converter.helpers import format_text_content, _get_msg_header
 from aiuser.messages_list.converter.image.AI_horde import \
     process_image_ai_horde
 from aiuser.utils.image_cache import image_cache, processed_image_cache
@@ -96,8 +96,13 @@ async def _process_attachment(
         content.append(
             {"type": "image_url", "image_url": {"url": data_url}}
         )
-        if message.content != "":
-            content.append({"type": "text", "text": format_text_content(message)})
+        text = format_text_content(message)
+        if text:
+            content.append({"type": "text", "text": text})
+        elif message.author.id != message.guild.me.id:
+            # Include message metadata even when there is no text content,
+            # so the LLM knows who sent the image and any reply context.
+            content.append({"type": "text", "text": f'{_get_msg_header(message)}</message>'})
         return content
 
     elif mode == ScanImageMode.AI_HORDE:
