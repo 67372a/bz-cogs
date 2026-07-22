@@ -6,6 +6,13 @@ from typing import List, Optional, Tuple
 
 import aiohttp
 
+from aiuser.utils.image_cache import image_cache, processed_image_cache
+from aiuser.utils.image_processing import (
+    compute_pixel_hash,
+    process_image_for_llm,
+    build_webp_data_url,
+)
+
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
 # Matches URLs that point to common image formats
@@ -68,8 +75,6 @@ class OpenRouterImageParsing:
         Returns:
             Raw bytes of the image, or None if download fails.
         """
-        from aiuser.utils.image_cache import image_cache
-
         # Check cache first
         cached = image_cache.get(url)
         if cached is not None:
@@ -116,20 +121,6 @@ class OpenRouterImageParsing:
             return None
 
     @staticmethod
-    def encode_image_to_base64(image_data: bytes, content_type: str) -> str:
-        """Encode raw image bytes to a base64 data URL.
-
-        Args:
-            image_data: Raw bytes of the image file.
-            content_type: MIME type of the image (e.g., 'image/png', 'image/jpeg').
-
-        Returns:
-            A data URL string like "data:image/png;base64,..."
-        """
-        encoded = base64.b64encode(image_data).decode("utf-8")
-        return f"data:{content_type};base64,{encoded}"
-
-    @staticmethod
     def build_image_content(base64_url: str) -> dict:
         """Build an image_url content part dict for the messages array.
 
@@ -148,13 +139,21 @@ class OpenRouterImageParsing:
 
     @classmethod
     async def process_message_for_images(
-        cls, message_content: str, max_size: int = MAX_IMAGE_DOWNLOAD_SIZE
+        cls,
+        message_content: str,
+        max_size: int = MAX_IMAGE_DOWNLOAD_SIZE,
+        max_pixels: int = 16_777_216,
     ) -> Tuple[List[dict], List[str]]:
-        """Detect image URLs in a message, download and encode them.
+        """Detect image URLs in a message, download and process them.
+
+        Uses the unified image processing pipeline: each downloaded image
+        is checked against the double-keyed ``processed_image_cache`` before
+        being resized and compressed to WebP.
 
         Args:
             message_content: The text content of the message to scan.
             max_size: Maximum allowed download size in bytes per image.
+            max_pixels: Maximum pixel count for resize (defaults to 4096×4096).
 
         Returns:
             Tuple of (list of image_url content parts, list of filenames/urls).
@@ -173,27 +172,30 @@ class OpenRouterImageParsing:
                 logger.warning(f"Skipping image {url} — download failed")
                 continue
 
-            # Determine content type from URL extension
-            ext = url.rsplit(".", 1)[-1].split("?")[0].lower()
-            mime_map = {
-                "png": "image/png",
-                "jpg": "image/jpeg",
-                "jpeg": "image/jpeg",
-                "gif": "image/gif",
-                "webp": "image/webp",
-                "bmp": "image/bmp",
-                "tiff": "image/tiff",
-                "svg": "image/svg+xml",
-            }
-            content_type = mime_map.get(ext, "image/png")
+            # Check the double-keyed processed cache
+            pixel_hash = compute_pixel_hash(image_data)
+            cached_processed = processed_image_cache.get(image_data, pixel_hash, max_pixels)
 
-            encoded = cls.encode_image_to_base64(image_data, content_type)
-            content_part = cls.build_image_content(encoded)
+            if cached_processed is not None:
+                data_url = build_webp_data_url(cached_processed)
+                logger.info(
+                    f"[ImageParsing] Processed cache hit for {url}: "
+                    f"{len(cached_processed)} bytes"
+                )
+            else:
+                processed = process_image_for_llm(image_data, max_pixels)
+                if processed is None:
+                    logger.warning(f"Skipping image {url} — processing failed")
+                    continue
+                processed_image_cache.set(image_data, pixel_hash, max_pixels, processed)
+                data_url = build_webp_data_url(processed)
+                logger.info(
+                    f"[ImageParsing] Processed image from {url}: "
+                    f"{len(image_data)} bytes → {len(processed)} bytes WebP"
+                )
+
+            content_part = cls.build_image_content(data_url)
             content_parts.append(content_part)
             sources.append(url)
-
-            logger.info(
-                f"Encoded image from {url}: {len(image_data)} bytes -> {len(encoded)} char data URL"
-            )
 
         return content_parts, sources

@@ -19,7 +19,12 @@ from aiuser.types.openrouter_types import (
     DirectImageGenerationParameters,
     deserialize_parameters,
 )
-from aiuser.utils.image_cache import image_cache
+from aiuser.utils.image_cache import image_cache, processed_image_cache
+from aiuser.utils.image_processing import (
+    compute_pixel_hash,
+    process_image_for_llm,
+    build_webp_data_url,
+)
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
@@ -274,9 +279,11 @@ class GenerateImageToolCall(ToolCall):
         return image_urls
 
     async def _download_and_encode_images(self, image_urls: List[str]) -> List[dict]:
-        """Download reference images and encode them as base64 data URLs.
+        """Download reference images, process via the unified pipeline, and encode.
 
-        Uses a global TTL cache keyed by SHA-256 of the URL for up to 30 minutes.
+        Uses the URL-level cache to avoid re-downloading and the double-keyed
+        ``processed_image_cache`` to avoid re-processing.  The returned
+        content parts carry ``data:image/webp;base64,…`` data URLs.
 
         Args:
             image_urls: List of image URLs to download.
@@ -285,89 +292,86 @@ class GenerateImageToolCall(ToolCall):
             List of image_url content part dicts for the multimodal messages array.
         """
         content_parts: List[dict] = []
+        max_pixels = 16_777_216  # 4096×4096 default for LLM context
 
         for url in image_urls:
-            # Check cache first
+            raw_bytes: Optional[bytes] = None
+
+            # ── Step 1: obtain raw bytes (URL cache → download) ──
             cached = image_cache.get(url)
             if cached is not None:
-                logger.info(
-                    f"[DirectImageGen] Cache hit for reference image {url}"
-                )
-                # Re-encode from cached bytes — need content type from the URL extension
-                ext = url.rsplit(".", 1)[-1].split("?")[0].lower()
-                mime_map = {
-                    "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
-                    "gif": "image/gif", "webp": "image/webp", "bmp": "image/bmp",
-                    "avif": "image/avif",
-                }
-                content_type = mime_map.get(ext, "image/png")
-                encoded = base64.b64encode(cached).decode("utf-8")
-                data_url = f"data:{content_type};base64,{encoded}"
-                content_parts.append({
-                    "type": "image_url",
-                    "image_url": {"url": data_url},
-                })
-                logger.info(
-                    f"[DirectImageGen] Re-encoded cached image from {url}: {len(cached)} bytes"
-                )
+                logger.info(f"[DirectImageGen] URL cache hit for {url}")
+                raw_bytes = cached
+            else:
+                try:
+                    timeout = aiohttp.ClientTimeout(total=30)
+                    async with aiohttp.ClientSession(timeout=timeout) as session:
+                        async with session.get(
+                            url, headers={"User-Agent": "bz-cogs/aiuser"}
+                        ) as response:
+                            if response.status != 200:
+                                logger.warning(
+                                    f"[DirectImageGen] Failed to download reference image "
+                                    f"from {url}: HTTP {response.status}"
+                                )
+                                continue
+
+                            content_type = response.headers.get("Content-Type", "")
+                            if not content_type.startswith("image/"):
+                                logger.warning(
+                                    f"[DirectImageGen] URL {url} is not an image "
+                                    f"(Content-Type: {content_type})"
+                                )
+                                continue
+
+                            data = await response.read()
+                            if len(data) > MAX_IMAGE_DOWNLOAD_SIZE:
+                                logger.warning(
+                                    f"[DirectImageGen] Reference image from {url} exceeds "
+                                    f"max size ({len(data)} > {MAX_IMAGE_DOWNLOAD_SIZE} bytes)"
+                                )
+                                continue
+
+                            image_cache.set(url, data, content_type)
+                            raw_bytes = data
+                except aiohttp.ClientError as e:
+                    logger.warning(f"[DirectImageGen] Network error: {e}")
+                    continue
+                except asyncio.TimeoutError:
+                    logger.warning(f"[DirectImageGen] Timeout: {url}")
+                    continue
+                except Exception as e:
+                    logger.warning(f"[DirectImageGen] Unexpected error: {e}")
+                    continue
+
+            if raw_bytes is None:
                 continue
 
-            try:
-                timeout = aiohttp.ClientTimeout(total=30)
-                async with aiohttp.ClientSession(timeout=timeout) as session:
-                    async with session.get(
-                        url, headers={"User-Agent": "bz-cogs/aiuser"}
-                    ) as response:
-                        if response.status != 200:
-                            logger.warning(
-                                f"[DirectImageGen] Failed to download reference image "
-                                f"from {url}: HTTP {response.status}"
-                            )
-                            continue
-
-                        content_type = response.headers.get("Content-Type", "")
-                        if not content_type.startswith("image/"):
-                            logger.warning(
-                                f"[DirectImageGen] URL {url} is not an image "
-                                f"(Content-Type: {content_type})"
-                            )
-                            continue
-
-                        data = await response.read()
-                        if len(data) > MAX_IMAGE_DOWNLOAD_SIZE:
-                            logger.warning(
-                                f"[DirectImageGen] Reference image from {url} exceeds "
-                                f"max size ({len(data)} > {MAX_IMAGE_DOWNLOAD_SIZE} bytes)"
-                            )
-                            continue
-
-                        # Store in cache before encoding
-                        image_cache.set(url, data, content_type)
-
-                        encoded = base64.b64encode(data).decode("utf-8")
-                        data_url = f"data:{content_type};base64,{encoded}"
-                        content_parts.append({
-                            "type": "image_url",
-                            "image_url": {"url": data_url},
-                        })
-                        logger.info(
-                            f"[DirectImageGen] Downloaded and encoded reference image "
-                            f"from {url}: {len(data)} bytes"
-                        )
-            except aiohttp.ClientError as e:
-                logger.warning(
-                    f"[DirectImageGen] Network error downloading reference image "
-                    f"from {url}: {e}"
+            # ── Step 2: processed cache → pipeline ──
+            pixel_hash = compute_pixel_hash(raw_bytes)
+            cached_processed = processed_image_cache.get(raw_bytes, pixel_hash, max_pixels)
+            if cached_processed is not None:
+                data_url = build_webp_data_url(cached_processed)
+                logger.info(
+                    f"[DirectImageGen] Processed cache hit for {url}: "
+                    f"{len(cached_processed)} bytes"
                 )
-            except asyncio.TimeoutError:
-                logger.warning(
-                    f"[DirectImageGen] Timeout downloading reference image from {url}"
+            else:
+                processed = process_image_for_llm(raw_bytes, max_pixels)
+                if processed is None:
+                    logger.warning(f"[DirectImageGen] Processing failed for {url}")
+                    continue
+                processed_image_cache.set(raw_bytes, pixel_hash, max_pixels, processed)
+                data_url = build_webp_data_url(processed)
+                logger.info(
+                    f"[DirectImageGen] Processed {url}: "
+                    f"{len(raw_bytes)} → {len(processed)} bytes WebP"
                 )
-            except Exception as e:
-                logger.warning(
-                    f"[DirectImageGen] Unexpected error downloading reference image "
-                    f"from {url}: {e}"
-                )
+
+            content_parts.append({
+                "type": "image_url",
+                "image_url": {"url": data_url},
+            })
 
         return content_parts
 
@@ -578,9 +582,10 @@ class GenerateImageToolCall(ToolCall):
         # the complete content parts (image_url + text) so the pipeline can
         # pass them directly as the tool result.
         content_parts: List[Dict] = []
+        max_pixels = 16_777_216  # 4096×4096 default for LLM context
 
         # Decode and store images for later sending by the response layer,
-        # and build image_url content parts for the multimodal function response.
+        # and build processed content parts for the multimodal function response.
         #
         # Two-tier deduplication (safety net — Layer 1 in
         # _extract_images_from_response already deduplicates, but this catches
@@ -598,12 +603,12 @@ class GenerateImageToolCall(ToolCall):
                 decoded = self._decode_image_data(image_data_url)
                 if decoded:
                     img_hash = hashlib.sha256(decoded["bytes"]).hexdigest()
-                    pixel_hash = self._compute_pixel_hash(decoded["bytes"])
+                    p_hash = compute_pixel_hash(decoded["bytes"])
 
                     logger.info(
-                        f"[DirectImageGen] DIAGNOSTIC image[{idx}]: "
+                        f"[DirectImageGen] image[{idx}]: "
                         f"byte_hash={img_hash[:16]}... bytes={len(decoded['bytes'])} "
-                        f"pixel_hash={pixel_hash[:16] if pixel_hash else 'N/A'}..."
+                        f"pixel_hash={p_hash[:16] if p_hash else 'N/A'}..."
                     )
 
                     if img_hash in seen_content_hashes:
@@ -612,19 +617,40 @@ class GenerateImageToolCall(ToolCall):
                             f"(byte content hash={img_hash[:16]}...)"
                         )
                         continue
-                    if pixel_hash and pixel_hash in seen_pixel_hashes:
+                    if p_hash and p_hash in seen_pixel_hashes:
                         logger.warning(
                             f"[DirectImageGen] Skipping visually-identical image "
-                            f"(pixel hash={pixel_hash[:16]}..., byte hash={img_hash[:16]}... "
+                            f"(pixel hash={p_hash[:16]}..., byte hash={img_hash[:16]}... "
                             f"differs but pixels match)"
                         )
                         continue
                     seen_content_hashes.add(img_hash)
-                    if pixel_hash:
-                        seen_pixel_hashes.add(pixel_hash)
+                    if p_hash:
+                        seen_pixel_hashes.add(p_hash)
+
+                    # Keep original bytes for Discord attachments
                     self.generated_images.append(decoded)
+
+                    # Build a processed data URL for the LLM function response
+                    cached_processed = processed_image_cache.get(
+                        decoded["bytes"], p_hash, max_pixels
+                    )
+                    if cached_processed is None:
+                        cached_processed = process_image_for_llm(
+                            decoded["bytes"], max_pixels
+                        )
+                        if cached_processed is not None:
+                            processed_image_cache.set(
+                                decoded["bytes"], p_hash, max_pixels, cached_processed
+                            )
+
+                    if cached_processed is not None:
+                        processed_data_url = build_webp_data_url(cached_processed)
+                    else:
+                        processed_data_url = image_data_url  # fallback
+
                     content_parts.append({
-                        "image": image_data_url,
+                        "image": processed_data_url,
                     })
             except Exception as e:
                 logger.error(
@@ -697,58 +723,23 @@ class GenerateImageToolCall(ToolCall):
             "data_url": image_data_url,
         }
 
-    def _compute_pixel_hash(self, image_bytes: bytes) -> Optional[str]:
-        """Compute a canonical pixel-data hash for an image.
-
-        Decodes the image with PIL, converts it to RGBA, and hashes the raw
-        pixel bytes.  This catches visually-identical images that have
-        different file-level encodings (e.g. PNG metadata, compression
-        settings, timestamps) — the exact scenario where byte-level
-        deduplication fails.
-
-        Args:
-            image_bytes: Raw encoded image bytes (PNG, JPEG, WebP, etc.).
-
-        Returns:
-            Hex digest of the SHA-256 of the canonical RGBA pixel data, or
-            None if the image could not be decoded by PIL (in which case
-            callers should fall back to byte-level hashing).
-        """
-        try:
-            from PIL import Image
-            import io as _io
-            pil_img = Image.open(_io.BytesIO(image_bytes))
-            pil_img.load()
-            canonical = pil_img.convert("RGBA").tobytes()
-            return hashlib.sha256(canonical).hexdigest()
-        except Exception as e:
-            logger.debug(
-                f"[DirectImageGen] Could not compute pixel hash "
-                f"(falling back to byte hash): {e}"
-            )
-            return None
-
     def _diag_log_url(self, source: str, index: int, url: str):
-        """DIAGNOSTIC: Log byte-level and pixel-level hashes for a data URL.
-
-        Helps identify whether duplicate-looking images differ only in PNG
-        encoding (metadata, compression) while having identical pixel data.
-        """
+        """Log byte-level and pixel-level hashes for a data URL."""
         try:
             sep = url.find(",")
             payload = url[sep + 1:] if sep != -1 else url
             raw_bytes = base64.b64decode(payload)
             byte_hash = hashlib.sha256(raw_bytes).hexdigest()[:16]
-            pixel_hash_full = self._compute_pixel_hash(raw_bytes)
+            pixel_hash_full = compute_pixel_hash(raw_bytes)
             pixel_hash = pixel_hash_full[:16] if pixel_hash_full else "N/A"
             logger.info(
-                f"[DirectImageGen] DIAGNOSTIC [{source}[{index}]]: "
+                f"[DirectImageGen] [{source}[{index}]]: "
                 f"byte_hash={byte_hash}... pixel_hash={pixel_hash}... "
                 f"bytes={len(raw_bytes)}"
             )
         except Exception as e:
             logger.info(
-                f"[DirectImageGen] DIAGNOSTIC [{source}[{index}]]: "
+                f"[DirectImageGen] [{source}[{index}]]: "
                 f"failed to compute hashes: {e}"
             )
 
@@ -810,7 +801,7 @@ class GenerateImageToolCall(ToolCall):
                 # Only decode once we know the bytes are new, to avoid
                 # expensive PIL work for byte-identical duplicates.
                 raw_bytes = base64.b64decode(payload)
-                pixel_hash = self._compute_pixel_hash(raw_bytes)
+                pixel_hash = compute_pixel_hash(raw_bytes)
                 if pixel_hash and pixel_hash in seen_pixel_hashes:
                     logger.info(
                         f"[DirectImageGen] Pixel-level duplicate detected in "

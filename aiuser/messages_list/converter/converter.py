@@ -115,8 +115,11 @@ class MessageConverter():
             return False
 
         max_size = await self.config.guild(message.guild).openrouter_image_parsing_max_size()
+        max_pixels = await self.config.guild(message.guild).max_image_pixels()
+        if max_pixels is None:
+            max_pixels = 16_777_216  # 4096*4096 default for LLM mode
         content_parts, sources = await OpenRouterImageParsing.process_message_for_images(
-            message.content, max_size
+            message.content, max_size, max_pixels
         )
 
         if not content_parts:
@@ -314,72 +317,11 @@ class MessageConverter():
 async def transcribe_image_single(cog: MixinMeta, message: Message, attachment):
     """Transcribe a single attachment (used for multiple image support).
 
-    This mirrors the logic in transcribe_image but operates on a specific
-    attachment rather than message.attachments[0].
+    Uses the unified image processing pipeline with double-keyed caching
+    (shared with ``transcribe_image`` in ``caption.py``).
     """
-    import base64
-    from io import BytesIO
-    import cv2
-    import numpy as np
-    from PIL import Image
-
-    from aiuser.types.enums import ScanImageMode
-    from aiuser.messages_list.converter.image.AI_horde import process_image_ai_horde
-
-    config = cog.config
-    mode = ScanImageMode(await config.guild(message.guild).scan_images_mode())
-
-    buffer = BytesIO()
-    await attachment.save(buffer)
-
-    file_bytes = np.frombuffer(buffer.getvalue(), dtype=np.uint8)
-    cv_image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-
-    if cv_image is None:
-        logger.error(f"Failed to decode image from attachment {attachment.filename} in message {message.id}")
-        return None
-
-    max_pixels = await config.guild(message.guild).max_image_pixels()
-
-    if max_pixels is not None:
-        maxsize = max_pixels
-    elif mode == ScanImageMode.LLM:
-        maxsize = 16777216  # 4096 * 4096
-    else:
-        maxsize = 1048576  # 1024 * 1024
-
-    from aiuser.messages_list.converter.image.caption import scale_image
-    scaled_cv_image = scale_image(cv_image, maxsize)
-
-    if mode == ScanImageMode.AI_HORDE:
-        image = Image.fromarray(cv2.cvtColor(scaled_cv_image, cv2.COLOR_BGR2RGB))
-        return await process_image_ai_horde(cog, message, image)
-    elif mode == ScanImageMode.LOCAL:
-        try:
-            from aiuser.messages_list.converter.image.local import process_image_locally
-            image = Image.fromarray(cv2.cvtColor(scaled_cv_image, cv2.COLOR_BGR2RGB))
-            return await process_image_locally(cog, message, image)
-        except ImportError:
-            logger.exception("Local image scanning dependencies not installed")
-            return None
-    elif mode == ScanImageMode.LLM:
-        content = []
-        webp_quality = 90
-        params = [cv2.IMWRITE_WEBP_QUALITY, webp_quality]
-        success, encoded_image = cv2.imencode('.webp', scaled_cv_image, params)
-
-        if not success:
-            logger.error(f"Failed to encode image {attachment.filename} to WebP format")
-            return None
-
-        base64_image = base64.b64encode(encoded_image.tobytes()).decode('utf-8')
-        content.append(
-            {"type": "image_url", "image_url": {
-             "url": f"data:image/webp;base64,{base64_image}"}
-             })
-        return content
-    else:
-        return None
+    from aiuser.messages_list.converter.image.caption import transcribe_single
+    return await transcribe_single(cog, message, attachment)
 
 
 def format_generic_image_single(attachment) -> str:

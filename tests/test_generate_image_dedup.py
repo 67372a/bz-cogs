@@ -89,8 +89,16 @@ _inject_mock("aiuser.types.openrouter_types", _or_types_mod)
 
 _image_cache_mod = _make_mock_package("aiuser.utils.image_cache")
 _image_cache_mod.image_cache = MagicMock()
+_image_cache_mod.processed_image_cache = MagicMock()
 _inject_mock("aiuser.utils", _make_mock_package("aiuser.utils"))
 _inject_mock("aiuser.utils.image_cache", _image_cache_mod)
+
+# Load the real image_processing module so compute_pixel_hash works correctly
+# (the MagicMock default returns the same instance for all calls, breaking dedup)
+_real_image_processing = import_module_directly(
+    "aiuser.utils.image_processing", "aiuser/utils/image_processing.py"
+)
+_inject_mock("aiuser.utils.image_processing", _real_image_processing)
 
 # aiohttp may or may not be installed; mock it safely
 if "aiohttp" not in sys.modules:
@@ -538,20 +546,19 @@ def _make_real_png_data_url(
 
 @pytest.mark.skipif(not _PIL_AVAILABLE, reason="PIL/Pillow not available")
 class TestComputePixelHash:
-    """Tests for the _compute_pixel_hash helper method."""
+    """Tests for the compute_pixel_hash helper (now a shared utility)."""
 
     def test_identical_pixels_different_encoding_same_hash(self):
         """Two PNGs with different bytes but identical pixels should have
         the same pixel hash."""
-        tool = _make_tool_call()
         png_a = _make_real_png_bytes(optimize=False)
         png_b = _make_real_png_bytes(optimize=True, add_text_metadata=True)
 
         # Sanity: bytes must differ (otherwise the test is meaningless)
         assert png_a != png_b
 
-        hash_a = tool._compute_pixel_hash(png_a)
-        hash_b = tool._compute_pixel_hash(png_b)
+        hash_a = _real_image_processing.compute_pixel_hash(png_a)
+        hash_b = _real_image_processing.compute_pixel_hash(png_b)
 
         assert hash_a is not None
         assert hash_b is not None
@@ -559,12 +566,11 @@ class TestComputePixelHash:
 
     def test_different_pixels_different_hash(self):
         """Two PNGs with different pixel data should have different hashes."""
-        tool = _make_tool_call()
         png_red = _make_real_png_bytes(color=(255, 0, 0, 255))
         png_blue = _make_real_png_bytes(color=(0, 0, 255, 255))
 
-        hash_red = tool._compute_pixel_hash(png_red)
-        hash_blue = tool._compute_pixel_hash(png_blue)
+        hash_red = _real_image_processing.compute_pixel_hash(png_red)
+        hash_blue = _real_image_processing.compute_pixel_hash(png_blue)
 
         assert hash_red is not None
         assert hash_blue is not None
@@ -572,24 +578,21 @@ class TestComputePixelHash:
 
     def test_returns_none_for_invalid_image(self):
         """Non-image bytes should return None (graceful degradation)."""
-        tool = _make_tool_call()
-        result = tool._compute_pixel_hash(b"not an image at all")
+        result = _real_image_processing.compute_pixel_hash(b"not an image at all")
         assert result is None
 
     def test_returns_none_for_empty_bytes(self):
         """Empty bytes should return None."""
-        tool = _make_tool_call()
-        result = tool._compute_pixel_hash(b"")
+        result = _real_image_processing.compute_pixel_hash(b"")
         assert result is None
 
     def test_different_sizes_different_hash(self):
         """Images of different sizes should have different pixel hashes."""
-        tool = _make_tool_call()
         png_small = _make_real_png_bytes(size=(4, 4))
         png_large = _make_real_png_bytes(size=(8, 8))
 
-        hash_small = tool._compute_pixel_hash(png_small)
-        hash_large = tool._compute_pixel_hash(png_large)
+        hash_small = _real_image_processing.compute_pixel_hash(png_small)
+        hash_large = _real_image_processing.compute_pixel_hash(png_large)
 
         assert hash_small != hash_large
 
@@ -735,7 +738,7 @@ class TestHandlePixelDedupSafetyNet:
             decoded = tool._decode_image_data(url)
             if decoded:
                 img_hash = hashlib.sha256(decoded["bytes"]).hexdigest()
-                pixel_hash = tool._compute_pixel_hash(decoded["bytes"])
+                pixel_hash = _real_image_processing.compute_pixel_hash(decoded["bytes"])
 
                 if img_hash in seen_content_hashes:
                     continue
@@ -763,7 +766,7 @@ class TestHandlePixelDedupSafetyNet:
             decoded = tool._decode_image_data(url)
             if decoded:
                 img_hash = hashlib.sha256(decoded["bytes"]).hexdigest()
-                pixel_hash = tool._compute_pixel_hash(decoded["bytes"])
+                pixel_hash = _real_image_processing.compute_pixel_hash(decoded["bytes"])
 
                 if img_hash in seen_content_hashes:
                     continue
@@ -791,7 +794,7 @@ class TestHandlePixelDedupSafetyNet:
             decoded = tool._decode_image_data(url)
             if decoded:
                 img_hash = hashlib.sha256(decoded["bytes"]).hexdigest()
-                pixel_hash = tool._compute_pixel_hash(decoded["bytes"])
+                pixel_hash = _real_image_processing.compute_pixel_hash(decoded["bytes"])
 
                 if img_hash in seen_content_hashes:
                     continue

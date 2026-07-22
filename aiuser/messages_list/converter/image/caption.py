@@ -7,108 +7,162 @@ from PIL import Image
 import cv2
 import numpy as np
 
-# ... (rest of your imports)
 from aiuser.types.abc import MixinMeta
 from aiuser.types.enums import ScanImageMode
 from aiuser.messages_list.converter.helpers import format_text_content
 from aiuser.messages_list.converter.image.AI_horde import \
     process_image_ai_horde
+from aiuser.utils.image_cache import image_cache, processed_image_cache
+from aiuser.utils.image_processing import (
+    compute_byte_hash,
+    compute_pixel_hash,
+    process_image_for_llm,
+    build_webp_data_url,
+)
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
 
+async def _fetch_attachment_bytes(attachment) -> bytes:
+    """Download attachment bytes, using the URL-level cache to avoid re-fetches.
+
+    Falls back to ``attachment.save()`` if the URL cache has no entry.
+    """
+    cached = image_cache.get(attachment.url)
+    if cached is not None:
+        return cached
+    buffer = BytesIO()
+    await attachment.save(buffer)
+    raw = buffer.getvalue()
+    # Store in URL cache so the same attachment URL isn't re-downloaded
+    ct = attachment.content_type or "application/octet-stream"
+    image_cache.set(attachment.url, raw, ct)
+    return raw
+
+
+def _resolve_max_pixels(mode: ScanImageMode, config_max_pixels) -> int:
+    if config_max_pixels is not None:
+        return config_max_pixels
+    if mode == ScanImageMode.LLM:
+        return 16_777_216  # 4096 * 4096
+    return 1_048_576  # 1024 * 1024
+
+
+def _decode_webp_to_pil(webp_bytes: bytes) -> Image.Image:
+    """Decode WebP bytes back into a PIL Image (for LOCAL/AI_HORDE modes)."""
+    return Image.open(BytesIO(webp_bytes))
+
+
+async def _process_attachment(
+    cog: MixinMeta,
+    message: Message,
+    attachment,
+    mode: ScanImageMode,
+    max_pixels: int,
+):
+    """Core image-attachment processing with double-keyed cache lookup.
+
+    Returns the processed content (list of content parts for LLM mode,
+    or a string for caption modes), or ``None`` on failure.
+    """
+    raw_bytes = await _fetch_attachment_bytes(attachment)
+
+    # Compute hashes for the double-keyed cache
+    pixel_hash = compute_pixel_hash(raw_bytes)
+
+    # Check the processed cache first
+    cached_processed = processed_image_cache.get(raw_bytes, pixel_hash, max_pixels)
+    if cached_processed is not None:
+        logger.debug(
+            f"[ImageScan] Processed cache hit for attachment {attachment.filename} "
+            f"in message {message.id}"
+        )
+    else:
+        # Process: decode, scale, re-encode as WebP
+        cached_processed = process_image_for_llm(raw_bytes, max_pixels)
+        if cached_processed is None:
+            logger.warning(
+                f"[ImageScan] Failed to process attachment {attachment.filename} "
+                f"in message {message.id}"
+            )
+            return None
+        # Store in the double-keyed processed cache
+        processed_image_cache.set(raw_bytes, pixel_hash, max_pixels, cached_processed)
+
+    # Dispatch by mode
+    if mode == ScanImageMode.LLM:
+        content = []
+        data_url = build_webp_data_url(cached_processed)
+        content.append(
+            {"type": "image_url", "image_url": {"url": data_url}}
+        )
+        if message.content != "":
+            content.append({"type": "text", "text": format_text_content(message)})
+        return content
+
+    elif mode == ScanImageMode.AI_HORDE:
+        pil_image = _decode_webp_to_pil(cached_processed)
+        return await process_image_ai_horde(cog, message, pil_image)
+
+    elif mode == ScanImageMode.LOCAL:
+        try:
+            from aiuser.messages_list.converter.image.local import \
+                process_image_locally
+            pil_image = _decode_webp_to_pil(cached_processed)
+            return await process_image_locally(cog, message, pil_image)
+        except ImportError:
+            logger.exception(
+                "Local image scanning dependencies not installed, "
+                "check cog README for instructions"
+            )
+            return None
+
+    return None
+
+
 async def transcribe_image(cog: MixinMeta, message: Message):
+    """Transcribe the first attachment of a Discord message.
+
+    Uses the unified image processing pipeline with double-keyed caching
+    to avoid redundant downloads and reprocessing.
+    """
     config = cog.config
     attachment = message.attachments[0]
     mode = ScanImageMode(await config.guild(message.guild).scan_images_mode())
+    config_max_pixels = await config.guild(message.guild).max_image_pixels()
+    max_pixels = _resolve_max_pixels(mode, config_max_pixels)
 
-    buffer = BytesIO()
-    await attachment.save(buffer)
-
-    # The buffer is converted to a NumPy array, then decoded by OpenCV
-    file_bytes = np.frombuffer(buffer.getvalue(), dtype=np.uint8)
-    # cv2.IMREAD_COLOR ignores transparency, use cv2.IMREAD_UNCHANGED to keep it
-    cv_image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-
-    if cv_image is None:
-        logger.error(f"Failed to decode image from attachment in message {message.id}")
-        return None
-
-    max_pixels = await config.guild(message.guild).max_image_pixels()
-    
-    if max_pixels is not None:
-        maxsize = max_pixels
-    elif mode == ScanImageMode.LLM:
-        maxsize = 16777216 # 4096 * 4096
-    else:
-        maxsize = 1048576 # 1024 * 1024
-
-    scaled_cv_image = scale_image(cv_image, maxsize)
-
-    content = await process_image(cog, message, scaled_cv_image, mode)
+    content = await _process_attachment(cog, message, attachment, mode, max_pixels)
 
     if content:
-        # Use channel-scoped cache key to prevent cross-channel collisions
         cache_key = f"{message.channel.id}:{message.id}"
         cog.cached_messages[cache_key] = content
-        # Also cache under plain message.id for backward compatibility
         cog.cached_messages[message.id] = content
 
     return content
 
 
-async def process_image(cog: MixinMeta, message: Message, cv_image: np.ndarray, mode: ScanImageMode):
-    if mode == ScanImageMode.AI_HORDE:
-        image = Image.fromarray(cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB))
-        return await process_image_ai_horde(cog, message, image)
-    elif mode == ScanImageMode.LOCAL:
-        try:
-            from aiuser.messages_list.converter.image.local import \
-                process_image_locally
-            image = Image.fromarray(cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB))
-            return await process_image_locally(cog, message, image)
-        except ImportError:
-            logger.exception("Local image scanning dependencies not installed, check cog README for instructions")
-            return None
-    elif mode == ScanImageMode.LLM:
-        content = []
+async def transcribe_single(
+    cog: MixinMeta, message: Message, attachment
+) -> list | str | None:
+    """Transcribe a single image attachment using the unified pipeline.
 
-        # 1. Define the WebP quality. 1-100. Higher is better quality and larger size.
-        #    85-95 is a great range for a good balance. 90 is a solid default.
-        webp_quality = 90
-
-        # 2. Encode the OpenCV image to WebP format in memory
-        #    Note the '.webp' extension and the quality parameter.
-        params = [cv2.IMWRITE_WEBP_QUALITY, webp_quality]
-        success, encoded_image = cv2.imencode('.webp', cv_image, params)
-
-        if not success:
-            logger.error("Failed to encode image to WebP format")
-            return None
-
-        # Base64 encode the bytes of the PNG
-        base64_image = base64.b64encode(encoded_image.tobytes()).decode('utf-8')
-
-        content.append(
-            {"type": "image_url", "image_url": {
-             "url": f"data:image/webp;base64,{base64_image}"}
-             })
-        
-        if message.content != "":
-            content.append({"type": "text", "text": format_text_content(message)})
-        return content
-    else:
-        return None
-
-
-def scale_image(cv_image: np.ndarray, max_pixel_count: int) -> np.ndarray:
+    Used by ``transcribe_image_single`` in ``converter.py`` for
+    multi-attachment messages.  Returns the processed content.
     """
-    Scales down an OpenCV image (NumPy array) to not exceed a maximum
-    pixel count, preserving aspect ratio.
+    config = cog.config
+    mode = ScanImageMode(await config.guild(message.guild).scan_images_mode())
+    config_max_pixels = await config.guild(message.guild).max_image_pixels()
+    max_pixels = _resolve_max_pixels(mode, config_max_pixels)
 
-    :param cv_image: The input OpenCV image (as a NumPy array).
-    :param max_pixel_count: The maximum total number of pixels (width * height).
-    :return: The scaled OpenCV image (as a NumPy array).
+    return await _process_attachment(cog, message, attachment, mode, max_pixels)
+
+
+# Keep scale_image available for any external callers that import it directly.
+def scale_image(cv_image: np.ndarray, max_pixel_count: int) -> np.ndarray:
+    """Scale *cv_image* down so its pixel count ≤ *max_pixel_count*.
+
+    Preserves aspect ratio.  Returns the original if already within limits.
     """
     original_height, original_width = cv_image.shape[:2]
     original_pixel_count = original_width * original_height
@@ -117,14 +171,11 @@ def scale_image(cv_image: np.ndarray, max_pixel_count: int) -> np.ndarray:
         logger.debug("Image is already smaller than the max pixel count. No scaling needed.")
         return cv_image
 
-    # Calculate scaling ratio
     scale_ratio = np.sqrt(max_pixel_count / original_pixel_count)
     new_width = int(original_width * scale_ratio)
     new_height = int(original_height * scale_ratio)
 
-    # Resize using INTER_AREA for high-quality shrinking
     scaled_image = cv2.resize(
         cv_image, (new_width, new_height), interpolation=cv2.INTER_AREA
     )
-
     return scaled_image

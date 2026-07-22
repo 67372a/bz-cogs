@@ -19,7 +19,12 @@ from aiuser.types.openrouter_types import (
     DirectImageEditParameters,
     deserialize_parameters,
 )
-from aiuser.utils.image_cache import image_cache
+from aiuser.utils.image_cache import image_cache, processed_image_cache
+from aiuser.utils.image_processing import (
+    compute_pixel_hash,
+    process_image_for_llm,
+    build_webp_data_url,
+)
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
@@ -356,9 +361,11 @@ class EditImageToolCall(ToolCall):
         return image_urls
 
     async def _download_and_encode_images(self, image_urls: List[str]) -> List[dict]:
-        """Download reference images and encode them as base64 data URLs.
+        """Download reference images, process via the unified pipeline, and encode.
 
-        Uses a global TTL cache keyed by SHA-256 of the URL for up to 30 minutes.
+        Uses the URL-level cache to avoid re-downloading and the double-keyed
+        ``processed_image_cache`` to avoid re-processing.  The returned
+        content parts carry ``data:image/webp;base64,…`` data URLs.
 
         Args:
             image_urls: List of image URLs to download.
@@ -367,89 +374,86 @@ class EditImageToolCall(ToolCall):
             List of image_url content part dicts for the multimodal messages array.
         """
         content_parts: List[dict] = []
+        max_pixels = 16_777_216  # 4096×4096 default for LLM context
 
         for url in image_urls:
-            # Check cache first
+            raw_bytes: Optional[bytes] = None
+
+            # ── Step 1: obtain raw bytes (URL cache → download) ──
             cached = image_cache.get(url)
             if cached is not None:
-                logger.info(
-                    f"[EditImage] Cache hit for reference image {url}"
-                )
-                # Re-encode from cached bytes — need content type from the URL extension
-                ext = url.rsplit(".", 1)[-1].split("?")[0].lower()
-                mime_map = {
-                    "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
-                    "gif": "image/gif", "webp": "image/webp", "bmp": "image/bmp",
-                    "avif": "image/avif",
-                }
-                content_type = mime_map.get(ext, "image/png")
-                encoded = base64.b64encode(cached).decode("utf-8")
-                data_url = f"data:{content_type};base64,{encoded}"
-                content_parts.append({
-                    "type": "image_url",
-                    "image_url": {"url": data_url},
-                })
-                logger.info(
-                    f"[EditImage] Re-encoded cached image from {url}: {len(cached)} bytes"
-                )
+                logger.info(f"[EditImage] URL cache hit for {url}")
+                raw_bytes = cached
+            else:
+                try:
+                    timeout = aiohttp.ClientTimeout(total=30)
+                    async with aiohttp.ClientSession(timeout=timeout) as session:
+                        async with session.get(
+                            url, headers={"User-Agent": "bz-cogs/aiuser"}
+                        ) as response:
+                            if response.status != 200:
+                                logger.warning(
+                                    f"[EditImage] Failed to download reference image "
+                                    f"from {url}: HTTP {response.status}"
+                                )
+                                continue
+
+                            content_type = response.headers.get("Content-Type", "")
+                            if not content_type.startswith("image/"):
+                                logger.warning(
+                                    f"[EditImage] URL {url} is not an image "
+                                    f"(Content-Type: {content_type})"
+                                )
+                                continue
+
+                            data = await response.read()
+                            if len(data) > MAX_IMAGE_DOWNLOAD_SIZE:
+                                logger.warning(
+                                    f"[EditImage] Reference image from {url} exceeds "
+                                    f"max size ({len(data)} > {MAX_IMAGE_DOWNLOAD_SIZE} bytes)"
+                                )
+                                continue
+
+                            image_cache.set(url, data, content_type)
+                            raw_bytes = data
+                except aiohttp.ClientError as e:
+                    logger.warning(f"[EditImage] Network error: {e}")
+                    continue
+                except asyncio.TimeoutError:
+                    logger.warning(f"[EditImage] Timeout: {url}")
+                    continue
+                except Exception as e:
+                    logger.warning(f"[EditImage] Unexpected error: {e}")
+                    continue
+
+            if raw_bytes is None:
                 continue
 
-            try:
-                timeout = aiohttp.ClientTimeout(total=30)
-                async with aiohttp.ClientSession(timeout=timeout) as session:
-                    async with session.get(
-                        url, headers={"User-Agent": "bz-cogs/aiuser"}
-                    ) as response:
-                        if response.status != 200:
-                            logger.warning(
-                                f"[EditImage] Failed to download reference image "
-                                f"from {url}: HTTP {response.status}"
-                            )
-                            continue
-
-                        content_type = response.headers.get("Content-Type", "")
-                        if not content_type.startswith("image/"):
-                            logger.warning(
-                                f"[EditImage] URL {url} is not an image "
-                                f"(Content-Type: {content_type})"
-                            )
-                            continue
-
-                        data = await response.read()
-                        if len(data) > MAX_IMAGE_DOWNLOAD_SIZE:
-                            logger.warning(
-                                f"[EditImage] Reference image from {url} exceeds "
-                                f"max size ({len(data)} > {MAX_IMAGE_DOWNLOAD_SIZE} bytes)"
-                            )
-                            continue
-
-                        # Store in cache before encoding
-                        image_cache.set(url, data, content_type)
-
-                        encoded = base64.b64encode(data).decode("utf-8")
-                        data_url = f"data:{content_type};base64,{encoded}"
-                        content_parts.append({
-                            "type": "image_url",
-                            "image_url": {"url": data_url},
-                        })
-                        logger.info(
-                            f"[EditImage] Downloaded and encoded reference image "
-                            f"from {url}: {len(data)} bytes"
-                        )
-            except aiohttp.ClientError as e:
-                logger.warning(
-                    f"[EditImage] Network error downloading reference image "
-                    f"from {url}: {e}"
+            # ── Step 2: processed cache → pipeline ──
+            pixel_hash = compute_pixel_hash(raw_bytes)
+            cached_processed = processed_image_cache.get(raw_bytes, pixel_hash, max_pixels)
+            if cached_processed is not None:
+                data_url = build_webp_data_url(cached_processed)
+                logger.info(
+                    f"[EditImage] Processed cache hit for {url}: "
+                    f"{len(cached_processed)} bytes"
                 )
-            except asyncio.TimeoutError:
-                logger.warning(
-                    f"[EditImage] Timeout downloading reference image from {url}"
+            else:
+                processed = process_image_for_llm(raw_bytes, max_pixels)
+                if processed is None:
+                    logger.warning(f"[EditImage] Processing failed for {url}")
+                    continue
+                processed_image_cache.set(raw_bytes, pixel_hash, max_pixels, processed)
+                data_url = build_webp_data_url(processed)
+                logger.info(
+                    f"[EditImage] Processed {url}: "
+                    f"{len(raw_bytes)} → {len(processed)} bytes WebP"
                 )
-            except Exception as e:
-                logger.warning(
-                    f"[EditImage] Unexpected error downloading reference image "
-                    f"from {url}: {e}"
-                )
+
+            content_parts.append({
+                "type": "image_url",
+                "image_url": {"url": data_url},
+            })
 
         return content_parts
 
@@ -667,16 +671,38 @@ class EditImageToolCall(ToolCall):
         # the complete content parts (image_url + text) so the pipeline can
         # pass them directly as the tool result.
         content_parts: List[Dict] = []
+        max_pixels = 16_777_216  # 4096×4096 default for LLM context
 
         # Decode and store images for later sending by the response layer,
-        # and build image_url content parts for the multimodal function response.
+        # and build processed content parts for the multimodal function response.
         for image_data_url in images:
             try:
                 decoded = self._decode_image_data(image_data_url)
                 if decoded:
+                    # Keep original bytes for Discord attachments
                     self.generated_images.append(decoded)
+
+                    # Build a processed data URL for the LLM function response
+                    p_hash = compute_pixel_hash(decoded["bytes"])
+                    cached_processed = processed_image_cache.get(
+                        decoded["bytes"], p_hash, max_pixels
+                    )
+                    if cached_processed is None:
+                        cached_processed = process_image_for_llm(
+                            decoded["bytes"], max_pixels
+                        )
+                        if cached_processed is not None:
+                            processed_image_cache.set(
+                                decoded["bytes"], p_hash, max_pixels, cached_processed
+                            )
+
+                    if cached_processed is not None:
+                        processed_data_url = build_webp_data_url(cached_processed)
+                    else:
+                        processed_data_url = image_data_url  # fallback
+
                     content_parts.append({
-                        "image": image_data_url,
+                        "image": processed_data_url,
                     })
             except Exception as e:
                 logger.error(
@@ -749,22 +775,50 @@ class EditImageToolCall(ToolCall):
     def _extract_images_from_response(self, response) -> List[str]:
         """Extract base64 image data URLs from an OpenRouter ChatCompletion response.
 
-        OpenRouter returns images in the `model_extra` dict under the key "images".
+        OpenRouter returns images in the ``model_extra`` dict under the key "images".
         Each image entry has the format:
             {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
+
+        Duplicate images are filtered using a two-tier strategy:
+          1. SHA-256 of the base64 payload string (catches byte-identical duplicates).
+          2. SHA-256 of the decoded image's canonical RGBA pixel data (catches
+             visually-identical images that differ only in file-level encoding).
 
         Args:
             response: The ChatCompletion response object.
 
         Returns:
-            List of base64 data URL strings (e.g., "data:image/png;base64,...").
+            Deduplicated list of base64 data URL strings (e.g., "data:image/png;base64,...").
         """
         images: List[str] = []
+        seen_byte_hashes: set = set()
+        seen_pixel_hashes: set = set()
 
         if not response.choices:
             return images
 
         message = response.choices[0].message
+
+        def _is_duplicate_data_url(url: str) -> bool:
+            """Return True if this image was already seen (byte or pixel hash)."""
+            try:
+                sep = url.find(",")
+                if sep == -1:
+                    return False
+                payload = url[sep + 1:]
+                byte_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+                if byte_hash in seen_byte_hashes:
+                    return True
+                raw_bytes = base64.b64decode(payload)
+                pixel_hash = compute_pixel_hash(raw_bytes)
+                if pixel_hash and pixel_hash in seen_pixel_hashes:
+                    return True
+                seen_byte_hashes.add(byte_hash)
+                if pixel_hash:
+                    seen_pixel_hashes.add(pixel_hash)
+                return False
+            except Exception:
+                return False
 
         # Primary extraction: model_extra.images
         model_extra = getattr(message, "model_extra", None)
@@ -773,29 +827,28 @@ class EditImageToolCall(ToolCall):
             if raw_images and isinstance(raw_images, list):
                 for img_entry in raw_images:
                     if isinstance(img_entry, dict):
-                        # Format: {"type": "image_url", "image_url": {"url": "data:..."}}
                         image_url_dict = img_entry.get("image_url") or img_entry.get(
                             "imageUrl"
                         )
                         if isinstance(image_url_dict, dict):
                             url = image_url_dict.get("url")
                             if url and isinstance(url, str) and url.startswith("data:"):
-                                images.append(url)
+                                if not _is_duplicate_data_url(url):
+                                    images.append(url)
             elif raw_images and isinstance(raw_images, str):
-                # Sometimes it might be a single image URL string
                 if raw_images.startswith("data:"):
-                    images.append(raw_images)
+                    if not _is_duplicate_data_url(raw_images):
+                        images.append(raw_images)
 
         # Secondary extraction: the message content may contain image URLs for some providers
         content = getattr(message, "content", None)
         if content and isinstance(content, str):
-            # Look for data URLs in the content text
             data_url_pattern = re.compile(
                 r"(data:image/[a-zA-Z]+;base64,[^\s\"'\]\)]+)"
             )
             for match in data_url_pattern.finditer(content):
                 url = match.group(1)
-                if url not in images:
+                if not _is_duplicate_data_url(url):
                     images.append(url)
 
         return images

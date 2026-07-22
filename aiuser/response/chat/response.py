@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import io
 import logging
 import math
@@ -330,11 +331,19 @@ def _cache_generated_images_in_response(
     sent_message: discord.Message,
     images: List[Dict],
 ):
-    """Cache generated image data URLs into the message cache so they're
+    """Cache processed image data URLs into the message cache so they're
     available when the bot's response message is re-ingested on future turns.
 
-    Stores image_url content parts under the sent message's channel-scoped key.
+    Uses the unified image processing pipeline so re-ingested images match
+    the same resize/compress treatment as all other LLM-bound images.
     """
+    from aiuser.utils.image_cache import processed_image_cache
+    from aiuser.utils.image_processing import (
+        compute_pixel_hash,
+        process_image_for_llm,
+        build_webp_data_url,
+    )
+
     if not images or not sent_message:
         return
 
@@ -342,10 +351,31 @@ def _cache_generated_images_in_response(
     content_parts: List[dict] = []
     client_text = getattr(sent_message.embeds[0], "description", "") if sent_message.embeds else ""
 
+    max_pixels = 16_777_216  # 4096×4096 default for LLM context
+
     for img_data in images:
-        data_url = img_data.get("data_url")
-        if data_url:
-            content_parts.append({"type": "image_url", "image_url": {"url": data_url}})
+        raw_bytes = img_data.get("bytes")
+        if raw_bytes:
+            pixel_hash = compute_pixel_hash(raw_bytes)
+            cached_processed = processed_image_cache.get(raw_bytes, pixel_hash, max_pixels)
+            if cached_processed is None:
+                cached_processed = process_image_for_llm(raw_bytes, max_pixels)
+                if cached_processed is not None:
+                    processed_image_cache.set(raw_bytes, pixel_hash, max_pixels, cached_processed)
+
+            if cached_processed is not None:
+                data_url = build_webp_data_url(cached_processed)
+            else:
+                # Fallback to the original data_url if processing failed
+                data_url = img_data.get("data_url")
+
+            if data_url:
+                content_parts.append({"type": "image_url", "image_url": {"url": data_url}})
+        else:
+            # Non-bytes entries (e.g. attach_files) — use data_url directly
+            data_url = img_data.get("data_url")
+            if data_url:
+                content_parts.append({"type": "image_url", "image_url": {"url": data_url}})
 
     if not content_parts:
         return
@@ -360,6 +390,6 @@ def _cache_generated_images_in_response(
     cog.cached_messages[sent_message.id] = content_parts
 
     logger.info(
-        f"[Cache] Cached {len(content_parts)} content part(s) for future re-ingestion "
+        f"[Cache] Cached {len(content_parts)} processed content part(s) for future re-ingestion "
         f"of message {sent_message.id} (channel {ctx.channel.id})"
     )
