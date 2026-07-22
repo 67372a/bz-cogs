@@ -264,8 +264,13 @@ def test_cache_evicts_oldest_beyond_limit():
     assert c[4] == 4
 
 
-def test_cache_missing_key_returns_none():
+def test_cache_missing_key_raises_keyerror():
+    """Cache now follows the dict contract: [] raises KeyError, .get() returns None."""
     Cache = cache_mod.Cache
     c = Cache(limit=2)
-    assert c["missing"] is None
+    try:
+        c["missing"]
+        assert False, "Expected KeyError for missing key"
+    except KeyError:
+        pass
     assert c.get("missing") is None

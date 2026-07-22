@@ -96,6 +96,15 @@ class AIUser(
         if self.openai_client:
             await self.openai_client.close()
         self.random_message_trigger.cancel()
+        # Cancel any in-flight per-channel queue processors so they don't
+        # keep running (and calling dispatch_response with a closed client)
+        # after the cog has been unloaded.
+        for task in self.processing_tasks.values():
+            task.cancel()
+        if self.processing_tasks:
+            await asyncio.gather(*self.processing_tasks.values(), return_exceptions=True)
+        self.processing_tasks.clear()
+        self.message_queues.clear()
 
     async def red_delete_data_for_user(self, *, requester, user_id: int):
         for guild in self.bot.guilds:
@@ -121,7 +130,14 @@ class AIUser(
     @commands.Cog.listener()
     async def on_red_api_tokens_update(self, service_name, _):
         if service_name in ["openai", "openrouter"]:
+            old_client = self.openai_client
             self.openai_client = await setup_openai_client(self.bot, self.config)
+            # Close the previous client so its httpx connection pool isn't leaked
+            if old_client and old_client is not self.openai_client:
+                try:
+                    await old_client.close()
+                except Exception:
+                    logger.debug("Failed to close previous OpenAI client", exc_info=True)
 
     @app_commands.command(name="chat")
     @app_commands.describe(text="The prompt you want to send to the AI.")

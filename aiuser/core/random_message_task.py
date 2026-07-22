@@ -23,7 +23,13 @@ class RandomMessageTask(MixinMeta):
         if not self.bot.is_ready():
             return
 
-        for guild_id, channels in self.channels_whitelist.items():
+        # Shuffle so a single consistently-eligible (or broken) guild cannot
+        # permanently starve the others — at most one random message is sent
+        # per cycle, but every guild gets a fair chance over time.
+        guild_items = list(self.channels_whitelist.items())
+        random.shuffle(guild_items)
+
+        for guild_id, channels in guild_items:
             try:
                 last, ctx = await self.get_discord_context(guild_id, channels)
             except Exception:
@@ -33,16 +39,17 @@ class RandomMessageTask(MixinMeta):
             channel = last.channel
 
             if not await self.check_if_valid_for_random_message(guild, last):
-                return
-            
+                continue
+
             # Don't send random messages if the bot is currently processing responses in this channel
             if channel.id in self.processing_tasks:
-                return
+                continue
 
             topics = await self.config.guild(guild).random_messages_prompts() or None
             if not topics:
-                return logger.warning(
+                logger.warning(
                     f"No random message topics were found in {guild.name}, skipping")
+                continue
 
             prompt = await self.config.channel(channel).custom_text_prompt() or await self.config.guild(guild).custom_text_prompt() or await self.config.custom_text_prompt() or DEFAULT_PROMPT
             messages_list = await create_messages_list(self, ctx, prompt=prompt, history=False)
@@ -53,6 +60,7 @@ class RandomMessageTask(MixinMeta):
             await messages_list.add_system(f"Using the persona above, follow these instructions: {topic}", index=len(messages_list) + 1)
             messages_list.can_reply = False
 
+            # Only one random message per cycle
             return await self.queue_response(ctx, messages_list)
 
     async def get_discord_context(self, guild_id: int, channels: list):

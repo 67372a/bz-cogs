@@ -1,6 +1,7 @@
 # response/response_handler.py
 import logging
 
+import discord
 from redbot.core import commands
 
 from aiuser.messages_list.messages import create_messages_list
@@ -33,6 +34,13 @@ async def process_image_response(cog: MixinMeta, ctx: commands.Context) -> bool:
         success = await create_image_response(cog, ctx, generator)
         return success
     except Exception:
+        logger.exception("Error generating image response")
         return False
     finally:
-        await ctx.message.remove_reaction("🧐", ctx.me)
+        # The message may have been deleted or perms changed while the image
+        # was being generated; failing to remove the reaction must not mask
+        # the actual result.
+        try:
+            await ctx.message.remove_reaction("🧐", ctx.me)
+        except discord.HTTPException:
+            logger.debug("Could not remove 🧐 reaction", exc_info=True)

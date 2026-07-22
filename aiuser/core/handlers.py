@@ -88,12 +88,23 @@ async def handle_message(cog: MixinMeta, message: discord.Message):
 async def get_ratelimit_reset(cog: MixinMeta) -> Optional[datetime]:
     """Parse the configured ratelimit reset timestamp.
 
-    Returns None if the value is missing or malformed instead of raising,
-    so a corrupt config value can never break message handling.
+    Accepts the current epoch-seconds format (timezone-independent) as well
+    as the legacy ``%Y-%m-%d %H:%M:%S`` local-time string for backward
+    compatibility.  Returns None if the value is missing or malformed
+    instead of raising, so a corrupt config value can never break message
+    handling.
     """
     raw = await cog.config.ratelimit_reset()
+    if raw is None:
+        return None
     try:
-        return datetime.strptime(raw, "%Y-%m-%d %H:%M:%S")
+        # Current format: epoch seconds
+        return datetime.fromtimestamp(float(raw))
+    except (ValueError, TypeError, OSError, OverflowError):
+        pass
+    try:
+        # Legacy format: naive local-time string
+        return datetime.strptime(str(raw), "%Y-%m-%d %H:%M:%S")
     except (ValueError, TypeError):
         logger.warning(f"Ignoring malformed ratelimit_reset value: {raw!r}")
         return None

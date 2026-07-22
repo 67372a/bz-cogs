@@ -145,9 +145,10 @@ def create_ratelimit_hook(config: Config) -> Callable[[httpx.Response], None]:
                 f"OpenAI ratelimit reached! Next ratelimit reset at {timestamp}. "
                 "(Try a non-trial key)"
             )
-            await config.ratelimit_reset.set(
-                timestamp.strftime("%Y-%m-%d %H:%M:%S")
-            )
+            # Stored as epoch seconds (timezone-independent); older configs
+            # may still hold the legacy "%Y-%m-%d %H:%M:%S" string format,
+            # which the reader in handlers.py continues to accept.
+            await config.ratelimit_reset.set(str(timestamp.timestamp()))
 
     return update_ratelimit_hook
 
