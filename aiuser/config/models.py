@@ -157,18 +157,14 @@ MODELS_LIMITS = {
     "deephermes-3-llama-3-8b-preview": 131072,
     "deepseek-chat": 163840,
     "deepseek-chat-v3-0324": 163840,
-    "deepseek-chat-v3-0324": 64000,
     "deepseek-coder": 128000,
-    "deepseek-prover-v2": 131072,
     "deepseek-prover-v2": 163840,
     "deepseek-r1": 163840,
     "deepseek-r1-distill-llama-70b": 131072,
-    "deepseek-r1-distill-llama-70b": 8192,
     "deepseek-r1-distill-llama-8b": 32000,
     "deepseek-r1-distill-qwen-1.5b": 131072,
     "deepseek-r1-distill-qwen-14b": 64000,
     "deepseek-r1-distill-qwen-32b": 131072,
-    "deepseek-r1-distill-qwen-32b": 16000,
     "deepseek-r1-zero": 163840,
     "deepseek-r1t-chimera": 163840,
     "deepseek-v3-base": 163840,
@@ -207,12 +203,9 @@ MODELS_LIMITS = {
     "gemma-3-12b-it": 131072,
     "gemma-3-1b-it": 32768,
     "gemma-3-27b-it": 131072,
-    "gemma-3-27b-it": 96000,
     "gemma-3-4b-it": 131072,
-    "glm-4-32b": 32000,
     "glm-4-32b": 32768,
     "glm-4-9b": 32000,
-    "glm-z1-32b": 32000,
     "glm-z1-32b": 32768,
     "glm-z1-9b": 32000,
     "glm-z1-rumination-32b": 32000,
@@ -275,12 +268,10 @@ MODELS_LIMITS = {
     "llama-3-8b-instruct": 8192,
     "llama-3-lumimaid-70b": 8192,
     "llama-3-lumimaid-8b": 24576,
-    "llama-3.1-405b": 32768,
-    "llama-3.1-405b": 64000,
-    "llama-3.1-405b-instruct": 32768,
+    "llama-3.1-405b": 131072,
+    "llama-3.1-405b-instruct": 131072,
     "llama-3.1-70b-instruct": 131072,
     "llama-3.1-8b-instruct": 131072,
-    "llama-3.1-8b-instruct": 16384,
     "llama-3.1-lumimaid-70b": 16384,
     "llama-3.1-lumimaid-8b": 32768,
     "llama-3.1-nemotron-70b-instruct": 131072,
@@ -288,18 +279,13 @@ MODELS_LIMITS = {
     "llama-3.1-sonar-large-128k-online": 127072,
     "llama-3.1-sonar-small-128k-online": 127072,
     "llama-3.2-11b-vision-instruct": 131072,
-    "llama-3.2-1b-instruct": 131000,
     "llama-3.2-1b-instruct": 131072,
     "llama-3.2-3b-instruct": 131072,
-    "llama-3.2-3b-instruct": 20000,
     "llama-3.2-90b-vision-instruct": 131072,
     "llama-3.3-70b-instruct": 128000,
-    "llama-3.3-70b-instruct": 8000,
     "llama-3.3-nemotron-super-49b-v1": 131072,
     "llama-4-maverick": 1048576,
-    "llama-4-maverick": 256000,
     "llama-4-scout": 1048576,
-    "llama-4-scout": 512000,
     "llama-guard-2-8b": 8192,
     "llama-guard-3-8b": 131072,
     "llama-guard-4-12b": 163840,
@@ -314,7 +300,6 @@ MODELS_LIMITS = {
     "midnight-rose-70b": 4096,
     "minimax-01": 1000192,
     "ministral-3b": 131072,
-    "ministral-8b": 128000,
     "ministral-8b": 131072,
     "mistral-7b-instruct": 32768,
     "mistral-7b-instruct-v0.1": 2824,
@@ -325,13 +310,10 @@ MODELS_LIMITS = {
     "mistral-large-2411": 131072,
     "mistral-medium": 32768,
     "mistral-nemo": 128000,
-    "mistral-nemo": 98304,
     "mistral-saba": 32768,
     "mistral-small": 32768,
-    "mistral-small-24b-instruct-2501": 28000,
     "mistral-small-24b-instruct-2501": 32768,
     "mistral-small-3.1-24b-instruct": 131072,
-    "mistral-small-3.1-24b-instruct": 96000,
     "mistral-tiny": 32768,
     "mixtral-8x22b-instruct": 65536,
     "mixtral-8x7b-instruct": 32768,
@@ -378,9 +360,7 @@ MODELS_LIMITS = {
     "qwen-2.5-72b-instruct": 32768,
     "qwen-2.5-7b-instruct": 32768,
     "qwen-2.5-coder-32b-instruct": 131072,
-    "qwen-2.5-coder-32b-instruct": 32768,
     "qwen-2.5-vl-72b-instruct": 32768,
-    "qwen-2.5-vl-7b-instruct": 32768,
     "qwen-2.5-vl-7b-instruct": 64000,
     "qwen-max": 32768,
     "qwen-plus": 131072,
@@ -389,10 +369,8 @@ MODELS_LIMITS = {
     "qwen-vl-plus": 7500,
     "qwen2.5-coder-7b-instruct": 32768,
     "qwen2.5-vl-32b-instruct": 128000,
-    "qwen2.5-vl-32b-instruct": 8192,
     "qwen2.5-vl-3b-instruct": 64000,
     "qwen2.5-vl-72b-instruct": 131072,
-    "qwen2.5-vl-72b-instruct": 32000,
     "qwen3-0.6b-04-28": 32000,
     "qwen3-1.7b": 32000,
     "qwen3-14b": 40960,
@@ -401,12 +379,9 @@ MODELS_LIMITS = {
     "qwen3-32b": 40960,
     "qwen3-4b": 128000,
     "qwen3-8b": 128000,
-    "qwen3-8b": 40960,
     "qwerky-72b": 32768,
     "qwq-32b": 131072,
-    "qwq-32b": 40000,
     "qwq-32b-arliai-rpr-v1": 32768,
-    "qwq-32b-preview": 16384,
     "qwq-32b-preview": 32768,
     "r1-1776": 128000,
     "reka-flash-3": 32768,
@@ -429,3 +404,19 @@ MODELS_LIMITS = {
     "yi-large": 32768,
     "zephyr-7b-beta": 4096
 }
+
+# Model name substrings whose providers support the `parallel_tool_calls`
+# request parameter.  Matching is case-insensitive against the model name.
+PARALLEL_TOOL_CALLS_MODEL_HINTS = ("gemini",)
+
+
+def supports_parallel_tool_calls(model: str) -> bool:
+    """Return True if the given model is known to support parallel tool calls.
+
+    Uses substring hints (e.g. any Gemini variant) instead of hardcoded
+    version-specific names so renamed/new variants keep working.
+    """
+    if not model:
+        return False
+    lowered = model.lower()
+    return any(hint in lowered for hint in PARALLEL_TOOL_CALLS_MODEL_HINTS)

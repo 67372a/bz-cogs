@@ -62,6 +62,25 @@ class OwnerSettings(MixinMeta):
         )
         return await ctx.send(embed=embed)
 
+    @aiuserowner.command(name="payloadlogging")
+    async def toggle_payload_logging(self, ctx: commands.Context):
+        """Toggles verbose logging of full LLM request payloads (message contents).
+
+        When enabled, the complete prompt content sent to the LLM API is
+        written to DEBUG logs. Disabled by default to avoid persisting
+        user message contents in log files.
+        """
+        current_value = not await self.config.log_full_payloads()
+        await self.config.log_full_payloads.set(current_value)
+        embed = discord.Embed(
+            title="Full payload logging is now:",
+            description=f"{current_value}",
+            color=await ctx.embed_color(),
+        )
+        if current_value:
+            embed.set_footer(text="⚠️ User message contents will be written to logs!")
+        return await ctx.send(embed=embed)
+
     @aiuserowner.command()
     async def endpoint(self, ctx: commands.Context, url: Optional[str]):
         """Sets the OpenAI endpoint to a custom url (must be OpenAI API compatible)

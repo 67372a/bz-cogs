@@ -68,7 +68,7 @@ class AttachFilesToolCall(ToolCall):
 
     Attached files are stored internally and collected by the pipeline after
     execution, flowing into the same response path as generated images
-    (``collected_images`` -> ``PipelineResult.images`` -> Discord file
+    (``collected_attachments`` -> ``PipelineResult.images`` -> Discord file
     attachments).
     """
 

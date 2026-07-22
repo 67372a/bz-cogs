@@ -14,7 +14,9 @@ logger = logging.getLogger("red.bz_cogs.aiuser")
 async def is_valid_message(cog: MixinMeta, ctx: commands.Context) -> bool:
     """
     Main validation chain that runs all checks in sequence.
-    Returns (is_valid, reason) tuple.
+
+    Returns True if the message passes every validator, False otherwise.
+    Failure reasons are logged by the individual validators.
     """
     validation_chain = [
         (check_openai_client, "OpenAI Client"),

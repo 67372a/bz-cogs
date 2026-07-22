@@ -56,11 +56,12 @@ class AIUser(
         self.message_queues: dict[int, asyncio.Queue] = {}
         self.processing_tasks: dict[int, asyncio.Task] = {}
         # Track when each channel last had a response processed (for cache window)
-        self.last_response_at: dict[int, float] = {}
+        # Bounded LRU caches to prevent unbounded memory growth over long uptimes
+        self.last_response_at: Cache[int, float] = Cache(limit=500)
         # PDF annotation cache: (channel_id, originating_user_message_id) -> list[dict]
-        self.pdf_annotations: dict[tuple[int, int], list[dict]] = {}
+        self.pdf_annotations: Cache[tuple[int, int], list[dict]] = Cache(limit=200)
         # Backfill anchors: channel_id -> anchor message for the next trigger
-        self.backfill_anchors: dict[int, discord.Message] = {}
+        self.backfill_anchors: Cache[int, discord.Message] = Cache(limit=500)
 
         self.config.register_member(**DEFAULT_MEMBER)
         self.config.register_role(**DEFAULT_ROLE)
@@ -101,8 +102,21 @@ class AIUser(
             member = guild.get_member(user_id)
             if member:
                 await self.config.member(member).clear()
-                # TODO: remove user messages from cache instead of clearing the whole cache
-                self.cached_messages = Cache(limit=100)
+            else:
+                # The user may have left the guild; clear any stored member
+                # data by ID so ex-member data does not persist.
+                await self.config.member_from_ids(guild.id, user_id).clear()
+
+        # Remove the user from the global opt-in / opt-out lists
+        async with self.config.optin() as optin:
+            if user_id in optin:
+                optin.remove(user_id)
+        async with self.config.optout() as optout:
+            if user_id in optout:
+                optout.remove(user_id)
+
+        # TODO: remove user messages from cache instead of clearing the whole cache
+        self.cached_messages = Cache(limit=100)
 
     @commands.Cog.listener()
     async def on_red_api_tokens_update(self, service_name, _):
@@ -146,18 +160,27 @@ class AIUser(
         Sequentially processes requests in the channel's queue.
         """
         queue = self.message_queues[channel_id]
-        while not queue.empty():
-            try:
-                ctx, messages_list = await queue.get()
-                await dispatch_response(self, ctx, messages_list)
-                # Record timestamp for cache-window optimization
-                self.last_response_at[channel_id] = _time.monotonic()
-            except Exception:
-                logger.exception(f"Error processing queue for channel {channel_id}")
-            finally:
+        try:
+            while True:
+                try:
+                    ctx, messages_list = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                try:
+                    await dispatch_response(self, ctx, messages_list)
+                    # Record timestamp for cache-window optimization
+                    self.last_response_at[channel_id] = _time.monotonic()
+                except Exception:
+                    logger.exception(f"Error processing queue for channel {channel_id}")
                 # Small buffer between messages to ensure order and prevent rate-limit bursts
                 await asyncio.sleep(1)
-        
-        del self.processing_tasks[channel_id]
-        if queue.empty():
-            del self.message_queues[channel_id]
+        finally:
+            # Atomically (no awaits between the check and the cleanup) decide
+            # whether to shut down or keep processing.  This closes the race
+            # where an item enqueued after the loop exited but before the task
+            # was removed would otherwise be stranded with no processor.
+            self.processing_tasks.pop(channel_id, None)
+            if not queue.empty():
+                self.processing_tasks[channel_id] = asyncio.create_task(self.process_queue(channel_id))
+            else:
+                self.message_queues.pop(channel_id, None)

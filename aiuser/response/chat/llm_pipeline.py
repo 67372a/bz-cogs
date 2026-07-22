@@ -24,6 +24,7 @@ from tenacity import (
 from aiuser.config.models import (
     UNSUPPORTED_LOGIT_BIAS_MODELS,
     VISION_SUPPORTED_MODELS,
+    supports_parallel_tool_calls,
 )
 from aiuser.functions.tool_call import ToolCall
 from aiuser.functions.types import ToolCallSchema
@@ -41,7 +42,7 @@ from aiuser.functions.openrouter import (
 )
 from aiuser.types.abc import MixinMeta
 from aiuser.types.enums import OpenRouterToolType
-from aiuser.utils.utilities import get_enabled_tools
+from aiuser.utils.utilities import get_enabled_tools, is_using_openrouter_endpoint
 
 
 @dataclass
@@ -159,13 +160,22 @@ class LLMPipeline:
         self.model: str = messages.model
         self.can_reply: bool = messages.can_reply
         self.openai_client = cog.openai_client
+        # Whether the active endpoint is OpenRouter — provider-specific
+        # extras (plugins, safety settings, session id, modalities) are only
+        # sent when this is True, since strict OpenAI-compatible servers
+        # reject unknown fields.
+        self.is_openrouter_endpoint: bool = (
+            bool(self.openai_client) and is_using_openrouter_endpoint(self.openai_client)
+        )
         self.enabled_tools: List[ToolCall] = []
         self.available_tools_schemas: List[ToolCallSchema] = []
         self.openrouter_tools: List[dict] = []
         self.completion: Optional[str] = None
         self.reasoning: Optional[str] = None
         self.response_parts: List[ResponsePart] = []
-        self.collected_images: List[Dict] = []
+        # Generated images AND file attachments from tools (both are sent to
+        # Discord as file attachments downstream)
+        self.collected_attachments: List[Dict] = []
 
     # ------------------------------------------------------------------    
     # Text completeness heuristic
@@ -289,6 +299,37 @@ class LLMPipeline:
             OpenRouterToolType.IMAGE_GENERATION.value,
         }
 
+    @staticmethod
+    def _build_openrouter_synthetic_result(tool_name: str, model_extra: Optional[Dict]) -> str:
+        """Build the tool-result content for an OpenRouter server-side tool.
+
+        Extracts any real result data (e.g. cited sources from web
+        search/fetch annotations) from the response's ``model_extra`` so the
+        follow-up generation is grounded in actual data rather than
+        hallucinating tool output.
+        """
+        base = (
+            f"OpenRouter server-side tool '{tool_name}' was executed. "
+            "The results have been incorporated into the conversation history by OpenRouter."
+        )
+        if not model_extra or not isinstance(model_extra, dict):
+            return base
+
+        annotations = model_extra.get("annotations") or []
+        sources = []
+        for ann in annotations:
+            if not isinstance(ann, dict):
+                continue
+            citation = ann.get("url_citation") or {}
+            url = citation.get("url") or ann.get("url")
+            title = citation.get("title") or ann.get("title") or ""
+            if url:
+                sources.append(f"- {title} ({url})" if title else f"- {url}")
+
+        if sources:
+            return f"Results from '{tool_name}':\n" + "\n".join(sources[:10])
+        return base
+
     async def _build_plugins(self) -> List[dict]:
         from aiuser.functions.openrouter.pdf_parsing import OpenRouterPdfParsing
         try:
@@ -313,8 +354,8 @@ class LLMPipeline:
             if not original_msg and init_message.reference.message_id:
                 try:
                     original_msg = await self.ctx.channel.fetch_message(init_message.reference.message_id)
-                except Exception:
-                    pass
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    original_msg = None
             if not original_msg:
                 return
             cache_key = (self.ctx.channel.id, original_msg.id)
@@ -322,13 +363,11 @@ class LLMPipeline:
             if annotations:
                 logger.info(f"Injecting {len(annotations)} cached PDF annotation(s) from message {original_msg.id} into reply chain")
                 if self.msg_list.messages:
-                    last_msg = self.msg_list.messages[-1]
-                    if not hasattr(last_msg, "annotations"):
-                        self._cached_pdf_annotations = annotations
+                    self._cached_pdf_annotations = annotations
         except Exception:
             logger.warning("Error injecting PDF annotations", exc_info=True)
 
-    def _store_pdf_annotations_from_response(self, response):
+    async def _store_pdf_annotations_from_response(self, response):
         cog = self.bot.get_cog("AIUser")
         if not cog or not hasattr(cog, "pdf_annotations"):
             return
@@ -347,19 +386,16 @@ class LLMPipeline:
                 cache_key = (self.ctx.channel.id, init_message.id)
                 cog.pdf_annotations[cache_key] = annotations
                 if init_message.reference:
-                    try:
-                        original_msg = init_message.reference.resolved
-                        if not original_msg and init_message.reference.message_id:
-                            try:
-                                original_msg = self.ctx.channel.fetch_message(init_message.reference.message_id)
-                            except Exception:
-                                pass
-                        if original_msg:
-                            alt_key = (self.ctx.channel.id, original_msg.id)
-                            if alt_key not in cog.pdf_annotations:
-                                cog.pdf_annotations[alt_key] = annotations
-                    except Exception:
-                        pass
+                    original_msg = init_message.reference.resolved
+                    if not original_msg and init_message.reference.message_id:
+                        try:
+                            original_msg = await self.ctx.channel.fetch_message(init_message.reference.message_id)
+                        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                            original_msg = None
+                    if original_msg:
+                        alt_key = (self.ctx.channel.id, original_msg.id)
+                        if alt_key not in cog.pdf_annotations:
+                            cog.pdf_annotations[alt_key] = annotations
         except Exception:
             logger.warning("Error storing PDF annotations", exc_info=True)
 
@@ -409,11 +445,13 @@ class LLMPipeline:
         else:
             return str(content)[:max_text_len]
 
-    def _log_submitted_payload(self, model: str, messages_json: list, user_digest: str, localKwargs: dict):
-        """Log the full submitted payload (messages + kwargs) at DEBUG level.
+    async def _log_submitted_payload(self, model: str, messages_json: list, user_digest: str, localKwargs: dict):
+        """Log the submitted payload summary at DEBUG level.
 
-        Logs a summary at INFO level and the complete per-message detail
-        at DEBUG level so operators can inspect the exact data sent to the LLM API.
+        Full per-message content (which contains user message text) is only
+        logged when the owner has explicitly enabled ``log_full_payloads``;
+        otherwise only structural metadata (roles, lengths, tool names) is
+        logged to avoid persisting user contents in log files.
         """
         channel_id = self.ctx.channel.id
         guild_id = self.ctx.guild.id if self.ctx.guild else "DM"
@@ -426,17 +464,6 @@ class LLMPipeline:
             extra.pop('safetySettings', None)
             extra.pop('session_id', None)
 
-        # Sanitize messages for logging: truncate large image data URLs
-        messages_for_log = []
-        for msg in messages_json:
-            msg_copy = {}
-            for k, v in msg.items():
-                if k == "content":
-                    msg_copy[k] = self._summarize_content_for_log(v)
-                else:
-                    msg_copy[k] = v
-            messages_for_log.append(msg_copy)
-
         logger.debug(
             "=== Submitted Payload Start === model=%s channel=%s guild=%s user=%s messages=%d kwargs=%s ===",
             model, channel_id, guild_id, user_digest[:12],
@@ -444,24 +471,44 @@ class LLMPipeline:
             json.dumps(kwargs_for_log, default=str, ensure_ascii=False),
         )
 
-        if logger.isEnabledFor(logging.DEBUG):
-            for i, msg in enumerate(messages_for_log):
-                extra_parts = []
-                if "tool_calls" in msg:
-                    tc_names = []
-                    for tc in msg["tool_calls"]:
-                        if isinstance(tc, dict):
-                            tc_names.append(tc.get("function", {}).get("name", "?"))
-                        else:
-                            tc_names.append(str(tc))
-                    extra_parts.append(f"tool_calls={tc_names}")
-                if "tool_call_id" in msg:
-                    extra_parts.append(f"tool_call_id={msg['tool_call_id']}")
-                if "name" in msg:
-                    extra_parts.append(f"name={msg['name']}")
+        if not logger.isEnabledFor(logging.DEBUG):
+            return
 
-                extras = f" ({', '.join(extra_parts)})" if extra_parts else ""
-                logger.debug("  [%d] role=%s%s content=%s", i, msg.get("role"), extras, msg.get("content"))
+        log_full = False
+        try:
+            log_full = bool(await self.config.log_full_payloads())
+        except Exception:
+            log_full = False
+
+        for i, msg in enumerate(messages_json):
+            extra_parts = []
+            if "tool_calls" in msg:
+                tc_names = []
+                for tc in msg["tool_calls"]:
+                    if isinstance(tc, dict):
+                        tc_names.append(tc.get("function", {}).get("name", "?"))
+                    else:
+                        tc_names.append(str(tc))
+                extra_parts.append(f"tool_calls={tc_names}")
+            if "tool_call_id" in msg:
+                extra_parts.append(f"tool_call_id={msg['tool_call_id']}")
+            if "name" in msg:
+                extra_parts.append(f"name={msg['name']}")
+
+            extras = f" ({', '.join(extra_parts)})" if extra_parts else ""
+            if log_full:
+                content_repr = self._summarize_content_for_log(msg.get("content"))
+            else:
+                # Redact actual user content; log only structural metadata
+                content = msg.get("content")
+                if isinstance(content, str):
+                    content_repr = f"<redacted, {len(content)} chars>"
+                elif isinstance(content, list):
+                    kinds = [p.get("type", "?") if isinstance(p, dict) else "?" for p in content]
+                    content_repr = f"<redacted, parts: {kinds}>"
+                else:
+                    content_repr = "<redacted>"
+            logger.debug("  [%d] role=%s%s content=%s", i, msg.get("role"), extras, content_repr)
 
         logger.debug("=== Submitted Payload End === model=%s channel=%s ===", model, channel_id)
 
@@ -470,40 +517,42 @@ class LLMPipeline:
     ) -> Tuple[Optional[str], Optional[str], List[ChatCompletionMessageToolCall], Optional[List[Dict]], Optional[Dict]]:
         injected_annotations = getattr(self, "_cached_pdf_annotations", None)
         current_messages_json = self.msg_list.get_json(annotations_for_assistant=injected_annotations)
-        plugins = await self._build_plugins()
 
         localKwargs = copy.deepcopy(kwargs)
-
-        if 'extra_body' in localKwargs:
-            if isinstance(localKwargs['extra_body'], dict):
-                existing = localKwargs['extra_body'].get("plugins", [])
-                localKwargs['extra_body']["plugins"] = existing + plugins
-            else:
-                localKwargs['extra_body'] = {"plugins": plugins}
-        else:
-            localKwargs['extra_body'] = {"plugins": plugins}
 
         user = f"{self.ctx.me.id}-{self.ctx.channel.id}"
         m = hashlib.sha256()
         m.update(user.encode('utf-8'))
         user_digest = m.hexdigest()
 
-        localKwargs['extra_body']['safetySettings'] = [
+        if self.is_openrouter_endpoint:
+            # OpenRouter-specific extras. These are NOT sent to other
+            # endpoints because strict OpenAI-compatible servers reject
+            # unknown fields (plugins / safetySettings / session_id).
+            plugins = await self._build_plugins()
+
+            extra_body = localKwargs.get('extra_body')
+            if not isinstance(extra_body, dict):
+                extra_body = {}
+            extra_body["plugins"] = extra_body.get("plugins", []) + plugins
+
+            extra_body['safetySettings'] = [
                 {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
                 {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
                 {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
                 {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
                 {"category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "BLOCK_NONE"},
             ]
-        
-        localKwargs['extra_body']['session_id'] = user_digest
+            extra_body['session_id'] = user_digest
 
-        # Also inject service_tier into extra_body for endpoints that expect it there
-        if localKwargs.get('service_tier'):
-            localKwargs['extra_body']['service_tier'] = localKwargs['service_tier']
+            # Also inject service_tier into extra_body for endpoints that expect it there
+            if localKwargs.get('service_tier'):
+                extra_body['service_tier'] = localKwargs['service_tier']
 
-        # Log the full submitted payload (context, messages, kwargs)
-        self._log_submitted_payload(self.model, current_messages_json, user_digest, localKwargs)
+            localKwargs['extra_body'] = extra_body
+
+        # Log the submitted payload (context, messages, kwargs)
+        await self._log_submitted_payload(self.model, current_messages_json, user_digest, localKwargs)
 
         logger.info(f"Sending request to LLM (model: {self.model}) with {len(current_messages_json)} messages. Kwarg keys: {list(localKwargs.keys())}")
 
@@ -511,7 +560,7 @@ class LLMPipeline:
             model=self.model, messages=current_messages_json, user=user_digest, **localKwargs
         )
 
-        self._store_pdf_annotations_from_response(response)
+        await self._store_pdf_annotations_from_response(response)
 
         if response.usage:
             logger.info(f"LLM usage: P{response.usage.prompt_tokens} C{response.usage.completion_tokens} T{response.usage.total_tokens}.")
@@ -548,7 +597,13 @@ class LLMPipeline:
         wait=wait_random_exponential(min=1, max=5),
         stop=stop_after_attempt(4),
         retry=(
-            retry_if_exception_type((openai.RateLimitError, openai.APIConnectionError, openai.InternalServerError))
+            retry_if_exception_type((
+                openai.RateLimitError,
+                openai.APIConnectionError,
+                openai.InternalServerError,
+                httpx.ReadTimeout,
+                httpx.ConnectTimeout,
+            ))
             | retry_if_result(is_response_unsatisfactory)
         ),
     )
@@ -576,7 +631,11 @@ class LLMPipeline:
             logger.info(f"Finish reason: {result.choices[0].finish_reason}. Native finish reason: {native_finish_reason}")
             return result
         except Exception as e:
-            logger.error(f"Error calling LLM API: {e}")
+            # Retryable failures (rate limits, timeouts, connection issues) are
+            # expected transient noise; tenacity will retry them.  Log at
+            # WARNING so a recovered request doesn't emit error-level noise —
+            # persistent failures surface via run()'s exception handlers.
+            logger.warning(f"LLM API call attempt failed: {type(e).__name__}: {e}")
             raise
 
     # ------------------------------------------------------------------
@@ -627,7 +686,7 @@ class LLMPipeline:
         await self._inject_pdf_annotations()
 
         self.response_parts = []
-        self.collected_images = []
+        self.collected_attachments = []
 
         max_rounds = await self.config.guild(self.ctx.guild).max_tool_rounds()
         if not max_rounds or max_rounds < 1:
@@ -662,14 +721,21 @@ class LLMPipeline:
             if tools_available:
                 kwargs["tools"] = [asdict(schema) for schema in self.available_tools_schemas] + self.openrouter_tools
                 kwargs["tool_choice"] = "none" if is_last else "auto"
-                if "gemini-3" in self.model.lower():
+                if supports_parallel_tool_calls(self.model):
                     kwargs["parallel_tool_calls"] = True
 
-            if 'extra_body' not in kwargs or not isinstance(kwargs.get('extra_body'), dict):
-                kwargs['extra_body'] = {}
-            kwargs['extra_body']['modalities'] = ['text']
-            if 'openrouter:image_generation' in kwargs.get("tools", []):
-                kwargs['extra_body']['modalities'].append('image')
+            if self.is_openrouter_endpoint:
+                if 'extra_body' not in kwargs or not isinstance(kwargs.get('extra_body'), dict):
+                    kwargs['extra_body'] = {}
+                kwargs['extra_body']['modalities'] = ['text']
+                # kwargs["tools"] is a list of dicts — check each dict's
+                # "type" field for the image generation server tool.
+                has_image_gen_tool = any(
+                    isinstance(t, dict) and t.get("type") == OpenRouterToolType.IMAGE_GENERATION.value
+                    for t in kwargs.get("tools", [])
+                )
+                if has_image_gen_tool:
+                    kwargs['extra_body']['modalities'].append('image')
 
             # Inject user-role stop instruction on the last round to discourage
             # further tool calls.  A user role is used instead of system to avoid
@@ -766,11 +832,12 @@ class LLMPipeline:
                 else:
                     logger.info("Round %d: No local tools to execute", round_num)
 
-                # Add synthetic tool results for OpenRouter server-side tools
+                # Add synthetic tool results for OpenRouter server-side tools,
+                # including any real result data (e.g. cited sources) extracted
+                # from the response so the model doesn't hallucinate contents.
                 for tc in openrouter_tool_calls:
                     logger.info("Round %d: Adding OpenRouter synthetic result: id=%s name=%s", round_num, tc.id, tc.function.name)
-                    or_result = f"OpenRouter server-side tool '{tc.function.name}' was executed. " \
-                                f"The results have been incorporated into the conversation history by OpenRouter."
+                    or_result = self._build_openrouter_synthetic_result(tc.function.name, model_extra)
                     await self.msg_list.add_tool_result(
                         name=tc.function.name,
                         tool_call_id=tc.id,
@@ -829,7 +896,7 @@ class LLMPipeline:
                 text=response_text,
                 reasoning=reasoning_text,
                 reasoning_steps=accumulated_reasoning,
-                images=self.collected_images,
+                images=self.collected_attachments,
                 response_parts=self.response_parts,
                 has_tools=False,
                 pre_text=response_text,
@@ -877,20 +944,20 @@ class LLMPipeline:
             part = ResponsePart(
                 type="text_and_images",
                 content=final_text,
-                images=self.collected_images,
+                images=self.collected_attachments,
             )
             self.response_parts = [part]
         else:
             part = ResponsePart(
                 type="text_and_images",
                 content=final_response_text or combined_pre_text,
-                images=self.collected_images,
+                images=self.collected_attachments,
             )
             self.response_parts = [part] if part else []
 
         logger.info(
-            "Loop complete: has_tools=%s, forced_break=%s, final_text_length=%d, images=%d, response_parts=%d",
-            has_tools, forced_break, len(final_text or ''), len(self.collected_images), len(self.response_parts)
+            "Loop complete: has_tools=%s, forced_break=%s, final_text_length=%d, attachments=%d, response_parts=%d",
+            has_tools, forced_break, len(final_text or ''), len(self.collected_attachments), len(self.response_parts)
         )
 
         self.completion = final_text
@@ -900,7 +967,7 @@ class LLMPipeline:
             text=final_text,
             reasoning=final_reasoning,
             reasoning_steps=accumulated_reasoning,
-            images=self.collected_images,
+            images=self.collected_attachments,
             response_parts=self.response_parts,
             has_tools=True,
             pre_text=first_round_text,
@@ -994,15 +1061,16 @@ class LLMPipeline:
             # produce images will still have them collected.
             tool_images = self._collect_images_from_tool(tool_function_name)
             for img in tool_images:
-                self.collected_images.append(img)
+                self.collected_attachments.append(img)
 
             # Collect any file attachments from the tool (e.g. attach_files)
             # This runs for ALL tools regardless of return type, so tools that
             # return a string result but also produce files will still have them
-            # collected.
+            # collected.  Files and images share the attachments collection
+            # because both become Discord file attachments downstream.
             tool_files = self._collect_attached_files_from_tool(tool_function_name)
             for f in tool_files:
-                self.collected_images.append(f)
+                self.collected_attachments.append(f)
 
             # Add tool result to context — this is the "user" turn with functionResponse
             # Per Gemini 3.5 Flash: id and name MUST match the preceding functionCall

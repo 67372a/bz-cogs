@@ -58,6 +58,7 @@ DEFAULT_GLOBAL = {
             "max_prompt_length": 200,
             "custom_text_prompt": None,
             "endpoint_model_history": {},
+            "log_full_payloads": False,
 }
 
 DEFAULT_GUILD = {
