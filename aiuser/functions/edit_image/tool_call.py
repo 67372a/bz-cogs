@@ -25,6 +25,7 @@ from aiuser.utils.image_processing import (
     process_image_for_llm,
     build_webp_data_url,
 )
+from aiuser.utils.utilities import is_gemini_image_model
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
@@ -644,6 +645,15 @@ class EditImageToolCall(ToolCall):
 
         # Extract images from the response
         images = self._extract_images_from_response(response)
+
+        # Gemini image models can return multiple draft images before the
+        # final one — only keep the last (final) image.
+        if images and is_gemini_image_model(model) and len(images) > 1:
+            logger.info(
+                f"[EditImage] Gemini image model detected; discarding "
+                f"{len(images) - 1} draft image(s), keeping only the final image"
+            )
+            images = images[-1:]
 
         if not images:
             logger.warning(

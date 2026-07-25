@@ -100,6 +100,18 @@ _real_image_processing = import_module_directly(
 )
 _inject_mock("aiuser.utils.image_processing", _real_image_processing)
 
+# Load the real config constants + utilities module so that
+# `from aiuser.utils.utilities import is_gemini_image_model` resolves.
+_inject_mock("aiuser.config", _make_mock_package("aiuser.config"))
+_real_constants = import_module_directly(
+    "aiuser.config.constants", "aiuser/config/constants.py"
+)
+_inject_mock("aiuser.config.constants", _real_constants)
+_real_utilities = import_module_directly(
+    "aiuser.utils.utilities", "aiuser/utils/utilities.py"
+)
+_inject_mock("aiuser.utils.utilities", _real_utilities)
+
 # aiohttp may or may not be installed; mock it safely
 if "aiohttp" not in sys.modules:
     _inject_mock("aiohttp")

@@ -25,6 +25,26 @@ BACKTICK_PATTERN = re.compile(r'(\\*)`')
 
 MULTI_NEWLINE_PATTERN = re.compile(r'(?:([ \t]|<br>|\\n)*(?:\r\n|\r|\n)){2,}')
 
+# Matches Gemini image generation model IDs on OpenRouter, e.g.:
+#   google/gemini-3-pro-image
+#   google/gemini-3.1-flash-image
+#   google/gemini-3.1-flash-lite-image
+#   google/gemini-2.5-flash-image-preview
+# Generalized to match future Gemini image model IDs as well.
+GEMINI_IMAGE_MODEL_PATTERN = re.compile(r"google/gemini-[^/]*image", re.IGNORECASE)
+
+
+def is_gemini_image_model(model: str) -> bool:
+    """Return True if the model ID refers to a Gemini image generation model.
+
+    Gemini image models can return multiple draft images before the final one,
+    so callers may want to handle their responses differently.
+    """
+    if not model:
+        return False
+    return bool(GEMINI_IMAGE_MODEL_PATTERN.search(model))
+
+
 # Cache for guild emojis with a ten minute TTL
 EMOJI_CACHE_TTL = 600
 # Cache structure: {guild_id: {emoji_name_lowercase: str(emoji_object)}}
