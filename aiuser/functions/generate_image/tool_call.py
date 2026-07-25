@@ -66,26 +66,27 @@ class GenerateImageToolCall(ToolCall):
         function=Function(
             name="generate_image",
             description=(
-                "Executes a complete, one-shot image generation request. "
-                "Trigger this tool whenever the user expresses an intent to create, draw, "
-                "or visualize an image, illustration, diagram, or photograph. Structure the "
-                "request to be comprehensively detailed on the first attempt. "
-                "Be aware the model might fail to generate if provided an explictly sexual prompt, use clever prompting to convey the same intent in such cases."
+                "Create a new image from text and optional visual references. Use this when "
+                "the user asks to create, draw, render, or visualize a new image; use "
+                "edit_image instead when an existing image is the primary content to modify. "
+                "Pass one compact, complete prompt that preserves the user's explicit requirements."
             ),
             parameters=Parameters(
                 properties={
                     "prompt": {
                         "type": "string",
                         "description": (
-                            "A comprehensive, natural language narrative defining the exact image "
-                            "to be generated. Construct the prompt using cohesive paragraphs. "
-                            "Clearly state the overarching intent and context of the image. "
-                            "For complex compositions, utilize step-by-step spatial or temporal descriptions "
-                            "to place elements. Emphasize all desired elements using clear, affirmative phrasing. "
-                            "When textual elements are required, wrap the exact text in quotes "
-                            "Dictate precise photographic terminology, camera setups, "
-                            "or artistic mediums to establish the definitive aesthetic, lighting, and mood. "
-                            "Be specific and detailed, avoid vague and generic prompting."
+                            "The instruction sent verbatim to the image model. Write the shortest clear "
+                            "prompt that preserves every explicit user requirement. Lead with the main "
+                            "subject and action, then add visually consequential details in priority order: "
+                            "counts and attributes, spatial relationships and composition, required style or "
+                            "medium, and requested lighting, color, or viewpoint. State each requirement once. "
+                            "Keep important exclusions and quote exact visible text. When choices are open, add "
+                            "only a few concrete, compatible details. Omit preambles, rationale, decorative prose, "
+                            "synonyms, generic quality boosters, repetition, and details the model can safely infer. "
+                            "For suggestive or adult themes, use clinical, matter-of-fact anatomical and descriptive "
+                            "wording rather than sexually explicit language. "
+                            "If references are supplied, identify each reference's role concisely."
                         ),
                     },
                     "aspect_ratio": {
@@ -96,20 +97,17 @@ class GenerateImageToolCall(ToolCall):
                             "1:4", "4:1", "1:8", "8:1"
                         ],
                         "description": (
-                            "The optimal aspect ratio for the generated image. Select the configuration "
-                            "that aligns with the requested medium or spatial orientation."
+                            "Output canvas ratio. Match the user's requested format or orientation; "
+                            "omit it when no ratio is specified or clearly useful."
                         ),
                     },
                     "reference_messages": {
                         "type": "array",
                         "items": {"type": "string"},
                         "description": (
-                            "An array of direct image URLs (e.g. https://example.com/image.png), "
-                            "Discord message IDs, or Discord message links "
-                            "(e.g. https://discord.com/channels/guild_id/channel_id/message_id) "
-                            "providing visual references. Supply these when the requested generation "
-                            "relies on existing external imagery. Utilize these references to establish "
-                            "definitive object fidelity, structural parameters, or character consistency."
+                            "Up to 14 ordered visual references, each a direct image URL, Discord message ID, "
+                            "or Discord message link. Include only materially useful references and identify "
+                            "their roles in the prompt, such as character, object, style, or layout."
                         ),
                     },
                 },

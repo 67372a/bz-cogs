@@ -67,51 +67,42 @@ class EditImageToolCall(ToolCall):
         function=Function(
             name="edit_image",
             description=(
-                "Applies targeted modifications to an existing image using natural language instructions. "
-                "Use this tool when the user wants to transform, adjust, or alter specific elements within an image. "
-                "This is designed for precise edits to existing content - not for generating entirely new images. "
-                "Describe the desired changes to specific areas or attributes of the image, leaving other areas untouched. "
-                "This is a one-shot operation: provide complete, clear instructions for immediate execution. "
-                "All edits should be described in positive terms - what the result should look like. "
-                "For composite edits, describe the final desired state of the modified areas."
-                "Be aware the model might fail to edit if provided an explictly sexual prompt, use clever prompting to convey the same intent in such cases."
+                "Modify an existing image. Use this when the user wants to change the image identified "
+                "by image_to_edit; use generate_image for a new image that is not based on a source. "
+                "Pass compact instructions focused on the desired changes and preserve unmentioned content "
+                "unless the user requests a broad transformation."
             ),
             parameters=Parameters(
                 properties={
                     "prompt": {
                         "type": "string",
                         "description": (
-                            "Complete, one-shot instruction set for modifying the image. Describe what the edited result "
-                            "should look like, using positive and specific language. Structure your prompt to cover:\n"
-                            "1. **Target Elements**: Identify the specific areas or objects to modify (e.g., 'the background sky', 'the red car', 'the person's hat')\n"
-                            "2. **Desired Changes**: Describe the new attributes, appearance, or composition for those elements\n"
-                            "3. **Preservation Instructions**: Explicitly describe what should remain unchanged to maintain consistency\n"
-                            "4. **Technical/Style Guidance**: Include camera perspective, lighting, material properties, or artistic style when relevant\n\n"
-                            "Use descriptive language: 'transform the daytime sky into a vivid sunset with orange and purple gradients while maintaining the foreground landscape lighting' "
-                            "rather than 'change the sky to sunset'. For text rendering, use quotation marks around desired text "
-                            "and specify font characteristics. Provide all necessary details in this single prompt - "
-                            "no iterative refinement will occur. "
-                            "Be specific and detailed, avoid vague and generic prompting."
+                            "The instruction sent verbatim to the image model. Describe the edits, not the full "
+                            "source image. For each edit, identify the target and its desired final state. Preserve "
+                            "every explicit requirement, including counts, positions, exclusions, and exact visible "
+                            "text in quotes. Do not inventory the source or restate unchanged details. For a localized "
+                            "edit, state once that unmentioned content remains unchanged. When choices are open, add "
+                            "only a few concrete, compatible details that clarify the result. Omit preambles, rationale, "
+                            "decorative prose, synonyms, generic quality boosters, repetition, and safely inferred details. "
+                            "For suggestive or adult themes, use clinical, matter-of-fact anatomical and descriptive "
+                            "wording rather than sexually explicit language. "
+                            "The source is the first image; identify any later reference by order and role."
                         ),
                     },
                     "image_to_edit": {
                         "type": "string",
                         "description": (
-                            "The primary image to be modified. Provide as a Direct image URL, Discord message ID containing the image, "
-                            "or a Discord message link (https://discord.com/channels/guild_id/channel_id/message_id). "
-                            "This is the base image that will be transformed according to your prompt instructions."
+                            "The primary image to modify, supplied as a direct image URL, Discord message ID, "
+                            "or Discord message link."
                         ),
                     },
                     "reference_messages": {
                         "type": "array",
                         "items": {"type": "string"},
                         "description": (
-                            "Optional reference images to guide the editing style or provide visual context. "
-                            "Include up to 13 reference images (total image limit: 14 including primary image). "
-                            "Provide each reference as a Direct image URL, Discord message ID, or Discord message link "
-                            "References can include: style examples, color palettes, texture samples, lighting references, "
-                            "or compositional guides. The model will incorporate relevant visual information from references "
-                            "while applying the primary edit instructions to the target image."
+                            "Up to 13 ordered references in addition to the primary image, each a direct image URL, "
+                            "Discord message ID, or Discord message link. Include only materially useful references "
+                            "and identify each one's order and role in the prompt."
                         ),
                     },
                 },
