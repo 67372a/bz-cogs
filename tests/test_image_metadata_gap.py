@@ -344,10 +344,10 @@ class TestProcessAttachmentMetadata:
     @patch.object(caption_mod, "process_image_for_llm")
     @patch.object(caption_mod, "build_webp_data_url")
     @patch.object(caption_mod, "compute_pixel_hash")
-    async def test_no_text_bot_message_skips_metadata(
+    async def test_no_text_bot_message_gets_provenance(
         self, mock_pixel_hash, mock_build_url, mock_process, mock_image_cache, mock_processed_cache
     ):
-        """Bot's own messages with no text should not get the metadata header (consistent with format_text_content)."""
+        """Bot's own image messages with no text get a "Sent image" provenance part."""
         raw_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
         mock_image_cache.get.return_value = raw_bytes
         mock_pixel_hash.return_value = "abc123"
@@ -366,11 +366,10 @@ class TestProcessAttachmentMetadata:
         )
 
         assert result is not None
-        # Should only have the image_url part, no text metadata for bot messages
         image_parts = [p for p in result if p.get("type") == "image_url"]
         assert len(image_parts) == 1
         text_parts = [p for p in result if p.get("type") == "text"]
-        assert len(text_parts) == 0
+        assert text_parts == [{"type": "text", "text": "Sent image"}]
 
 
 # ===========================================================================

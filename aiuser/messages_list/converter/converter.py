@@ -1,6 +1,5 @@
 import logging
 import re
-from datetime import timezone
 
 from discord import Message
 from redbot.core import commands
@@ -130,10 +129,13 @@ class MessageConverter():
             f"Found {len(content_parts)} image URL(s) in message {message.id}: {', '.join(sources)}"
         )
 
-        # Add text content after images if there is meaningful text
+        # Add text content after images if there is meaningful text,
+        # otherwise emit the XML header so author/reply metadata is kept.
         text_content = format_text_content(message)
         if text_content:
             content_parts.append({"type": "text", "text": text_content})
+        elif message.author.id != message.guild.me.id:
+            content_parts.append({"type": "text", "text": f'{_get_msg_header(message)}</message>'})
 
         res.append(MessageEntry(role, content_parts))
         return True
@@ -158,32 +160,33 @@ class MessageConverter():
         if image_attachments and await self._is_scan_enabled(message):
             # Process multiple images - build a list of content parts
             all_content_parts = []
-            filenames = []
             for attachment in image_attachments:
+                # Marker so the model can associate each image with its filename
+                marker = {"type": "text", "text": format_generic_image_single(attachment)}
+
                 if attachment.size > await self.config.guild(message.guild).max_image_size():
                     logger.info(f"Image {attachment.filename} exceeds max size, skipping transcription")
-                    all_content_parts.append(format_generic_image_single(attachment))
-                    filenames.append(attachment.filename)
+                    all_content_parts.append(marker)
                     continue
 
                 logger.info(
                     f"Supported image. type=[{attachment.content_type}] filename=[{attachment.filename}]"
                 )
-                # Create a temporary message with just this attachment for transcription
                 content = await transcribe_image_single(self.cog, message, attachment)
+                all_content_parts.append(marker)
                 if content:
                     if isinstance(content, list):
-                        all_content_parts.extend(content)
+                        # Strip any embedded text parts from the transcription;
+                        # the message-level text/header is appended once below.
+                        all_content_parts.extend(
+                            part for part in content
+                            if not (isinstance(part, dict) and part.get("type") == "text")
+                        )
                     else:
                         all_content_parts.append({"type": "text", "text": content})
-                else:
-                    all_content_parts.append(
-                        {"type": "text", "text": format_generic_image_single(attachment)}
-                    )
-                filenames.append(attachment.filename)
 
             if all_content_parts:
-                # Add the message text content or metadata header
+                # Add the message text content or metadata header once, at the end
                 if message.content and message.content.strip():
                     all_content_parts.append({"type": "text", "text": format_text_content(message)})
                 elif message.author.id != message.guild.me.id:
@@ -240,11 +243,7 @@ class MessageConverter():
             await self.add_entry(self.message_cache[message.id], res, role)
         else:
             logger.info(f"Unsupported attachment content Type. type={message.attachments[0].content_type} filename={message.attachments[0].filename}")
-
-            title = f', title "{message.attachments[0].title}"' if message.attachments[0].title else ""
-            description = f', description "{message.attachments[0].description}"' if message.attachments[0].description else ""
-            timestamp = message.created_at.astimezone(timezone.utc).replace(microsecond=0).strftime('%Y-%m-%dT%H:%M:%SZ')
-            content = f'[MESSAGE_ID={message.id} TIMESTAMP={timestamp} USER_ID={message.author.id} USERNAME="{message.author.name}" NICKNAME="{message.author.display_name}"] sent an attachment with filename "{message.attachments[0].filename}"{title}{description}'
+            content = format_generic_attachment(message)
             await self.add_entry(content, res, role)
 
         content = format_text_content(message)
@@ -301,15 +300,15 @@ class MessageConverter():
         # Add file content parts as the first entry
         content_parts = file_contents.copy()
 
-        # Add text content after files if there is meaningful text
+        # Add text content after files if there is meaningful text,
+        # otherwise emit the XML header so author/reply metadata is kept.
         text_content = format_text_content(message)
         if text_content:
             content_parts.append({"type": "text", "text": text_content})
+        elif message.author.id != message.guild.me.id:
+            content_parts.append({"type": "text", "text": f'{_get_msg_header(message)}</message>'})
 
         res.append(MessageEntry(role, content_parts))
-
-        # Mark that we've already added the text content so it's not duplicated
-        self._handled_pdf_text = True
 
     async def add_entry(self, content, res, role):
         if not content:
@@ -327,10 +326,28 @@ async def transcribe_image_single(cog: MixinMeta, message: Message, attachment):
     return await transcribe_single(cog, message, attachment)
 
 
+_QUOTE_ESCAPES = {'"': "&" + "quot;"}
+
+
 def format_generic_image_single(attachment) -> str:
     """Format a generic image description for a single attachment (used for multiple image support)."""
     from xml.sax.saxutils import escape
-    title = f' title="{escape(attachment.title)}"' if attachment.title else ""
-    desc = f' description="{escape(attachment.description)}"' if attachment.description else ""
-    filename = escape(attachment.filename)
+    title = f' title="{escape(attachment.title, _QUOTE_ESCAPES)}"' if attachment.title else ""
+    desc = f' description="{escape(attachment.description, _QUOTE_ESCAPES)}"' if attachment.description else ""
+    filename = escape(attachment.filename, _QUOTE_ESCAPES)
     return f'<image filename="{filename}"{title}{desc}/>'
+
+
+def format_generic_attachment(message: Message) -> str:
+    """Format an unsupported attachment using the standard XML schema."""
+    from xml.sax.saxutils import escape
+    attachment = message.attachments[0]
+    title = f' title="{escape(attachment.title, _QUOTE_ESCAPES)}"' if attachment.title else ""
+    desc = f' description="{escape(attachment.description, _QUOTE_ESCAPES)}"' if attachment.description else ""
+    filename = escape(attachment.filename, _QUOTE_ESCAPES)
+    xml_content = f'<file filename="{filename}"{title}{desc}/>'
+
+    if message.author.id == message.guild.me.id:
+        return f"Sent {xml_content}"
+
+    return f'{_get_msg_header(message)}{xml_content}</message>'

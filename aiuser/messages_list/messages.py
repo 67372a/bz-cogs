@@ -20,6 +20,7 @@ from aiuser.types.abc import MixinMeta
 from aiuser.types.enums import ScanImageMode
 from aiuser.utils.utilities import format_variables, format_stable_variables, build_dynamic_context_message
 from aiuser.config.constants import XML_SYSTEM_PROMPT_APPENDIX, CITATION_INSTRUCTIONS, MATH_NOTATION_INSTRUCTIONS
+from aiuser.utils.image_processing import estimate_image_part_tokens, estimate_file_part_tokens
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
@@ -306,16 +307,29 @@ class MessagesList:
             self.messages_ids.add(message.id)
             insert_at += 1  # advance so multi-entry messages keep their order
 
-            if isinstance(entry.content, list):
-                for item in entry.content:
-                    if not isinstance(item, dict):
-                        continue
-                    if item.get("type") == "text":
-                        await self._add_tokens(item.get("text"))
-                    elif item.get("type") == "image_url":
-                        self.tokens += 756  # TODO: calculate actual image token cost
-            else:
-                await self._add_tokens(entry.content)
+            await self._add_content_tokens(entry.content)
+
+    async def _add_content_tokens(self, content):
+        """Count tokens for a string or a list of multimodal content parts.
+
+        Image parts use the Gemini tiling estimate based on processed
+        dimensions; base64 ``file`` parts use a length-based heuristic.
+        """
+        if not isinstance(content, list):
+            await self._add_tokens(content)
+            return
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            item_type = item.get("type")
+            if item_type == "text":
+                await self._add_tokens(item.get("text"))
+            elif item_type == "image_url":
+                url = (item.get("image_url") or {}).get("url", "")
+                self.tokens += estimate_image_part_tokens(url)
+            elif item_type == "file":
+                file_data = (item.get("file") or {}).get("file_data", "")
+                self.tokens += estimate_file_part_tokens(file_data)
 
     async def add_system(self, content: str, index: int = None):
         if self.tokens > self.token_limit:
@@ -332,16 +346,7 @@ class MessagesList:
         # Default to appending at end (not index 0) to preserve prefix stability
         insert_at = len(self.messages) if index is None else index
         self.messages.insert(insert_at, entry)
-        if isinstance(content, list):
-            for item in content:
-                if not isinstance(item, dict):
-                    continue
-                if item.get("type") == "text":
-                    await self._add_tokens(item.get("text"))
-                elif item.get("type") == "image_url":
-                    self.tokens += 756  # matches estimate in add_msg()
-        else:
-            await self._add_tokens(content)
+        await self._add_content_tokens(content)
 
     async def add_user(self, content: str, index: int = None):
         """Add a user-role message (e.g. stop instruction)."""
@@ -361,16 +366,7 @@ class MessagesList:
         # Default to appending at end (not index 0) to preserve prefix stability
         insert_at = len(self.messages) if index is None else index
         self.messages.insert(insert_at, entry)
-        if isinstance(content, list):
-            for item in content:
-                if not isinstance(item, dict):
-                    continue
-                if item.get("type") == "text":
-                    await self._add_tokens(item.get("text"))
-                elif item.get("type") == "image_url":
-                    self.tokens += 756  # matches estimate in add_assistant()
-        else:
-            await self._add_tokens(content)
+        await self._add_content_tokens(content)
 
     async def add_history(self):
         limit = await self.config.guild(self.guild).messages_backread()

@@ -63,10 +63,13 @@ def format_embed_text_content(message: Message):
     return f'{_get_msg_header(message)}{content}</message>'
 
 
+_QUOTE_ESCAPES = {'"': "&" + "quot;"}
+
+
 def format_generic_image(message: Message):
-    title = f' title="{escape(message.attachments[0].title)}"' if message.attachments[0].title else ""
-    desc = f' description="{escape(message.attachments[0].description)}"' if message.attachments[0].description else ""
-    filename = escape(message.attachments[0].filename)
+    title = f' title="{escape(message.attachments[0].title, _QUOTE_ESCAPES)}"' if message.attachments[0].title else ""
+    desc = f' description="{escape(message.attachments[0].description, _QUOTE_ESCAPES)}"' if message.attachments[0].description else ""
+    filename = escape(message.attachments[0].filename, _QUOTE_ESCAPES)
 
     xml_content = f'<image filename="{filename}"{title}{desc}/>'
 

@@ -121,6 +121,75 @@ def build_webp_data_url(processed_bytes: bytes) -> str:
     return f"data:image/webp;base64,{b64}"
 
 
+# ---------------------------------------------------------------------------
+# Token estimation (Gemini image tiling)
+# ---------------------------------------------------------------------------
+
+#: Flat cost for small images (both dimensions <= 384 px) and per-tile cost.
+GEMINI_TOKENS_PER_TILE = 258
+#: Images whose dimensions are both <= this are charged a flat tile.
+GEMINI_SMALL_IMAGE_DIM = 384
+#: Fallback estimate when dimensions cannot be determined.
+FALLBACK_IMAGE_TOKENS = 756
+
+
+def estimate_image_tokens(width: int, height: int) -> int:
+    """Estimate Gemini token cost for an image of *width* x *height* pixels.
+
+    Gemini charges 258 tokens if both dimensions are <= 384 px.  Larger
+    images are tiled into 768x768 tiles, each costing 258 tokens.  The
+    number of tiles is approximated by a crop unit of
+    ``floor(min(width, height) / 1.5)``; each dimension is divided by the
+    crop unit and the results multiplied.  E.g. 960x540 -> crop unit 360
+    -> ceil(960/360) * ceil(540/360) = 3 * 2 = 6 tiles -> 1548 tokens.
+    """
+    if width <= 0 or height <= 0:
+        return FALLBACK_IMAGE_TOKENS
+    if width <= GEMINI_SMALL_IMAGE_DIM and height <= GEMINI_SMALL_IMAGE_DIM:
+        return GEMINI_TOKENS_PER_TILE
+    crop_unit = max(1, int(min(width, height) // 1.5))
+    tiles_w = -(-width // crop_unit)  # ceil division
+    tiles_h = -(-height // crop_unit)
+    return tiles_w * tiles_h * GEMINI_TOKENS_PER_TILE
+
+
+def image_dimensions_from_data_url(data_url: str) -> Optional[tuple]:
+    """Decode ``(width, height)`` from a base64 ``data:`` URL, or ``None``."""
+    try:
+        header, _, b64 = data_url.partition(",")
+        if ";base64" not in header or not b64:
+            return None
+        raw = base64.b64decode(b64)
+        with Image.open(BytesIO(raw)) as img:
+            return img.size  # (width, height)
+    except Exception:
+        return None
+
+
+def estimate_image_part_tokens(image_url: str) -> int:
+    """Estimate the token cost of an ``image_url`` content part.
+
+    Decodes dimensions from a data URL when possible and applies the
+    Gemini tiling formula; falls back to ``FALLBACK_IMAGE_TOKENS``.
+    """
+    dims = image_dimensions_from_data_url(image_url)
+    if dims is None:
+        return FALLBACK_IMAGE_TOKENS
+    return estimate_image_tokens(dims[0], dims[1])
+
+
+def estimate_file_part_tokens(file_data: str) -> int:
+    """Rough token estimate for a base64 ``file`` content part.
+
+    Base64 expands raw bytes by 4/3 and text tokenizes at ~4 chars/token,
+    so tokens ~= b64_length * 3/16.
+    """
+    if not file_data:
+        return 0
+    b64_len = len(file_data.partition(",")[2])
+    return max(1, (b64_len * 3) // 16)
+
+
 def process_image_for_llm_content(
     original_bytes: bytes,
     max_pixels: int = 16_777_216,

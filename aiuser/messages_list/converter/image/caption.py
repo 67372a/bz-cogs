@@ -99,10 +99,14 @@ async def _process_attachment(
         text = format_text_content(message)
         if text:
             content.append({"type": "text", "text": text})
-        elif message.author.id != message.guild.me.id:
+        else:
             # Include message metadata even when there is no text content,
             # so the LLM knows who sent the image and any reply context.
-            content.append({"type": "text", "text": f'{_get_msg_header(message)}</message>'})
+            # Bot-sent images are annotated too, for consistent provenance.
+            if message.author.id == message.guild.me.id:
+                content.append({"type": "text", "text": "Sent image"})
+            else:
+                content.append({"type": "text", "text": f'{_get_msg_header(message)}</message>'})
         return content
 
     elif mode == ScanImageMode.AI_HORDE:
