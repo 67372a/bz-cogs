@@ -79,7 +79,7 @@ def format_generic_image(message: Message):
     return f'{_get_msg_header(message)}{xml_content}</message>'
 
 def format_generic_document(message: Message):
-    filename = escape(message.attachments[0].filename)
+    filename = escape(message.attachments[0].filename, _QUOTE_ESCAPES)
     xml_content = f'<file filename="{filename}"/>'
     
     if message.author.id == message.guild.me.id:
@@ -135,7 +135,7 @@ async def format_text_document(message: Message):
     # For simplicity here, we assume standard text, but escaping is recommended:
     text_data = escape(text_data) 
     
-    filename = escape(attachment.filename)
+    filename = escape(attachment.filename, _QUOTE_ESCAPES)
     
     # We use a custom tag structure here
     doc_xml = (f'{_get_msg_header(message)}'

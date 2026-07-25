@@ -380,7 +380,15 @@ def _cache_generated_images_in_response(
     if not content_parts:
         return
 
-    # Add the text content after the images (matching how user images are formatted)
+    # Add the bot's actual response text so it isn't lost when this message
+    # is re-ingested from the cache on future turns (the cache short-circuits
+    # conversion, so anything not stored here never re-enters context).
+    bot_text = getattr(sent_message, "content", "") or ""
+    if bot_text.strip():
+        content_parts.append({"type": "text", "text": bot_text})
+
+    # Add the embed description text after the images (matching how user
+    # images are formatted)
     if client_text:
         content_parts.append({"type": "text", "text": client_text})
 

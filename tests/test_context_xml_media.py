@@ -156,7 +156,7 @@ def _make_attachment(filename="photo.png", content_type="image/png", size=100,
     return att
 
 
-def _make_message(author=None, content="", attachments=None, reference=None):
+def _make_message(author=None, content="", attachments=None, reference=None, embeds=None):
     msg = MagicMock()
     msg.id = 123456789
     msg.author = author or _make_author()
@@ -164,6 +164,7 @@ def _make_message(author=None, content="", attachments=None, reference=None):
     msg.channel.id = 555
     msg.content = content
     msg.attachments = attachments or []
+    msg.embeds = embeds or []
     msg.reference = reference
     msg.created_at = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
     return msg

@@ -53,8 +53,9 @@ class MessageConverter():
             await self.add_entry(self.message_cache[message.id], res, role)
             return res
 
-        # Check for image URLs in message text (before attachment handling)
-        if message.content:
+        # Check for image URLs in message text (before attachment handling).
+        # Skipped when the message also has attachments so they aren't dropped.
+        if message.content and not message.attachments:
             handled_by_urls = await self.handle_image_urls(message, res, role)
             if handled_by_urls:
                 return res
@@ -185,12 +186,22 @@ class MessageConverter():
                     else:
                         all_content_parts.append({"type": "text", "text": content})
 
+            # Emit markers for non-image attachments so they aren't invisible
+            for att in message.attachments:
+                if not (att.content_type and att.content_type.startswith('image/')):
+                    all_content_parts.append({"type": "text", "text": format_attachment_marker(att)})
+
             if all_content_parts:
                 # Add the message text content or metadata header once, at the end
                 if message.content and message.content.strip():
                     all_content_parts.append({"type": "text", "text": format_text_content(message)})
                 elif message.author.id != message.guild.me.id:
                     all_content_parts.append({"type": "text", "text": f'{_get_msg_header(message)}</message>'})
+
+                # Preserve any embed text (e.g. another bot's image caption)
+                embed_content = await self._format_embed_content(message)
+                if embed_content:
+                    all_content_parts.append({"type": "text", "text": embed_content})
 
                 entry = MessageEntry(role, all_content_parts)
                 res.append(entry)
@@ -199,8 +210,10 @@ class MessageConverter():
                 self.message_cache[cache_key] = all_content_parts
                 return
 
-        # Fall through to single-attachment logic for non-image attachments
-        if message.attachments[0].content_type.startswith('image/'):
+        # Fall through to single-attachment logic for non-image attachments.
+        # content_type can be None for some attachments; treat as empty string.
+        first_content_type = message.attachments[0].content_type or ""
+        if first_content_type.startswith('image/'):
             if await self._is_scan_enabled(message) and (
                 message.attachments[0].size <= await self.config.guild(message.guild).max_image_size()
             ):
@@ -212,7 +225,7 @@ class MessageConverter():
                 content = format_generic_image(message)
                 await self.add_entry(content, res, role)
 
-        elif any(message.attachments[0].content_type.startswith(content_type) for content_type in SUPPORTED_TEXT_DOCUMENT_CONTENT_TYPES):
+        elif any(first_content_type.startswith(content_type) for content_type in SUPPORTED_TEXT_DOCUMENT_CONTENT_TYPES):
             if (((self.init_msg.id == message.id) or (self.init_msg.reference and self.init_msg.reference.message_id == message.id))
                 and not self.ctx.interaction and await self.config.guild(message.guild).scan_images() and
                 (message.attachments[0].size <= await self.config.guild(message.guild).max_image_size())):
@@ -226,7 +239,7 @@ class MessageConverter():
                 content = format_generic_document(message)
                 await self.add_entry(content, res, role)
 
-        elif any(message.attachments[0].content_type.startswith(content_type) for content_type in SUPPORTED_BINARY_DOCUMENT_CONTENT_TYPES):
+        elif any(first_content_type.startswith(content_type) for content_type in SUPPORTED_BINARY_DOCUMENT_CONTENT_TYPES):
             if (((self.init_msg.id == message.id) or (self.init_msg.reference and self.init_msg.reference.message_id == message.id))
                 and not self.ctx.interaction and await self.config.guild(message.guild).scan_images() and
                 (message.attachments[0].size <= await self.config.guild(message.guild).max_image_size())):
@@ -246,8 +259,32 @@ class MessageConverter():
             content = format_generic_attachment(message)
             await self.add_entry(content, res, role)
 
+        # Emit markers for any additional attachments beyond the first so
+        # they are not silently dropped from context.
+        extra = format_extra_attachments(message)
+        if extra:
+            await self.add_entry(extra, res, role)
+
+        # Preserve any embed text — convert() prioritizes attachments over
+        # embeds, so a message with both (e.g. another bot's image response
+        # carrying its caption in an embed) would otherwise lose the embed.
+        embed_content = await self._format_embed_content(message)
+        await self.add_entry(embed_content, res, role)
+
         content = format_text_content(message)
         await self.add_entry(content, res, role)
+
+    async def _format_embed_content(self, message: Message):
+        """Return formatted embed content for a message, or None.
+
+        Used by handle_attachment() so messages with both attachments and
+        embeds don't silently lose the embed text.
+        """
+        if not message.embeds or not is_embed_valid(message):
+            return None
+        if self.bot_id and RESPONSE_EMBED_TITLE_REGEX.search(message.embeds[0].title or ""):
+            return await format_bot_embed_content(self.cog, message)
+        return await format_embed_content(self.cog, message)
 
     async def handle_embed(self, message: Message, res, role):
         if self.bot_id and RESPONSE_EMBED_TITLE_REGEX.search(message.embeds[0].title):
@@ -327,6 +364,29 @@ async def transcribe_image_single(cog: MixinMeta, message: Message, attachment):
 
 
 _QUOTE_ESCAPES = {'"': "&" + "quot;"}
+
+
+def format_attachment_marker(attachment) -> str:
+    """Return the XML placeholder tag for a single attachment (image or file)."""
+    from xml.sax.saxutils import escape
+    title = f' title="{escape(attachment.title, _QUOTE_ESCAPES)}"' if attachment.title else ""
+    desc = f' description="{escape(attachment.description, _QUOTE_ESCAPES)}"' if attachment.description else ""
+    filename = escape(attachment.filename or "", _QUOTE_ESCAPES)
+    tag = "image" if (attachment.content_type or "").startswith("image/") else "file"
+    return f'<{tag} filename="{filename}"{title}{desc}/>'
+
+
+def format_extra_attachments(message: Message):
+    """Format attachments beyond the first as placeholder tags in the standard schema.
+
+    Returns None when the message has one or zero attachments.
+    """
+    if len(message.attachments) <= 1:
+        return None
+    markers = " ".join(format_attachment_marker(a) for a in message.attachments[1:])
+    if message.author.id == message.guild.me.id:
+        return f"Sent {markers}"
+    return f'{_get_msg_header(message)}{markers}</message>'
 
 
 def format_generic_image_single(attachment) -> str:
