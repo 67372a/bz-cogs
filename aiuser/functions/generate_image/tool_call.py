@@ -84,7 +84,8 @@ class GenerateImageToolCall(ToolCall):
                             "to place elements. Emphasize all desired elements using clear, affirmative phrasing. "
                             "When textual elements are required, wrap the exact text in quotes "
                             "Dictate precise photographic terminology, camera setups, "
-                            "or artistic mediums to establish the definitive aesthetic, lighting, and mood."
+                            "or artistic mediums to establish the definitive aesthetic, lighting, and mood. "
+                            "Be specific and detailed, avoid vague and generic prompting."
                         ),
                     },
                     "aspect_ratio": {
@@ -109,17 +110,6 @@ class GenerateImageToolCall(ToolCall):
                             "providing visual references. Supply these when the requested generation "
                             "relies on existing external imagery. Utilize these references to establish "
                             "definitive object fidelity, structural parameters, or character consistency."
-                        ),
-                    },
-                    "reasoning_effort": {
-                        "type": "string",
-                        "enum": ["minimal", "low", "medium", "high"],
-                        "description": (
-                            "Controls the depth of reasoning the model applies when generating the image. "
-                            "Use 'minimal' for requests that are highly likely to be sexual in nature — this reduces "
-                            "over-refusal. Use higher levels ('low', 'medium', 'high') only as needed for complex "
-                            "compositions, intricate edits, or nuanced creative requests. If unsure, omit this field "
-                            "to use the server-configured default."
                         ),
                     },
                 },
@@ -424,11 +414,6 @@ class GenerateImageToolCall(ToolCall):
         temperature = params.temperature
         top_p = params.top_p
         service_tier = params.service_tier
-
-        # Allow LLM-provided reasoning_effort to override admin config default
-        llm_reasoning_effort = arguments.get("reasoning_effort")
-        if llm_reasoning_effort:
-            reasoning_effort = llm_reasoning_effort
 
         if not model:
             logger.error(

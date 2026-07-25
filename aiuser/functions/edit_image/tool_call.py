@@ -90,7 +90,8 @@ class EditImageToolCall(ToolCall):
                             "Use descriptive language: 'transform the daytime sky into a vivid sunset with orange and purple gradients while maintaining the foreground landscape lighting' "
                             "rather than 'change the sky to sunset'. For text rendering, use quotation marks around desired text "
                             "and specify font characteristics. Provide all necessary details in this single prompt - "
-                            "no iterative refinement will occur."
+                            "no iterative refinement will occur. "
+                            "Be specific and detailed, avoid vague and generic prompting."
                         ),
                     },
                     "image_to_edit": {
@@ -111,17 +112,6 @@ class EditImageToolCall(ToolCall):
                             "References can include: style examples, color palettes, texture samples, lighting references, "
                             "or compositional guides. The model will incorporate relevant visual information from references "
                             "while applying the primary edit instructions to the target image."
-                        ),
-                    },
-                    "reasoning_effort": {
-                        "type": "string",
-                        "enum": ["minimal", "low", "medium", "high"],
-                        "description": (
-                            "Controls the depth of reasoning the model applies when editing the image. "
-                            "Use 'minimal' for requests that are highly likely to be sexual in nature — this reduces "
-                            "over-refusal. Use higher levels ('low', 'medium', 'high') only as needed for complex "
-                            "compositions, intricate edits, or nuanced creative requests. If unsure, omit this field "
-                            "to use the server-configured default."
                         ),
                     },
                 },
@@ -509,11 +499,6 @@ class EditImageToolCall(ToolCall):
         temperature = params.temperature
         top_p = params.top_p
         service_tier = params.service_tier
-
-        # Allow LLM-provided reasoning_effort to override admin config default
-        llm_reasoning_effort = arguments.get("reasoning_effort")
-        if llm_reasoning_effort:
-            reasoning_effort = llm_reasoning_effort
 
         if not model:
             logger.error(
