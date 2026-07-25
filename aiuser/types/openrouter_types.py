@@ -52,9 +52,9 @@ class DirectImageGenerationParameters:
 
     Configurable via `[p]aiuser functions generate_image_config`.
     """
-    model: Optional[str] = None            # e.g. "google/gemini-3.1-flash-image-preview"
+    model: Optional[str] = None            # e.g. "google/gemini-3.1-flash-image"
     image_size: Optional[str] = None       # "1K", "2K", "4K", "0.5K"
-    reasoning_effort: Optional[str] = "medium"  # "low", "medium", "high", or None (API default)
+    reasoning_effort: Optional[str] = "minimal"  # "minimal", "low", "medium", "high", or None (API default)
     temperature: Optional[float] = None    # 0.0–2.0, controls randomness
     top_p: Optional[float] = None          # 0.0–1.0, nucleus sampling
     service_tier: Optional[str] = None     # "flex", "priority", or None (uses dedicated config or API default)
@@ -70,9 +70,9 @@ class DirectImageEditParameters:
 
     Configurable via `[p]aiuser functions edit_image_config`.
     """
-    model: Optional[str] = None            # e.g. "google/gemini-3.1-flash-image-preview"
+    model: Optional[str] = None            # e.g. "google/gemini-3.1-flash-image"
     image_size: Optional[str] = None       # "1K", "2K", "4K", "0.5K"
-    reasoning_effort: Optional[str] = "medium"  # "low", "medium", "high", or None (API default)
+    reasoning_effort: Optional[str] = "minimal"  # "minimal", "low", "medium", "high", or None (API default)
     temperature: Optional[float] = None    # 0.0–2.0, controls randomness
     top_p: Optional[float] = None          # 0.0–1.0, nucleus sampling
     service_tier: Optional[str] = None     # "flex", "priority", or None (uses dedicated config or API default)

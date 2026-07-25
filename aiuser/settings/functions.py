@@ -564,7 +564,7 @@ class FunctionCallingSettings(MixinMeta):
         To show current parameters, use `{ctx.clean_prefix}aiuser functions generate_image_config show`
 
         Example command:
-        `{ctx.clean_prefix}aiuser functions generate_image_config ```json\n{"model": "google/gemini-3.1-flash-image-preview", "image_size": "2K", "reasoning_effort": "medium", "temperature": 0.8, "top_p": 0.95, "service_tier": "flex"}\n``` `
+        `{ctx.clean_prefix}aiuser functions generate_image_config ```json\n{"model": "google/gemini-3.1-flash-image", "image_size": "1K", "reasoning_effort": "minimal", "temperature": 0.9, "top_p": 0.95, "service_tier": "flex"}\n``` `
 
         Valid fields: model, image_size, reasoning_effort, temperature, top_p, service_tier
         """
@@ -574,10 +574,10 @@ class FunctionCallingSettings(MixinMeta):
             tool_type="direct_image_generation",
             param_display_name="Direct Image Generation",
             example_config={
-                "model": "google/gemini-3.1-flash-image-preview",
-                "image_size": "2K",
-                "reasoning_effort": "medium",
-                "temperature": 0.8,
+                "model": "google/gemini-3.1-flash-image",
+                "image_size": "1K",
+                "reasoning_effort": "minimal",
+                "temperature": 0.9,
                 "top_p": 0.95,
                 "service_tier": "flex",
             },
@@ -658,7 +658,7 @@ class FunctionCallingSettings(MixinMeta):
         To show current parameters, use `{ctx.clean_prefix}aiuser functions edit_image_config show`
 
         Example command:
-        `{ctx.clean_prefix}aiuser functions edit_image_config ```json\n{"model": "google/gemini-3.1-flash-image-preview", "image_size": "2K", "reasoning_effort": "medium", "temperature": 0.8, "top_p": 0.95, "service_tier": "flex"}\n``` `
+        `{ctx.clean_prefix}aiuser functions edit_image_config ```json\n{"model": "google/gemini-3.1-flash-image", "image_size": "1K", "reasoning_effort": "minimal", "temperature": 0.9, "top_p": 0.95, "service_tier": "flex"}\n``` `
 
         Valid fields: model, image_size, reasoning_effort, temperature, top_p, service_tier
         """
@@ -668,10 +668,10 @@ class FunctionCallingSettings(MixinMeta):
             tool_type="direct_image_edit",
             param_display_name="Edit Image",
             example_config={
-                "model": "google/gemini-3.1-flash-image-preview",
-                "image_size": "2K",
-                "reasoning_effort": "medium",
-                "temperature": 0.8,
+                "model": "google/gemini-3.1-flash-image",
+                "image_size": "1K",
+                "reasoning_effort": "minimal",
+                "temperature": 0.9,
                 "top_p": 0.95,
                 "service_tier": "flex",
             },
