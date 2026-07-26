@@ -286,6 +286,15 @@ def is_using_openrouter_endpoint(client: AsyncOpenAI):
     return str(client.base_url).startswith(OPENROUTER_URL)
 
 
+def _all_subclasses(cls):
+    """Recursively collect all subclasses of *cls* (not just direct ones)."""
+    result = []
+    for subclass in cls.__subclasses__():
+        result.append(subclass)
+        result.extend(_all_subclasses(subclass))
+    return result
+
+
 async def get_enabled_tools(config: Config, ctx: commands.Context) -> list:
     functions_dir = Path(__file__).parent.parent / 'functions'
 
@@ -297,7 +306,7 @@ async def get_enabled_tools(config: Config, ctx: commands.Context) -> list:
                 continue
 
     enabled_tools = await config.guild(ctx.guild).function_calling_functions()
-    tool_classes = {cls.function_name: cls for cls in ToolCall.__subclasses__()}
+    tool_classes = {cls.function_name: cls for cls in _all_subclasses(ToolCall)}
 
     return [tool_classes[name](config=config, ctx=ctx)
             for name in enabled_tools
