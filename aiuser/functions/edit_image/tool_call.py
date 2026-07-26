@@ -13,7 +13,7 @@ from openai import AsyncOpenAI
 from redbot.core import Config, commands
 from redbot.core.bot import Red
 
-from aiuser.functions.tool_call import ToolCall
+from aiuser.functions.tool_call import ImageToolCall
 from aiuser.functions.types import Function, Parameters, ToolCallSchema
 from aiuser.types.openrouter_types import (
     DirectImageEditParameters,
@@ -47,7 +47,7 @@ IMAGE_EXTENSIONS = frozenset({
 MAX_IMAGE_DOWNLOAD_SIZE = 20 * 1024 * 1024
 
 
-class EditImageToolCall(ToolCall):
+class EditImageToolCall(ImageToolCall):
     """Local ToolCall that edits existing images via direct OpenRouter API call.
 
     Similar to GenerateImageToolCall but takes a dedicated `image_to_edit` field
@@ -622,19 +622,19 @@ class EditImageToolCall(ToolCall):
         )
 
         try:
-            response = await client.chat.completions.create(
+            response = await self._create_image_completion_with_retry(
+                client=client,
                 model=model,
                 messages=messages,
                 extra_body=extra_body,
                 user=user_digest,
-                stream=False,
                 **api_kwargs,
             )
         except Exception as e:
             logger.error(
-                f"[EditImage] API call failed for guild {self.ctx.guild.name}: {e}"
+                f"[EditImage] API call failed for guild {self.ctx.guild.name} after retries: {e}"
             )
-            return f"Error: Image edit API call failed: {str(e)}"
+            return f"Error: Image edit API call failed after retries: {str(e)}"
 
         # Extract images from the response
         images = self._extract_images_from_response(response)
