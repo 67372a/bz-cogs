@@ -660,7 +660,8 @@ class GenerateImageToolCall(ImageToolCall):
                         processed_data_url = image_data_url  # fallback
 
                     content_parts.append({
-                        "image": processed_data_url,
+                        "type": "image_url",
+                        "image_url": {"url": processed_data_url},
                     })
             except Exception as e:
                 logger.error(
