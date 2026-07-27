@@ -11,6 +11,7 @@ import sys
 import types
 from unittest.mock import AsyncMock, MagicMock
 
+import openai
 import pytest
 
 from tests.mock_importer import _make_mock_package, import_module_directly
@@ -61,7 +62,10 @@ tool_call_mod = import_module_directly(
 ImageToolCall = tool_call_mod.ImageToolCall
 ToolCall = tool_call_mod.ToolCall
 is_image_response_unsatisfactory = tool_call_mod.is_image_response_unsatisfactory
+_response_has_image_data = tool_call_mod._response_has_image_data
+_unwrap_retry_error = tool_call_mod._unwrap_retry_error
 
+from tenacity import RetryError
 from openai.types.chat import ChatCompletion
 from openai.types.chat.chat_completion import Choice
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
@@ -71,11 +75,16 @@ from openai.types.chat.chat_completion_message import ChatCompletionMessage
 # Helpers
 # ---------------------------------------------------------------------------
 
+# A minimal valid base64-encoded 1x1 PNG for test data URLs
+_TEST_IMAGE_DATA_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 
-def _make_completion(content=None, finish_reason="stop"):
+
+def _make_completion(content=None, finish_reason="stop", with_image=False):
     """Build a ChatCompletion for testing.
 
     ``content=None`` produces an empty ``choices`` list.
+    ``with_image=True`` attaches image data in ``model_extra`` so the response
+    is considered satisfactory by ``is_image_response_unsatisfactory``.
     Uses ``Choice.model_construct`` to bypass Pydantic validation so that
     non-standard finish_reason values like ``"error"`` can be tested.
     """
@@ -86,6 +95,12 @@ def _make_completion(content=None, finish_reason="stop"):
             role="assistant", content=content, tool_calls=None,
             function_call=None, reasoning=None, audio=None,
         )
+        if with_image:
+            message.__pydantic_extra__ = {
+                "images": [
+                    {"type": "image_url", "image_url": {"url": _TEST_IMAGE_DATA_URL}}
+                ]
+            }
         choices = [
             Choice.model_construct(
                 index=0,
@@ -118,6 +133,52 @@ def _make_image_tool_call() -> ImageToolCall:
 # ---------------------------------------------------------------------------
 
 
+class TestResponseHasImageData:
+    """Tests for _response_has_image_data helper."""
+
+    def test_none_choices_returns_false(self):
+        response = _make_completion(content=None)
+        assert _response_has_image_data(response) is False
+
+    def test_text_only_content_returns_false(self):
+        response = _make_completion(content="Here is your image")
+        assert _response_has_image_data(response) is False
+
+    def test_model_extra_images_list_returns_true(self):
+        response = _make_completion(content="Here you go", with_image=True)
+        assert _response_has_image_data(response) is True
+
+    def test_model_extra_images_string_returns_true(self):
+        message = ChatCompletionMessage.model_construct(
+            role="assistant", content="Here", tool_calls=None,
+            function_call=None, reasoning=None, audio=None,
+        )
+        message.__pydantic_extra__ = {"images": _TEST_IMAGE_DATA_URL}
+        choice = Choice.model_construct(
+            index=0, message=message, finish_reason="stop", logprobs=None,
+        )
+        response = ChatCompletion.model_construct(
+            id="test-id", choices=[choice], created=0,
+            model="test-model", object="chat.completion", usage=None,
+        )
+        assert _response_has_image_data(response) is True
+
+    def test_content_with_data_url_returns_true(self):
+        message = ChatCompletionMessage.model_construct(
+            role="assistant",
+            content=f"Image: {_TEST_IMAGE_DATA_URL}",
+            tool_calls=None, function_call=None, reasoning=None, audio=None,
+        )
+        choice = Choice.model_construct(
+            index=0, message=message, finish_reason="stop", logprobs=None,
+        )
+        response = ChatCompletion.model_construct(
+            id="test-id", choices=[choice], created=0,
+            model="test-model", object="chat.completion", usage=None,
+        )
+        assert _response_has_image_data(response) is True
+
+
 class TestIsImageResponseUnsatisfactory:
     def test_none_response_is_unsatisfactory(self):
         assert is_image_response_unsatisfactory(None) is True
@@ -134,9 +195,20 @@ class TestIsImageResponseUnsatisfactory:
         response = _make_completion(content="Some content", finish_reason="content_filter")
         assert is_image_response_unsatisfactory(response) is True
 
-    def test_valid_response_with_stop_is_satisfactory(self):
-        response = _make_completion(content="Here is your image data")
+    def test_text_only_stop_response_is_unsatisfactory(self):
+        """A stop response with no image data should trigger retry."""
+        response = _make_completion(content="I cannot generate images")
+        assert is_image_response_unsatisfactory(response) is True
+
+    def test_stop_response_with_image_data_is_satisfactory(self):
+        """A stop response that contains image data should be satisfactory."""
+        response = _make_completion(content="Here is your image", with_image=True)
         assert is_image_response_unsatisfactory(response) is False
+
+    def test_error_finish_reason_with_image_still_unsatisfactory(self):
+        """Error finish_reason is unsatisfactory even if image data is present."""
+        response = _make_completion(content="Partial", finish_reason="error", with_image=True)
+        assert is_image_response_unsatisfactory(response) is True
 
     def test_valid_response_with_length_finish_is_satisfactory(self):
         response = _make_completion(content="Partial response", finish_reason="length")
@@ -148,12 +220,90 @@ class TestIsImageResponseUnsatisfactory:
 # ---------------------------------------------------------------------------
 
 
+class TestUnwrapRetryError:
+    """Tests for _unwrap_retry_error helper."""
+
+    def test_unwrap_exception_based_retry(self):
+        """Should describe the inner exception for exception-based retries."""
+        mock_attempt = MagicMock()
+        mock_attempt.failed = True
+        mock_attempt.exception.return_value = openai.RateLimitError(
+            message="rate limited",
+            response=MagicMock(status_code=429, headers={}),
+            body=None,
+        )
+        mock_retry_error = MagicMock(spec=RetryError)
+        mock_retry_error.last_attempt = mock_attempt
+
+        result = _unwrap_retry_error(mock_retry_error)
+
+        assert "RateLimitError" in result
+        assert "rate limited" in result
+
+    def test_unwrap_result_based_retry_with_chat_completion(self):
+        """Should extract finish_reason and content preview from ChatCompletion."""
+        unsatisfactory = _make_completion(
+            content="I cannot generate images for you", finish_reason="stop"
+        )
+        mock_attempt = MagicMock()
+        mock_attempt.failed = False
+        mock_attempt.result.return_value = unsatisfactory
+        mock_retry_error = MagicMock(spec=RetryError)
+        mock_retry_error.last_attempt = mock_attempt
+
+        result = _unwrap_retry_error(mock_retry_error)
+
+        assert "finish_reason=stop" in result
+        assert "I cannot generate images" in result
+
+    def test_unwrap_result_based_retry_with_none(self):
+        """Should handle None result gracefully."""
+        mock_attempt = MagicMock()
+        mock_attempt.failed = False
+        mock_attempt.result.return_value = None
+        mock_retry_error = MagicMock(spec=RetryError)
+        mock_retry_error.last_attempt = mock_attempt
+
+        result = _unwrap_retry_error(mock_retry_error)
+
+        assert "None" in result
+
+    def test_unwrap_result_based_retry_with_no_choices(self):
+        """Should handle result with empty choices."""
+        no_choices = _make_completion(content=None)
+        mock_attempt = MagicMock()
+        mock_attempt.failed = False
+        mock_attempt.result.return_value = no_choices
+        mock_retry_error = MagicMock(spec=RetryError)
+        mock_retry_error.last_attempt = mock_attempt
+
+        result = _unwrap_retry_error(mock_retry_error)
+
+        assert "Unsatisfactory" in result
+
+    def test_unwrap_long_content_is_truncated(self):
+        """Should truncate long content previews to 200 chars."""
+        long_content = "x" * 500
+        unsatisfactory = _make_completion(content=long_content, finish_reason="stop")
+        mock_attempt = MagicMock()
+        mock_attempt.failed = False
+        mock_attempt.result.return_value = unsatisfactory
+        mock_retry_error = MagicMock(spec=RetryError)
+        mock_retry_error.last_attempt = mock_attempt
+
+        result = _unwrap_retry_error(mock_retry_error)
+
+        assert "..." in result
+        # Should not contain the full 500-char string
+        assert long_content not in result
+
+
 class TestCreateImageCompletionWithRetry:
     @pytest.mark.asyncio
     async def test_returns_valid_response(self):
         tool = _make_image_tool_call()
         mock_client = MagicMock()
-        expected = _make_completion(content="Image generated successfully")
+        expected = _make_completion(content="Image generated successfully", with_image=True)
         mock_client.chat.completions.create = AsyncMock(return_value=expected)
 
         result = await tool._create_image_completion_with_retry(
@@ -177,7 +327,7 @@ class TestCreateImageCompletionWithRetry:
             response=MagicMock(status_code=429, headers={}),
             body=None,
         )
-        expected = _make_completion(content="Success after retry")
+        expected = _make_completion(content="Success after retry", with_image=True)
         mock_client.chat.completions.create = AsyncMock(
             side_effect=[rate_limit_error, expected]
         )
@@ -209,7 +359,7 @@ class TestCreateImageCompletionWithRetry:
         mock_client = MagicMock()
 
         conn_error = openai.APIConnectionError(request=MagicMock())
-        expected = _make_completion(content="Success after retry")
+        expected = _make_completion(content="Success after retry", with_image=True)
         mock_client.chat.completions.create = AsyncMock(
             side_effect=[conn_error, expected]
         )
@@ -239,7 +389,7 @@ class TestCreateImageCompletionWithRetry:
         mock_client = MagicMock()
 
         empty = _make_completion(content=None)
-        expected = _make_completion(content="Image data here")
+        expected = _make_completion(content="Image data here", with_image=True)
         mock_client.chat.completions.create = AsyncMock(
             side_effect=[empty, expected]
         )
@@ -269,7 +419,7 @@ class TestCreateImageCompletionWithRetry:
         mock_client = MagicMock()
 
         error_response = _make_completion(content="Error output", finish_reason="error")
-        expected = _make_completion(content="Image data here")
+        expected = _make_completion(content="Image data here", with_image=True)
         mock_client.chat.completions.create = AsyncMock(
             side_effect=[error_response, expected]
         )
@@ -301,9 +451,39 @@ class TestCreateImageCompletionWithRetry:
         filter_response = _make_completion(
             content="Filtered", finish_reason="content_filter"
         )
-        expected = _make_completion(content="Image data here")
+        expected = _make_completion(content="Image data here", with_image=True)
         mock_client.chat.completions.create = AsyncMock(
             side_effect=[filter_response, expected]
+        )
+
+        from tenacity import stop_after_attempt, wait_none
+
+        monkeypatch.setattr(
+            tool._create_image_completion_with_retry.retry, "wait", wait_none()
+        )
+        monkeypatch.setattr(
+            tool._create_image_completion_with_retry.retry,
+            "stop",
+            stop_after_attempt(3),
+        )
+
+        result = await tool._create_image_completion_with_retry(
+            client=mock_client, model="test-model", messages=[], user="test-user"
+        )
+
+        assert result == expected
+        assert mock_client.chat.completions.create.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_retries_on_text_only_stop_response(self, monkeypatch):
+        """Should retry when model returns text-only (no image) with stop reason."""
+        tool = _make_image_tool_call()
+        mock_client = MagicMock()
+
+        text_only = _make_completion(content="I cannot generate images", finish_reason="stop")
+        expected = _make_completion(content="Here is your image", with_image=True)
+        mock_client.chat.completions.create = AsyncMock(
+            side_effect=[text_only, expected]
         )
 
         from tenacity import stop_after_attempt, wait_none
@@ -373,7 +553,7 @@ class TestCreateImageCompletionWithRetry:
         """Should forward extra_body and other kwargs to the client."""
         tool = _make_image_tool_call()
         mock_client = MagicMock()
-        expected = _make_completion(content="Success")
+        expected = _make_completion(content="Success", with_image=True)
         mock_client.chat.completions.create = AsyncMock(return_value=expected)
 
         extra_body = {"modalities": ["image", "text"]}

@@ -13,7 +13,7 @@ from openai import AsyncOpenAI
 from redbot.core import Config, commands
 from redbot.core.bot import Red
 
-from aiuser.functions.tool_call import ImageToolCall
+from aiuser.functions.tool_call import ImageToolCall, RetryError, _unwrap_retry_error
 from aiuser.functions.types import Function, Parameters, ToolCallSchema
 from aiuser.types.openrouter_types import (
     DirectImageGenerationParameters,
@@ -548,11 +548,17 @@ class GenerateImageToolCall(ImageToolCall):
                 user=user_digest,
                 **api_kwargs,
             )
+        except RetryError as e:
+            error_detail = _unwrap_retry_error(e)
+            logger.error(
+                f"[DirectImageGen] API call failed for guild {self.ctx.guild.name} after retries: {error_detail}"
+            )
+            return f"Error: Image generation API call failed after retries: {error_detail}"
         except Exception as e:
             logger.error(
-                f"[DirectImageGen] API call failed for guild {self.ctx.guild.name} after retries: {e}"
+                f"[DirectImageGen] API call failed for guild {self.ctx.guild.name}: {type(e).__name__}: {e}"
             )
-            return f"Error: Image generation API call failed after retries: {str(e)}"
+            return f"Error: Image generation API call failed: {type(e).__name__}: {str(e)}"
 
         # Extract images from the response
         images = self._extract_images_from_response(response)
