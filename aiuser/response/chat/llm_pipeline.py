@@ -594,8 +594,8 @@ class LLMPipeline:
         return llm_content, llm_reasoning, llm_tool_calls, llm_reasoning_details, llm_model_extra
 
     @retry(
-        wait=wait_random_exponential(min=1, max=5),
-        stop=stop_after_attempt(4),
+        wait=wait_random_exponential(min=1, max=4),
+        stop=stop_after_attempt(5),
         retry=(
             retry_if_exception_type((
                 openai.RateLimitError,

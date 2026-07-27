@@ -75,8 +75,8 @@ class ImageToolCall(ToolCall):
     """
 
     @retry(
-        wait=wait_random_exponential(min=1, max=5),
-        stop=stop_after_attempt(4),
+        wait=wait_random_exponential(min=1, max=4),
+        stop=stop_after_attempt(5),
         retry=(
             retry_if_exception_type((
                 openai.RateLimitError,
