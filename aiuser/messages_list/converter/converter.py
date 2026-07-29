@@ -282,12 +282,25 @@ class MessageConverter():
         """
         if not message.embeds or not is_embed_valid(message):
             return None
-        if self.bot_id and RESPONSE_EMBED_TITLE_REGEX.search(message.embeds[0].title or ""):
+        if self._is_own_response_embed(message):
             return await format_bot_embed_content(self.cog, message)
         return await format_embed_content(self.cog, message)
 
+    def _is_own_response_embed(self, message: Message) -> bool:
+        """True only for THIS bot's own "X's Response" embeds.
+
+        The title regex alone would also match other bots' response embeds
+        (e.g. another aiuser instance), which must keep their XML metadata.
+        """
+        if not message.embeds:
+            return False
+        return (
+            message.author.id == self.bot_id
+            and bool(RESPONSE_EMBED_TITLE_REGEX.search(message.embeds[0].title or ""))
+        )
+
     async def handle_embed(self, message: Message, res, role):
-        if self.bot_id and RESPONSE_EMBED_TITLE_REGEX.search(message.embeds[0].title):
+        if self._is_own_response_embed(message):
             content = await format_bot_embed_content(self.cog, message)
         else:
             content = await format_embed_content(self.cog, message)
