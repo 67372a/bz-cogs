@@ -7,7 +7,11 @@ from redbot.core import commands
 from aiuser.core.openai_utils import setup_openai_client
 from aiuser.types.abc import MixinMeta
 from aiuser.config.constants import SINGULAR_MENTION_PATTERN
-from aiuser.messages_list.messages import FUNCTION_CALL_EMBED_TITLE_REGEX
+from aiuser.messages_list.messages import (
+    FUNCTION_CALL_EMBED_TITLE_REGEX,
+    THOUGHTS_EMBED_TITLE_REGEX,
+    is_function_call_or_thoughts_embed,
+)
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
@@ -128,8 +132,11 @@ async def check_message_content(cog: MixinMeta, ctx: commands.Context) -> Tuple[
             cog.ignore_regex[ctx.guild.id].search(ctx.message.content)):
         return False, "Message matches ignore regex"
 
-    if await is_reply_to_function_call_embed(cog, ctx.message):
-        return False, "Reply to function call notification embed"
+    if is_function_call_or_thoughts_embed(ctx.message):
+        return False, "Transient function-call or thoughts embed from another bot"
+
+    if await is_reply_to_transient_embed(cog, ctx.message):
+        return False, "Reply to transient function-call or thoughts embed"
 
     return True, ""
 
@@ -140,13 +147,14 @@ async def is_bot_mentioned_or_replied(cog: MixinMeta, message: discord.Message) 
     return cog.bot.user in message.mentions
 
 
-async def is_reply_to_function_call_embed(cog: MixinMeta, message: discord.Message) -> bool:
-    """Check if message is a reply to a function call notification embed.
+async def is_reply_to_transient_embed(cog: MixinMeta, message: discord.Message) -> bool:
+    """Check if message is a reply to a transient function-call or thoughts embed.
 
-    Returns True if the message is a reply to a bot message whose embed title
-    matches the function call notification pattern (e.g. "BotName is making
-    the following function calls...").  This prevents the bot from responding
-    to replies aimed at the transient function-call status embed.
+    Returns True if the message is a reply to a message whose embed title
+    matches either the function-call pattern (e.g. "BotName is making the
+    following function calls...") or the thoughts pattern (e.g.
+    "BotName's Thoughts").  This prevents the bot from responding to replies
+    aimed at transient status embeds from any bot.
     """
     if not message.reference:
         return False
@@ -162,6 +170,9 @@ async def is_reply_to_function_call_embed(cog: MixinMeta, message: discord.Messa
     if not replied.embeds:
         return False
     return any(
-        embed.title and FUNCTION_CALL_EMBED_TITLE_REGEX.search(embed.title)
+        embed.title and (
+            FUNCTION_CALL_EMBED_TITLE_REGEX.search(embed.title)
+            or THOUGHTS_EMBED_TITLE_REGEX.search(embed.title)
+        )
         for embed in replied.embeds
     )
