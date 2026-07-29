@@ -1035,12 +1035,50 @@ class LLMPipeline:
                 continue
             tool_call_id, tool_function_name, tool_result_content = result
 
+            if isinstance(tool_result_content, list) and not tool_result_content:
+                # An empty content list would produce an empty tool message,
+                # which providers may drop — leaving the request ending with
+                # a model turn (Google 400).  Fall back to a plain text
+                # result and let it flow through the normal string path.
+                tool_result_content = (
+                    f"Tool '{tool_function_name}' executed successfully "
+                    f"but returned no content."
+                )
+
             if isinstance(tool_result_content, list):
                 # Tool already returned multimodal content parts (image_url +
                 # text).  Per Gemini 3.5 Flash guidance: "include multimodal
                 # content inside the function response, not outside it."
                 # The tool has already built the correct structure — use it
                 # directly.  Still collect images for Discord sending.
+                # Safety net: guarantee at least one text part in the
+                # multimodal function response.  Gemini requires every
+                # functionResponse to carry a JSON response payload; an
+                # image-only tool message cannot be translated by OpenRouter
+                # into a valid functionResponse and gets dropped, leaving the
+                # request ending with a model turn (Google 400: "Requests
+                # ending with a model turn are not supported.").
+                has_text_part = any(
+                    isinstance(p, dict) and p.get("type") == "text" and p.get("text")
+                    for p in tool_result_content
+                )
+                if not has_text_part:
+                    logger.warning(
+                        "Tool '%s' returned multimodal content with no text part; "
+                        "injecting a synthetic text part to keep the function "
+                        "response valid for Gemini providers",
+                        tool_function_name,
+                    )
+                    tool_result_content = [
+                        {
+                            "type": "text",
+                            "text": (
+                                f"Tool '{tool_function_name}' executed successfully "
+                                f"and returned the attached media content."
+                            ),
+                        },
+                        *tool_result_content,
+                    ]
                 logger.info(
                     "Tool '%s' returned %d multimodal content parts directly",
                     tool_function_name, len(tool_result_content)

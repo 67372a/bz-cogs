@@ -724,6 +724,22 @@ class EditImageToolCall(ImageToolCall):
                 "Error: Image was edited but could not be processed."
             )
 
+        # Prepend a text part so the multimodal function response always
+        # carries textual content.  Gemini requires every functionResponse
+        # to include a JSON response payload; an image-only tool message
+        # cannot be translated by OpenRouter into a valid functionResponse
+        # and gets dropped, leaving the request ending with a model turn
+        # (Google 400: "Requests ending with a model turn are not
+        # supported.").
+        content_parts.insert(0, {
+            "type": "text",
+            "text": (
+                "Successfully edited the image. "
+                "The edited image is attached to this function response and "
+                "will be sent to the user alongside your reply."
+            ),
+        })
+
         logger.info(
             f"[EditImage] Successfully edited image, generated {len(self.generated_images)} result(s) "
             f"for guild {self.ctx.guild.name}"

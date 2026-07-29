@@ -308,7 +308,10 @@ class TestGenerateImageGeminiFiltering:
         assert len(tool.generated_images) == 1
         assert tool.generated_images[0]["data_url"] == _FINAL
         assert isinstance(result, list)
-        assert len(result) == 1
+        # Result contains a leading text part + 1 image (the final one)
+        assert result[0]["type"] == "text"
+        image_parts = [p for p in result if p.get("type") == "image_url"]
+        assert len(image_parts) == 1
 
     @pytest.mark.asyncio
     async def test_gemini_pro_image_keeps_only_final_image(self):
@@ -362,7 +365,10 @@ class TestEditImageGeminiFiltering:
         assert len(tool.generated_images) == 1
         assert tool.generated_images[0]["data_url"] == _FINAL
         assert isinstance(result, list)
-        assert len(result) == 1
+        # Result contains a leading text part + 1 image (the final one)
+        assert result[0]["type"] == "text"
+        image_parts = [p for p in result if p.get("type") == "image_url"]
+        assert len(image_parts) == 1
 
     @pytest.mark.asyncio
     async def test_non_gemini_model_keeps_all_images(self):

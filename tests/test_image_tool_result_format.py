@@ -276,11 +276,20 @@ class TestGenerateImageToolResultFormat:
         assert isinstance(result, list), f"Expected list, got {type(result)}: {result}"
         assert len(result) > 0, "Expected at least one content part"
 
-        for part in result:
+        # First part must be a text part — Gemini requires every
+        # functionResponse to carry textual content; an image-only tool
+        # message is dropped by OpenRouter's translation, causing
+        # "Requests ending with a model turn are not supported" (400).
+        assert result[0].get("type") == "text", (
+            f"First content part must be type='text', got: {result[0]}"
+        )
+        assert result[0].get("text"), "Text part must have non-empty text"
+
+        image_parts = [p for p in result if p.get("type") == "image_url"]
+        assert len(image_parts) > 0, "Expected at least one image_url content part"
+
+        for part in image_parts:
             assert isinstance(part, dict), f"Expected dict, got {type(part)}"
-            # Must have "type" field
-            assert "type" in part, f"Content part missing 'type' field: {part}"
-            assert part["type"] == "image_url", f"Expected type='image_url', got '{part.get('type')}'"
             # Must have "image_url" field with nested "url"
             assert "image_url" in part, f"Content part missing 'image_url' field: {part}"
             assert isinstance(part["image_url"], dict), f"Expected image_url to be dict: {part}"
@@ -377,10 +386,21 @@ class TestEditImageToolResultFormat:
         assert isinstance(result, list), f"Expected list, got {type(result)}: {result}"
         assert len(result) > 0, "Expected at least one content part"
 
-        for part in result:
+        # First part must be a text part — Gemini requires every
+        # functionResponse to carry textual content; an image-only tool
+        # message is dropped by OpenRouter's translation, causing
+        # "Requests ending with a model turn are not supported" (400).
+        assert result[0].get("type") == "text", (
+            f"First content part must be type='text', got: {result[0]}"
+        )
+        assert result[0].get("text"), "Text part must have non-empty text"
+
+        image_parts = [p for p in result if p.get("type") == "image_url"]
+        assert len(image_parts) > 0, "Expected at least one image_url content part"
+
+        for part in image_parts:
             assert isinstance(part, dict), f"Expected dict, got {type(part)}"
             assert "type" in part, f"Content part missing 'type' field: {part}"
-            assert part["type"] == "image_url", f"Expected type='image_url', got '{part.get('type')}'"
             assert "image_url" in part, f"Content part missing 'image_url' field: {part}"
             assert isinstance(part["image_url"], dict), f"Expected image_url to be dict: {part}"
             assert "url" in part["image_url"], f"image_url missing 'url' field: {part}"
