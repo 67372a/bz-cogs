@@ -135,7 +135,7 @@ class MessageConverter():
         text_content = format_text_content(message)
         if text_content:
             content_parts.append({"type": "text", "text": text_content})
-        elif message.author.id != message.guild.me.id:
+        else:
             content_parts.append({"type": "text", "text": f'{_get_msg_header(message)}</message>'})
 
         res.append(MessageEntry(role, content_parts))
@@ -195,7 +195,7 @@ class MessageConverter():
                 # Add the message text content or metadata header once, at the end
                 if message.content and message.content.strip():
                     all_content_parts.append({"type": "text", "text": format_text_content(message)})
-                elif message.author.id != message.guild.me.id:
+                else:
                     all_content_parts.append({"type": "text", "text": f'{_get_msg_header(message)}</message>'})
 
                 # Preserve any embed text (e.g. another bot's image caption)
@@ -355,7 +355,7 @@ class MessageConverter():
         text_content = format_text_content(message)
         if text_content:
             content_parts.append({"type": "text", "text": text_content})
-        elif message.author.id != message.guild.me.id:
+        else:
             content_parts.append({"type": "text", "text": f'{_get_msg_header(message)}</message>'})
 
         res.append(MessageEntry(role, content_parts))
@@ -397,8 +397,6 @@ def format_extra_attachments(message: Message):
     if len(message.attachments) <= 1:
         return None
     markers = " ".join(format_attachment_marker(a) for a in message.attachments[1:])
-    if message.author.id == message.guild.me.id:
-        return f"Sent {markers}"
     return f'{_get_msg_header(message)}{markers}</message>'
 
 
@@ -419,8 +417,4 @@ def format_generic_attachment(message: Message) -> str:
     desc = f' description="{escape(attachment.description, _QUOTE_ESCAPES)}"' if attachment.description else ""
     filename = escape(attachment.filename, _QUOTE_ESCAPES)
     xml_content = f'<file filename="{filename}"{title}{desc}/>'
-
-    if message.author.id == message.guild.me.id:
-        return f"Sent {xml_content}"
-
     return f'{_get_msg_header(message)}{xml_content}</message>'

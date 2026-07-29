@@ -363,8 +363,8 @@ class TestRealFormatterXmlMetadata:
         assert 'username="otherbot"' in converted[0].content
 
     @pytest.mark.asyncio
-    async def test_own_bot_response_embed_stays_raw(self, monkeypatch):
-        """Own response embeds still surface as raw text (no XML wrapper)."""
+    async def test_own_bot_response_embed_wrapped_in_xml(self, monkeypatch):
+        """Own response embeds are now wrapped in XML metadata like all messages."""
         conv, _ = _make_converter()
         msg = _own_bot_msg(embeds=[_make_embed("My Bot's Response", "a generated cat")],
                            content="")
@@ -378,5 +378,8 @@ class TestRealFormatterXmlMetadata:
 
         assert converted is not None
         assert converted[0].role == "assistant"
-        assert converted[0].content == "a generated cat"
-        assert "<message" not in converted[0].content
+        assert converted[0].content.startswith("<message ")
+        assert 'author_id="999"' in converted[0].content
+        assert 'username="mybot"' in converted[0].content
+        assert converted[0].content.endswith("</message>")
+        assert "a generated cat" in converted[0].content

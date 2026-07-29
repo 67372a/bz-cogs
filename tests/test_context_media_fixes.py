@@ -254,7 +254,9 @@ class TestAllAttachmentsMarked:
             _make_attachment(filename="b.zip", content_type="application/zip"),
         ])
         out = converter_mod.format_extra_attachments(msg)
-        assert out == 'Sent <file filename="b.zip"/>'
+        assert out.startswith("<message ")
+        assert out.endswith("</message>")
+        assert '<file filename="b.zip"/>' in out
 
     @pytest.mark.asyncio
     async def test_multi_image_branch_marks_non_image_attachments(self, monkeypatch):
@@ -390,8 +392,8 @@ class TestSystemPromptAppendix:
     def test_documents_document_tag(self):
         assert "<document" in constants_mod.XML_SYSTEM_PROMPT_APPENDIX
 
-    def test_documents_sent_convention(self):
-        assert "Sent" in constants_mod.XML_SYSTEM_PROMPT_APPENDIX
+    def test_documents_all_messages_wrapped(self):
+        assert "all messages" in constants_mod.XML_SYSTEM_PROMPT_APPENDIX.lower()
 
     def test_documents_reply_attributes(self):
         assert "reply_to" in constants_mod.XML_SYSTEM_PROMPT_APPENDIX

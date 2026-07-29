@@ -26,5 +26,8 @@ async def format_embed_content(cog: MixinMeta, message: Message):
     
 async def format_bot_embed_content(cog: MixinMeta, message: Message):
     # This handles the bot's own internal "Thought" or "Response" embeds
-    # We generally want to return raw text here so the LLM sees its own past thoughts as text
-    return message.embeds[0].description
+    # Wrap in XML metadata so the LLM can correlate with message IDs and timestamps
+    description = message.embeds[0].description
+    if not description:
+        return None
+    return f'{_get_msg_header(message)}{description}</message>'

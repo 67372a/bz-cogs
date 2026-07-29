@@ -249,12 +249,16 @@ class TestGenericAttachmentXml:
         # old bracket format gone
         assert "MESSAGE_ID=" not in out
 
-    def test_bot_message_sent_prefix(self):
+    def test_bot_message_xml_wrapped(self):
         bot_author = _make_author(author_id=999, name="bot", display="Bot")
         msg = _make_message(author=bot_author,
                             attachments=[_make_attachment(filename="a.bin", content_type="application/octet-stream")])
         out = converter_mod.format_generic_attachment(msg)
-        assert out == 'Sent <file filename="a.bin"/>'
+        assert out.startswith("<message ")
+        assert 'author_id="999"' in out
+        assert 'username="bot"' in out
+        assert out.endswith("</message>")
+        assert '<file filename="a.bin"/>' in out
 
     def test_no_title_desc_omitted(self):
         msg = _make_message(attachments=[_make_attachment(filename="x.bin")])
