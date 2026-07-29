@@ -12,7 +12,7 @@ import discord
 from discord import AllowedMentions, Embed
 from redbot.core import Config, commands
 
-from aiuser.config.constants import REGEX_RUN_TIMEOUT
+from aiuser.config.constants import REGEX_RUN_TIMEOUT, XML_RESERVED_TAG_PATTERN
 from aiuser.messages_list.messages import MessagesList
 from aiuser.response.chat.llm_pipeline import LLMPipeline, ResponsePart, PipelineResult
 from aiuser.response.chat.function_call_view import ResponseView
@@ -82,6 +82,10 @@ async def _clean_response_text(ctx: commands.Context, cog: MixinMeta, text: str,
 
     Returns the cleaned text, or None if cleaning produced nothing usable.
     """
+    # Hardcoded, non-configurable strip of reserved Semantic XML metadata tags.
+    # Prevents leaking the internal context schema to Discord even if a guild
+    # empties its removelist. Only the tags are removed; inner text is kept.
+    text = XML_RESERVED_TAG_PATTERN.sub('', text)
     try:
         cleaned = await remove_patterns_from_response(ctx, cog.config, text, recent_authors)
     except Exception:

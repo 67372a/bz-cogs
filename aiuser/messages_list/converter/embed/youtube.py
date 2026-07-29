@@ -1,5 +1,6 @@
 
 import logging
+from xml.sax.saxutils import escape
 
 import aiohttp
 from discord import Message
@@ -25,7 +26,7 @@ async def format_youtube_embed(api_key: str, message: Message):
         logger.error(f"Failed request to Youtube API", exc_info=True)
         return None
 
-    return (f'User "{author.name}" with display name "{author.display_name}" sent: [Link to Youtube video with title "{video_title}" and description "{description}" from channel "{channel_title}"]')
+    return (f'User "{escape(author.name)}" with display name "{escape(author.display_name)}" sent: [Link to Youtube video with title "{video_title}" and description "{description}" from channel "{channel_title}"]')
 
 
 async def get_video_id(url):

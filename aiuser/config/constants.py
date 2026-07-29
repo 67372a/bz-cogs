@@ -18,22 +18,31 @@ YOUTUBE_VIDEO_ID_PATTERN = re.compile(
 SINGULAR_MENTION_PATTERN = re.compile(r"^<@!?&?(\d+)>$")
 REGEX_RUN_TIMEOUT = 10
 
+# Reserved tag names of the Semantic XML context format. Tags with these names
+# must never be interpreted from user input (injection) nor shown in output (leak).
+XML_RESERVED_TAG_NAMES = ("message", "image", "file", "sticker", "document")
+# Matches opening, closing, and self-closing tags of the reserved schema.
+# `[^>]` spans newlines, so multi-line attribute lists are covered.
+XML_RESERVED_TAG_PATTERN = re.compile(
+    r"</?(?:" + "|".join(XML_RESERVED_TAG_NAMES) + r")\b[^>]*>",
+    re.IGNORECASE,
+)
+
 
 OPENROUTER_URL = "https://openrouter.ai/api/"
 
 XML_SYSTEM_PROMPT_APPENDIX = (
     "IMPORTANT CONTEXTUAL INSTRUCTIONS:\n"
     "1. The chat history below is formatted in Semantic XML. "
-    "User messages are wrapped in <message> tags containing metadata "
-    "(id, timestamp, author_id, username, displayname, and reply_to_* attributes "
-    "identifying the message and author being replied to).\n"
+    "All messages (including your own past responses) are wrapped in <message> tags "
+    "containing metadata (id, timestamp, author_id, username, displayname, and reply_to_* attributes "
+    "identifying the message and author being replied to). "
+    "You can identify your own past messages by matching author_id against your own bot ID.\n"
     "2. Media attachments are represented by placeholder tags like <image/>, <file/>, or <sticker/> "
     "with filename/title/description attributes. A placeholder tag means the media was NOT provided "
     "to you — do not pretend you can see its contents. Text documents may appear inline as "
     "<document filename=\"...\">content</document>.\n"
-    "3. Messages prefixed with \"Sent\" (e.g. \"Sent <image .../>\") are your own previously sent "
-    "media or attachments, shown without the <message> wrapper.\n"
-    "4. You are part of this chat. Do not output these XML tags yourself. "
+    "3. You are part of this chat. Do not output these XML tags yourself. "
     "Respond naturally with text, inclusive of markdown and emojis as is relevant, adhering to the persona described above."
 )
 

@@ -5,9 +5,22 @@ import base64
 from xml.sax.saxutils import escape
 from discord import Message, MessageType
 
-from aiuser.config.constants import URL_PATTERN
+from aiuser.config.constants import URL_PATTERN, XML_RESERVED_TAG_PATTERN
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
+
+
+def escape_reserved_xml_tags(content: str) -> str:
+    """Neutralize reserved Semantic XML tags in user-provided text.
+
+    Escapes any <message>/<image>/<file>/<sticker>/<document> tags (opening,
+    closing, or self-closing) so a user cannot forge context structure or
+    impersonate messages in the LLM prompt. Other angle brackets are left
+    untouched to preserve readability of normal text (e.g. "a < b").
+    """
+    if not content:
+        return content
+    return XML_RESERVED_TAG_PATTERN.sub(lambda m: escape(m.group(0)), content)
 
 def _get_msg_header(message: Message) -> str:
     """Helper to generate standard XML message header"""
@@ -41,25 +54,15 @@ def format_text_content(message: Message):
     if not message.content or message.content == "" or message.content.isspace():
         return None
         
-    content = mention_to_text(message)
-    
-    # If it's the bot's own message, we return just the content 
-    # TODO: determine if should apply XML to responses
-    if message.author.id == message.guild.me.id:
-        return content
-
-    # Standard User Message
+    content = escape_reserved_xml_tags(mention_to_text(message))
     return f'{_get_msg_header(message)}{content}</message>'
 
 def format_embed_text_content(message: Message):
-    content = mention_to_text(message)
+    content = escape_reserved_xml_tags(mention_to_text(message))
     content = URL_PATTERN.sub("", content)
     if not content or content == "" or content.isspace():
         return None
     
-    if message.author.id == message.guild.me.id:
-        return content
-        
     return f'{_get_msg_header(message)}{content}</message>'
 
 
@@ -73,18 +76,12 @@ def format_generic_image(message: Message):
 
     xml_content = f'<image filename="{filename}"{title}{desc}/>'
 
-    if message.author.id == message.guild.me.id:
-        return f"Sent {xml_content}"
-        
     return f'{_get_msg_header(message)}{xml_content}</message>'
 
 def format_generic_document(message: Message):
     filename = escape(message.attachments[0].filename, _QUOTE_ESCAPES)
     xml_content = f'<file filename="{filename}"/>'
     
-    if message.author.id == message.guild.me.id:
-        return f"Sent {xml_content}"
-        
     return f'{_get_msg_header(message)}{xml_content}</message>'
 
 async def format_binary_document(message: Message):
@@ -157,9 +154,6 @@ async def format_sticker_content(message: Message):
     except Exception:
         sticker_name = escape(message.stickers[0].name)
         xml_content = f'<sticker name="{sticker_name}"/>'
-
-    if message.author.id == message.guild.me.id:
-        return f"Sent {xml_content}"
 
     return f'{_get_msg_header(message)}{xml_content}</message>'
 

@@ -28,13 +28,19 @@ Convert the below message to a Stable Diffusion Art Prompt.  The prompt should h
 """
 DEFAULT_REMOVE_PATTERNS = [
     # Matches the opening <message ...> tag and any potential whitespace/newlines after it
-    r'<message[^>]*>', 
+    r'<message[^>]*>',
     # Matches the closing </message> tag
     r'</message>',
     # Matches self-closing image/file tags if the bot tries to output them
     r'<image[^>]*/>',
     r'<file[^>]*/>',
-    r'<sticker[^>]*/>'
+    r'<sticker[^>]*/>',
+    # Matches document tags and non-self-closing variants of the media tags
+    r'<document[^>]*>',
+    r'</document>',
+    r'<image[^>]*>',
+    r'<file[^>]*>',
+    r'<sticker[^>]*>'
 ]
 
 DEFAULT_IMAGE_REQUEST_TRIGGER_WORDS = [
