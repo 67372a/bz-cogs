@@ -93,12 +93,12 @@ class GenerateImageToolCall(ImageToolCall):
                         "type": "string",
                         "enum":[
                             "1:1", "2:3", "3:2", "3:4", "4:3",
-                            "4:5", "5:4", "9:16", "16:9", "21:9",
-                            "1:4", "4:1", "1:8", "8:1"
+                            "4:5", "5:4", "9:16", "16:9"
                         ],
                         "description": (
-                            "Output canvas ratio. Match the user's requested format or orientation; "
-                            "omit it when no ratio is specified or clearly useful."
+                            "Output canvas ratio. If provided, match the user's requested format or orientation; "
+                            "if not provided, determine best fitting format and orientation given the context; "
+                            "otherwise omit it when no ratio is clearly useful."
                         ),
                     },
                     "reference_messages": {
