@@ -30,7 +30,7 @@
 | Retry Logic | `tenacity` |
 | Web Scraping | `trafilatura` + `BeautifulSoup` |
 | Image Processing | `Pillow`, `opencv-python-headless` (local OCR/BLIP) |
-| HTTP | `aiohttp`, `httpx2` |
+| HTTP | `aiohttp`, `httpx` |
 | Caching | `cachetools` (TTL-based emoji caching), custom LRU `Cache` class |
 
 ## System Architecture Diagram

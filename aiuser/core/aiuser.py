@@ -132,7 +132,7 @@ class AIUser(
         if service_name in ["openai", "openrouter"]:
             old_client = self.openai_client
             self.openai_client = await setup_openai_client(self.bot, self.config)
-            # Close the previous client so its httpx2 connection pool isn't leaked
+            # Close the previous client so its httpx connection pool isn't leaked
             if old_client and old_client is not self.openai_client:
                 try:
                     await old_client.close()
