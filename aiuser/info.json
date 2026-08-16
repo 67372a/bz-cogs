@@ -15,8 +15,6 @@
     ],
     "requirements": [
         "openai==2.54.0",
-        "httpx-aiohttp",
-        "httpx",
         "httpx2",
         "tenacity",
         "tiktoken",
