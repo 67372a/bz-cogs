@@ -1,5 +1,4 @@
 import aiohttp
-import aiohttp.client_exceptions
 
 # Compatibility shims for openai 3.x vendored httpx_aiohttp transport
 if not hasattr(aiohttp, "SocketTimeoutError"):
