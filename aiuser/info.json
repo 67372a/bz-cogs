@@ -19,7 +19,7 @@
         "httpx",
         "httpx2",
         "tenacity",
-        "tiktoken>=0.13.0",
+        "tiktoken",
         "Pillow",
         "trafilatura",
         "aiohttp",
