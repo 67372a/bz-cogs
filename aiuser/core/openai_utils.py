@@ -4,7 +4,7 @@ import random
 from datetime import datetime, timedelta
 from typing import Callable, Optional
 
-import httpx
+import httpx2
 from discord.ext import commands
 from openai import AsyncOpenAI
 from redbot.core import Config
@@ -61,7 +61,7 @@ async def setup_openai_client(
             return None
 
     timeout = await config.openai_endpoint_request_timeout()
-    client = httpx.AsyncClient(
+    client = httpx2.AsyncClient(
         event_hooks={
             "request": [log_request_prompt],
             "response": [create_ratelimit_hook(config)]
@@ -78,7 +78,7 @@ async def setup_openai_client(
     )
 
 
-async def log_request_prompt(request: httpx.Request) -> None:
+async def log_request_prompt(request: httpx2.Request) -> None:
     """Log the request prompt for debugging purposes."""
     endpoint = request.url.path.split("/")[-1]
     if endpoint != "completions":
@@ -110,7 +110,7 @@ async def log_request_prompt(request: httpx.Request) -> None:
         logger.debug(f"Error logging request prompt: {e}")
 
 
-def create_ratelimit_hook(config: Config) -> Callable[[httpx.Response], None]:
+def create_ratelimit_hook(config: Config) -> Callable[[httpx2.Response], None]:
     """Create a hook function for handling rate limit responses.
 
     Args:
@@ -119,7 +119,7 @@ def create_ratelimit_hook(config: Config) -> Callable[[httpx.Response], None]:
     Returns:
         A hook function that updates rate limit information
     """
-    async def update_ratelimit_hook(response: httpx.Response) -> None:
+    async def update_ratelimit_hook(response: httpx2.Response) -> None:
         if not str(response.url).startswith("https://api.openai.com/"):
             return
 

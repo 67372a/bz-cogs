@@ -8,7 +8,7 @@ import hashlib
 import copy
 
 import discord
-import httpx
+import httpx2
 import openai
 from openai.types.chat import ChatCompletion, ChatCompletionMessageToolCall
 from redbot.core import Config, commands
@@ -601,8 +601,8 @@ class LLMPipeline:
                 openai.RateLimitError,
                 openai.APIConnectionError,
                 openai.InternalServerError,
-                httpx.ReadTimeout,
-                httpx.ConnectTimeout,
+                httpx2.ReadTimeout,
+                httpx2.ConnectTimeout,
             ))
             | retry_if_result(is_response_unsatisfactory)
         ),

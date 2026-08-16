@@ -14,12 +14,12 @@
         "add_reactions"
     ],
     "requirements": [
-        "openai==2.47.0",
+        "openai>=3.10.0",
+        "aiohttp",
         "tenacity",
-        "tiktoken>=0.13.0",
+        "tiktoken",
         "Pillow",
         "trafilatura",
-        "aiohttp>=3.14.3",
         "opencv-python-headless",
         "numpy>=1.26.4",
         "cachetools==6.2.6",

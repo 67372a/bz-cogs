@@ -2,7 +2,7 @@
 import logging
 from typing import Any, Dict, Optional
 
-import httpx
+import httpx2
 import openai
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion
@@ -166,8 +166,8 @@ class ImageToolCall(ToolCall):
                 openai.RateLimitError,
                 openai.APIConnectionError,
                 openai.InternalServerError,
-                httpx.ReadTimeout,
-                httpx.ConnectTimeout,
+                httpx2.ReadTimeout,
+                httpx2.ConnectTimeout,
             ))
             | retry_if_result(is_image_response_unsatisfactory)
         ),

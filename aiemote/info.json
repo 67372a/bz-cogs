@@ -10,10 +10,10 @@
         "add_reactions"
     ],
     "requirements": [
-        "openai==2.47.0",
-        "aiohttp>=3.14.3",
+        "openai>=3.10.0",
+        "aiohttp",
         "tenacity",
-        "tiktoken>=0.13.0",
+        "tiktoken",
         "emoji"
     ],
     "end_user_data_statement": "This cog does not persistently store data or metadata about users. With user consent, chat messages may be forwarded to OpenAI or third parties to produce LLM responses. For further details, please consult: https://openai.com/policies/privacy-policy, https://openrouter.ai/privacy, and relevant third-party privacy policies.",
