@@ -14,9 +14,9 @@
         "add_reactions"
     ],
     "requirements": [
-        "openai>=2.47.0",
+        "openai==2.54.0",
         "tenacity",
-        "tiktoken",
+        "tiktoken>=0.13.0",
         "Pillow",
         "trafilatura",
         "aiohttp",
