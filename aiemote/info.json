@@ -10,7 +10,8 @@
         "add_reactions"
     ],
     "requirements": [
-        "openai==3.1.0",
+        "openai==2.54.0",
+        "aiohttp",
         "httpx2",
         "tenacity",
         "tiktoken>=0.13.0",
