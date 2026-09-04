@@ -93,8 +93,12 @@ class MessagesList:
         self.init_message = ctx.message
         self.guild = ctx.guild
         self.ignore_regex = cog.ignore_regex.get(self.guild.id, None)
-        self.start_time = cog.override_prompt_start_time.get(
-            self.guild.id)
+        # Per-channel forget ([p]aiuser forget) takes priority over the
+        # guild-wide prompt reset override
+        self.start_time = (
+            cog.forget_start_times.get(self.ctx.channel.id)
+            or cog.override_prompt_start_time.get(self.guild.id)
+        )
         self.messages: List[MessageEntry] = []
         self.messages_ids = set()
         self.tokens = 0

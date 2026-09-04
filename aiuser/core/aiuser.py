@@ -52,6 +52,8 @@ class AIUser(
         self.channels_whitelist: dict[int, list[int]] = {}
         self.ignore_regex: dict[int, re.Pattern] = {}
         self.override_prompt_start_time: dict[int, datetime] = {}
+        # Per-channel forget timestamps (channel_id -> datetime), set by [p]aiuser forget
+        self.forget_start_times: Cache[int, datetime] = Cache(limit=500)
         self.cached_messages: Cache[int, MessageEntry] = Cache(limit=100)
         self.message_queues: dict[int, asyncio.Queue] = {}
         self.processing_tasks: dict[int, asyncio.Task] = {}

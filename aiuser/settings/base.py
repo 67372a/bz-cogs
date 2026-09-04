@@ -81,7 +81,7 @@ class Settings(
 
     @aiuser.command(aliases=["lobotomize"])
     async def forget(self, ctx: commands.Context):
-        """Forces the bot to forget the current conversation up to this point
+        """Forces the bot to forget the current conversation in this channel up to this point
 
         This is useful if the LLM is stuck doing unwanted behaviour or giving undesirable results.
         See `[p]aiuser triggers public_forget` to allow non-admins to use this command.
@@ -92,7 +92,7 @@ class Settings(
         ):
             return await ctx.react_quietly("❌")
 
-        self.override_prompt_start_time[ctx.guild.id] = ctx.message.created_at
+        self.forget_start_times[ctx.channel.id] = ctx.message.created_at
         await ctx.react_quietly("✅")
 
     @aiuser.command(aliases=["settings", "showsettings"])
