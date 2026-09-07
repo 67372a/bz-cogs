@@ -179,6 +179,21 @@ context for this (see [`MessagesList`](../aiuser/messages_list/messages.py)):
   cache TTL (30 min).
 - Tool-calling rounds append messages only; the final-round stop instruction
   is a `user`-role message at the tail.
+- **Message conversion pinning** ([`converted_history`](../aiuser/core/aiuser.py)):
+  the first serialization of a message is reused verbatim until the message is
+  edited.  This neutralizes two otherwise nondeterministic history flips:
+  Discord link-preview unfurls arriving after a message is sent, and
+  reply-reference resolution depending on the library's message cache (which
+  tools like `react_to_message` also perturb via `fetch_message`).  Only
+  string-content conversions are pinned; PDF/image-URL parts stay per-request.
+- **Deterministic embed policy** ([`rich_embeds`](../aiuser/messages_list/converter/helpers.py)):
+  only `rich` embeds (author-intended, e.g. other bots' embeds or this bot's
+  own response embed) are serialized.  Discord-generated link previews are
+  excluded, so URL-heavy messages (typical after web search) serialize
+  identically on every request.  URLs remain visible via the message text;
+  YouTube links still use the YouTube API path.
+- The `react_to_message` tool's emoji is never serialized into context —
+  reactions have no effect on the request prefix.
 - A rolling **cache hit ratio** per channel is logged every 20 requests
   (`Prompt cache hit ratio for channel ...`), sourced from provider
   `cached_tokens` usage data.

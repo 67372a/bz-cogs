@@ -43,6 +43,18 @@ class MessageConverter():
         res = []
         role = "user" if message.author.id != self.bot_id else "assistant"
 
+        # Prompt-cache pinning cache: the first serialization of a message is
+        # reused verbatim (until edited), so history re-serializations cannot
+        # diverge the request prefix.  Only string-content entries are stored
+        # (multimodal/PDF/image parts stay per-request by design).
+        history_cache = getattr(self.cog, "converted_history", None)
+        history_key = (message.channel.id, message.id)
+        edit_token = message.edited_at.timestamp() if message.edited_at else 0.0
+        if history_cache is not None:
+            pinned = history_cache.get(history_key)
+            if pinned is not None and pinned[0] == edit_token:
+                return list(pinned[1])
+
         # Check cache first - for messages that were already processed (reply chains)
         # Try channel-scoped key first, then fall back to plain message id
         cache_key = f"{message.channel.id}:{message.id}"
@@ -71,13 +83,17 @@ class MessageConverter():
         elif message.stickers:
             content = await format_sticker_content(message)
             await self.add_entry(content, res, role)
-        elif (len(message.embeds) > 0 and is_embed_valid(message)):
+        elif is_embed_valid(message):
             await self.handle_embed(message, res, role)
         elif contains_youtube_link(message.content):
             await self.handle_embed(message, res, role)
         else:
             content = format_text_content(message)
             await self.add_entry(content, res, role)
+
+        # Pin the first serialization of string-only conversions (see above).
+        if res and history_cache is not None and all(isinstance(e.content, str) for e in res):
+            history_cache[history_key] = (edit_token, tuple(res))
 
         return res or None
 
@@ -292,11 +308,14 @@ class MessageConverter():
         The title regex alone would also match other bots' response embeds
         (e.g. another aiuser instance), which must keep their XML metadata.
         """
-        if not message.embeds:
+        from aiuser.messages_list.converter.helpers import first_rich_embed
+
+        embed = first_rich_embed(message)
+        if embed is None:
             return False
         return (
             message.author.id == self.bot_id
-            and bool(RESPONSE_EMBED_TITLE_REGEX.search(message.embeds[0].title or ""))
+            and bool(RESPONSE_EMBED_TITLE_REGEX.search(embed.title or ""))
         )
 
     async def handle_embed(self, message: Message, res, role):

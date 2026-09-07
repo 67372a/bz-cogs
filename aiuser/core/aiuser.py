@@ -65,6 +65,12 @@ class AIUser(
         # Per-channel rolling prompt-cache hit statistics:
         # channel_id -> [request_count, cached_tokens_sum, prompt_tokens_sum]
         self.cache_hit_stats: Cache[int, list] = Cache(limit=1000)
+        # Message-conversion pinning (see MessageConverter.convert): the first
+        # serialization of a message is reused until it is edited, so history
+        # re-serializations (embed unfurls, reply-reference cache state) cannot
+        # diverge the LLM request prefix.  Only stores string-content entries;
+        # (channel_id, message_id) -> (edit_token, tuple[MessageEntry, ...])
+        self.converted_history: Cache[tuple, tuple] = Cache(limit=2000)
         # PDF annotation cache: (channel_id, originating_user_message_id) -> list[dict]
         self.pdf_annotations: Cache[tuple[int, int], list[dict]] = Cache(limit=200)
         # Backfill anchors: channel_id -> anchor message for the next trigger
@@ -133,6 +139,7 @@ class AIUser(
 
         # TODO: remove user messages from cache instead of clearing the whole cache
         self.cached_messages = Cache(limit=100)
+        self.converted_history = Cache(limit=2000)
 
     @commands.Cog.listener()
     async def on_red_api_tokens_update(self, service_name, _):

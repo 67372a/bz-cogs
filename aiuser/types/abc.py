@@ -44,3 +44,6 @@ class MixinMeta(ABC):
         self.context_front: Cache[int, "HistoryWatermark"]
         # Rolling prompt-cache hit stats per channel: [count, cached_sum, prompt_sum]
         self.cache_hit_stats: Cache[int, list]
+        # Message-conversion pinning: (channel_id, message_id) ->
+        # (edit_token, tuple[MessageEntry, ...])
+        self.converted_history: Cache[tuple, tuple]

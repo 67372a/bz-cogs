@@ -22,6 +22,39 @@ def escape_reserved_xml_tags(content: str) -> str:
         return content
     return XML_RESERVED_TAG_PATTERN.sub(lambda m: escape(m.group(0)), content)
 
+_UNFURL_EMBED_TYPES = frozenset({
+    "link", "image", "video", "gifv", "article", "autosave",
+})
+
+
+def rich_embeds(message: Message) -> list:
+    """Return only author-intended embeds, excluding unfurl previews.
+
+    Discord-generated link-preview unfurls arrive **asynchronously** after a
+    message is sent.  Serializing them makes a message's context bytes depend
+    on unfurl timing, which nondeterministically diverges the LLM request
+    prefix mid-history and destroys provider prompt-cache hits.  Excluding
+    the positively-identified unfurl types keeps serialization deterministic;
+    URLs remain visible to the LLM through the message text itself.
+
+    Embeds with a missing or non-string ``type`` (e.g. test doubles) are
+    treated as author-intended and kept.
+    """
+    out = []
+    for e in message.embeds:
+        etype = getattr(e, "type", None)
+        if isinstance(etype, str) and etype in _UNFURL_EMBED_TYPES:
+            continue
+        out.append(e)
+    return out
+
+
+def first_rich_embed(message: Message):
+    """Return the first author-intended embed, or ``None``."""
+    embeds = rich_embeds(message)
+    return embeds[0] if embeds else None
+
+
 def _get_msg_header(message: Message) -> str:
     """Helper to generate standard XML message header"""
     # Escape quotes and special chars to prevent XML breakage

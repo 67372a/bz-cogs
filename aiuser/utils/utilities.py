@@ -264,11 +264,16 @@ async def build_dynamic_context_message(ctx: commands.Context, text: str = None)
 
 
 def is_embed_valid(message: Message):
-    if (
-        (len(message.embeds) == 0)
-        or (not message.embeds[0].title)
-        or (not message.embeds[0].description)
-    ):
+    """Whether *message* carries a serializable author-intended embed.
+
+    Only ``rich`` embeds count — Discord-generated link-preview unfurls are
+    excluded (see ``rich_embeds``) because their asynchronous arrival makes
+    serialization nondeterministic and breaks prompt-cache prefixes.
+    """
+    from aiuser.messages_list.converter.helpers import first_rich_embed
+
+    embed = first_rich_embed(message)
+    if embed is None or not embed.title or not embed.description:
         return False
     return True
 
