@@ -2,7 +2,6 @@ import logging
 import asyncio
 import re
 from datetime import datetime
-import time as _time
 
 import discord
 from openai import AsyncOpenAI
@@ -20,6 +19,7 @@ from aiuser.core.handlers import handle_message, handle_slash_command
 from aiuser.core.random_message_task import RandomMessageTask
 from aiuser.dashboard.base import DashboardIntegration
 from aiuser.messages_list.entry import MessageEntry
+from aiuser.messages_list.messages import HistoryWatermark
 from aiuser.settings.base import Settings
 from aiuser.response.dispatcher import dispatch_response
 from aiuser.types.abc import CompositeMetaClass
@@ -57,9 +57,14 @@ class AIUser(
         self.cached_messages: Cache[int, MessageEntry] = Cache(limit=100)
         self.message_queues: dict[int, asyncio.Queue] = {}
         self.processing_tasks: dict[int, asyncio.Task] = {}
-        # Track when each channel last had a response processed (for cache window)
         # Bounded LRU caches to prevent unbounded memory growth over long uptimes
-        self.last_response_at: Cache[int, float] = Cache(limit=500)
+        # History watermark per channel (see MessagesList.add_history): pins the
+        # oldest message included in context so the front of the LLM request
+        # prefix stays stable across requests, preserving prompt-cache hits.
+        self.context_front: Cache[int, HistoryWatermark] = Cache(limit=2000)
+        # Per-channel rolling prompt-cache hit statistics:
+        # channel_id -> [request_count, cached_tokens_sum, prompt_tokens_sum]
+        self.cache_hit_stats: Cache[int, list] = Cache(limit=1000)
         # PDF annotation cache: (channel_id, originating_user_message_id) -> list[dict]
         self.pdf_annotations: Cache[tuple[int, int], list[dict]] = Cache(limit=200)
         # Backfill anchors: channel_id -> anchor message for the next trigger
@@ -186,8 +191,6 @@ class AIUser(
                     break
                 try:
                     await dispatch_response(self, ctx, messages_list)
-                    # Record timestamp for cache-window optimization
-                    self.last_response_at[channel_id] = _time.monotonic()
                 except Exception:
                     logger.exception(f"Error processing queue for channel {channel_id}")
                 # Small buffer between messages to ensure order and prevent rate-limit bursts

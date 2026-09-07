@@ -1,7 +1,8 @@
 import json
 import logging
 import random
-from datetime import datetime, timedelta
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Union
 import re
 import time as _time
@@ -26,12 +27,42 @@ logger = logging.getLogger("red.bz_cogs.aiuser")
 
 OPTIN_EMBED_TITLE = ":information_source: AI User Opt-In / Opt-Out"
 
-# When a channel was last processed within this many seconds, the
-# token limit is expanded to the model's full context size so that
-# already-cached messages are not prematurely dropped.
-CACHE_WINDOW_SECONDS = 180  # 3 minutes
 THOUGHTS_EMBED_TITLE_REGEX = re.compile(r'^.*\'s Thoughts$')
 FUNCTION_CALL_EMBED_TITLE_REGEX = re.compile(r'^.*is making the following function calls\.\.\.$')
+
+# Fraction of the token limit used as the stop threshold when walking
+# history backwards.  Leaving ~30% headroom means the front (oldest
+# messages) of the request prefix stays identical across consecutive
+# requests; the front only advances when the headroom is actually
+# consumed (hysteresis).  Provider prompt caches match a byte-identical
+# prefix, so front stability is what preserves cache read hits.
+HISTORY_STOP_FACTOR = 0.7
+
+# If no request confirmed the history watermark within this window, the
+# next request cold-starts its history window (the conversation is
+# considered stale and provider caches will have expired anyway).
+WATERMARK_IDLE_SECONDS = 2 * 60 * 60  # 2 hours
+
+# When a watermark is active, history is fetched back to the watermark
+# timestamp with at least this many messages, so the floor message is
+# always reachable regardless of the configured backread count.
+WATERMARK_FETCH_MIN = 200
+
+
+@dataclass(frozen=True)
+class HistoryWatermark:
+    """Per-channel marker of the oldest message currently included in context.
+
+    Stored on the cog (``cog.context_front``) between requests.  The next
+    request in the same channel treats ``message_id`` as a floor: history is
+    never loaded *older* than the floor, and the floor only advances when
+    token headroom is exhausted (or a genuine conversation time-gap forces a
+    semantic reset).  This keeps the front of the LLM request prefix stable,
+    preserving prompt-cache read hits.
+    """
+    message_id: int
+    created_at: float   # unix timestamp of the floor message
+    confirmed_at: float # monotonic time of the last request that confirmed it
 
 
 def is_function_call_or_thoughts_embed(message: Message) -> bool:
@@ -105,9 +136,10 @@ class MessagesList:
         self.model = None
         self.can_reply = True
         self.prefill: Optional[str] = None
+        self._encoding = None
         self._dynamic_context: Optional[str] = None
         self._raw_persona: Optional[str] = None
-        self._cache_window_active: bool = False
+        self._history_stop_tokens: int = 0
         self._trigger_msg_start: Optional[int] = None  # index of trigger msg entries start
 
     def __len__(self):
@@ -124,20 +156,10 @@ class MessagesList:
         except KeyError:
             self._encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
 
-        # Check if this channel was recently processed — if so, expand
-        # limits to load more history for a longer shared cache prefix.
-        channel_id = self.ctx.channel.id
-        last_at = self._cog.last_response_at.get(channel_id)
-        if last_at is not None and (_time.monotonic() - last_at) < CACHE_WINDOW_SECONDS:
-            self._cache_window_active = True
-            # Expand token limit to the model's full context (no buffer)
-            model_limit = self._get_token_limit_raw(self.model)
-            if model_limit > self.token_limit:
-                logger.info(
-                    f"Cache window active for channel {channel_id} — "
-                    f"expanding token limit {self.token_limit} → {model_limit}"
-                )
-                self.token_limit = model_limit
+        # History walks stop at this threshold, leaving headroom below the
+        # hard limit so the front of the prefix stays stable across
+        # consecutive requests (see HISTORY_STOP_FACTOR).
+        self._history_stop_tokens = int(self.token_limit * HISTORY_STOP_FACTOR)
 
         # 1. Get the user-defined persona (e.g., "You are a helpful assistant...")
         raw_persona = prompt or await self._pick_prompt()
@@ -313,27 +335,44 @@ class MessagesList:
 
             await self._add_content_tokens(entry.content)
 
-    async def _add_content_tokens(self, content):
+    def _ensure_encoding(self):
+        """Lazily initialize the tiktoken encoding if ``_init`` was not run."""
+        if self._encoding is not None:
+            return
+        try:
+            self._encoding = tiktoken.encoding_for_model(self.model or "")
+        except KeyError:
+            self._encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
+
+    def count_tokens(self, content) -> int:
         """Count tokens for a string or a list of multimodal content parts.
 
-        Image parts use the Gemini tiling estimate based on processed
-        dimensions; base64 ``file`` parts use a length-based heuristic.
+        Single unified estimator used by every context-building path so the
+        truncation boundary is consistent between requests.  Image parts use
+        the Gemini tiling estimate based on processed dimensions; base64
+        ``file`` parts use a length-based heuristic.
         """
         if not isinstance(content, list):
-            await self._add_tokens(content)
-            return
+            return len(self._encoding.encode(str(content), disallowed_special=()))
+        total = 0
         for item in content:
             if not isinstance(item, dict):
                 continue
             item_type = item.get("type")
             if item_type == "text":
-                await self._add_tokens(item.get("text"))
+                total += len(self._encoding.encode(str(item.get("text") or ""), disallowed_special=()))
             elif item_type == "image_url":
                 url = (item.get("image_url") or {}).get("url", "")
-                self.tokens += estimate_image_part_tokens(url)
+                total += estimate_image_part_tokens(url)
             elif item_type == "file":
                 file_data = (item.get("file") or {}).get("file_data", "")
-                self.tokens += estimate_file_part_tokens(file_data)
+                total += estimate_file_part_tokens(file_data)
+        return total
+
+    async def _add_content_tokens(self, content):
+        """Add tokens for a string or a list of multimodal content parts."""
+        self._ensure_encoding()
+        self.tokens += self.count_tokens(content)
 
     async def add_system(self, content: str, index: int = None):
         if self.tokens > self.token_limit:
@@ -372,6 +411,43 @@ class MessagesList:
         self.messages.insert(insert_at, entry)
         await self._add_content_tokens(content)
 
+    def _get_history_watermark(self) -> Optional[HistoryWatermark]:
+        """Return the channel's active history watermark, or ``None``.
+
+        Returns ``None`` when an explicit reset applies (``[p]aiuser forget``
+        or a guild-wide prompt reset), when no watermark is stored, or when
+        the watermark has gone stale (no confirmed requests within
+        ``WATERMARK_IDLE_SECONDS`` — provider caches will have expired).
+        """
+        if self.start_time is not None:
+            return None  # explicit forget / prompt reset — hard restart
+        context_front = getattr(self._cog, "context_front", None)
+        if context_front is None:
+            return None
+        watermark = context_front.get(self.ctx.channel.id)
+        if not isinstance(watermark, HistoryWatermark):
+            return None
+        if (_time.monotonic() - watermark.confirmed_at) > WATERMARK_IDLE_SECONDS:
+            logger.debug(
+                f"History watermark for channel {self.ctx.channel.id} is stale — cold-starting window"
+            )
+            return None
+        return watermark
+
+    def _store_history_watermark(self, message_id: Optional[int], created_at: Optional[float]) -> None:
+        """Persist the oldest-included history message for this channel."""
+        context_front = getattr(self._cog, "context_front", None)
+        if context_front is None or message_id is None or created_at is None:
+            return
+        context_front[self.ctx.channel.id] = HistoryWatermark(
+            message_id=int(message_id),
+            created_at=float(created_at),
+            confirmed_at=_time.monotonic(),
+        )
+        logger.debug(
+            f"History watermark for channel {self.ctx.channel.id} set to message {message_id}"
+        )
+
     async def add_history(self):
         limit = await self.config.guild(self.guild).messages_backread()
         max_seconds_gap = await self.config.guild(self.guild).messages_backread_seconds()
@@ -380,12 +456,39 @@ class MessagesList:
             self.start_time - timedelta(seconds=1) if self.start_time else None
         )
 
-        before_msgs, after_msgs = await self._get_past_messages(limit, start_time)
-        
+        watermark = self._get_history_watermark()
+        if watermark is not None:
+            # Fetch back to the watermark so the floor message is always
+            # reachable regardless of the configured backread count.  The
+            # floor prevents the front of the prefix from drifting.
+            fetch_after = datetime.fromtimestamp(
+                watermark.created_at, tz=timezone.utc
+            ) - timedelta(seconds=1)
+            fetch_limit = max(limit, WATERMARK_FETCH_MIN)
+            before_msgs = [
+                message
+                async for message in self.init_message.channel.history(
+                    limit=fetch_limit,
+                    before=self.init_message,
+                    after=fetch_after,
+                    oldest_first=False,
+                )
+            ]
+            after_msgs = [
+                message
+                async for message in self.init_message.channel.history(
+                    limit=limit,
+                    after=self.init_message,
+                    oldest_first=True,
+                )
+            ]
+        else:
+            before_msgs, after_msgs = await self._get_past_messages(limit, start_time)
+
         all_past_messages = list(reversed(after_msgs)) + [self.init_message] + before_msgs
         users = await self._get_unopted_users(all_past_messages[:10])
 
-        await self._process_past_messages(before_msgs, after_msgs, max_seconds_gap)
+        await self._process_past_messages(before_msgs, after_msgs, max_seconds_gap, watermark)
 
         if users and not await self.config.guild(self.guild).optin_disable_embed():
             if (random.random() <= 0.33) or (len(users) > 3):
@@ -406,7 +509,7 @@ class MessagesList:
 
         # Add the anchor message at index 1 (right after system prompt)
         await self.add_msg(anchor, index=1)
-        if self.tokens > self.token_limit:
+        if self.tokens > self._history_stop_tokens:
             logger.debug(f"{self.tokens} tokens used - token limit hit after anchor for backfill {anchor.id}")
             return
 
@@ -427,7 +530,7 @@ class MessagesList:
             if not await self._is_valid_time_gap(last_msg, msg, max_seconds_gap):
                 logger.debug(f"Time gap exceeded between {last_msg.id} and {msg.id}, stopping backfill")
                 break
-            if self.tokens > self.token_limit:
+            if self.tokens > self._history_stop_tokens:
                 logger.debug(f"{self.tokens} tokens used - nearing limit, stopping backfill for message {self.init_message.id}")
                 break
             if (msg.author.id == self.bot.user.id) and (msg.embeds and msg.embeds[0].title == OPTIN_EMBED_TITLE):
@@ -445,6 +548,10 @@ class MessagesList:
         # Ensure the conversation history ends with a user message
         if self.messages and self.messages[-1].role == "assistant":
             self.messages.append(MessageEntry("user", "System Note: Please continue or respond to the latest context."))
+
+        # Pin the anchor as the history watermark: the next request treats it
+        # as the floor, so the backfilled context becomes a stable prefix.
+        self._store_history_watermark(anchor.id, anchor.created_at.timestamp())
 
         logger.info(f"Backfill complete: {len(self.messages)} messages ({self.tokens} tokens) from anchor {anchor.id} to trigger {self.init_message.id}")
 
@@ -482,16 +589,9 @@ class MessagesList:
             insert_at += 1
             entries_inserted += 1
 
-            if isinstance(entry.content, list):
-                for item in entry.content:
-                    if not isinstance(item, dict):
-                        continue
-                    if item.get("type") == "text":
-                        await self._add_tokens(item.get("text"))
-                    elif item.get("type") == "image_url":
-                        self.tokens += 756
-            else:
-                await self._add_tokens(entry.content)
+            # Unified token estimation (same as history paths) so the
+            # truncation boundary is consistent between requests.
+            await self._add_content_tokens(entry.content)
 
         # Shift trigger position forward by the entries we just inserted
         self._trigger_msg_start = insert_at
@@ -539,12 +639,36 @@ class MessagesList:
 
         return users
 
-    async def _process_past_messages(self, before_msgs, after_msgs, max_seconds_gap):
+    async def _process_past_messages(self, before_msgs, after_msgs, max_seconds_gap, watermark=None):
+        # --- Backwards walk: newest → oldest ---
+        # Floor: never include history older than the watermark message.
+        # This pins the front of the request prefix across consecutive
+        # requests (prompt-cache friendly); the floor only advances when
+        # token headroom (HISTORY_STOP_FACTOR) is exhausted or a genuine
+        # conversation time-gap forces a semantic reset.
+        floor_id = watermark.message_id if watermark is not None else None
+        floor_reached = False
+        oldest_included_id: Optional[int] = None
+        oldest_included_ts: Optional[float] = None
+
         last_msg = self.init_message
         for msg in before_msgs:
+            if floor_id is not None and msg.id == floor_id:
+                # Floor reached — include it if there is headroom, then stop.
+                if self.tokens <= self._history_stop_tokens:
+                    before_count = len(self.messages)
+                    await self.add_msg(msg, index=1)
+                    entries_added = len(self.messages) - before_count
+                    if self._trigger_msg_start is not None:
+                        self._trigger_msg_start += entries_added
+                    if entries_added > 0:
+                        oldest_included_id = msg.id
+                        oldest_included_ts = msg.created_at.timestamp()
+                floor_reached = True
+                break
             if not await self._is_valid_time_gap(last_msg, msg, max_seconds_gap):
                 break
-            if self.tokens > self.token_limit:
+            if self.tokens > self._history_stop_tokens:
                 logger.debug(f"{self.tokens} tokens used - nearing limit, stopping context creation for message {self.init_message.id}")
                 break
             if (msg.author.id == self.bot.user.id) and (msg.embeds and msg.embeds[0].title == OPTIN_EMBED_TITLE):
@@ -555,6 +679,9 @@ class MessagesList:
             before_count = len(self.messages)
             await self.add_msg(msg, index=1)
             entries_added = len(self.messages) - before_count
+            if entries_added > 0:
+                oldest_included_id = msg.id
+                oldest_included_ts = msg.created_at.timestamp()
             if self._trigger_msg_start is not None:
                 self._trigger_msg_start += entries_added
             last_msg = msg
@@ -573,6 +700,16 @@ class MessagesList:
                 continue
             await self.add_msg(msg, index=len(self.messages))
             last_msg = msg
+
+        # --- Persist the watermark for the next request ---
+        # Floor reached: re-confirm it (refreshes the idle timestamp) so the
+        # front stays pinned.  Otherwise advance the watermark to the oldest
+        # message actually included this request (gap break, token-limit
+        # jump, or natural exhaustion of the fetched window).
+        if watermark is not None and floor_reached:
+            self._store_history_watermark(watermark.message_id, watermark.created_at)
+        elif oldest_included_id is not None:
+            self._store_history_watermark(oldest_included_id, oldest_included_ts)
 
         # Ensure the conversation history ends with a user message to prevent API strict-sequence errors (e.g. UNEXPECTED_TOOL_CALL)
         if self.messages and self.messages[-1].role == "assistant":
@@ -756,8 +893,7 @@ class MessagesList:
         )
 
     async def _add_tokens(self, content):
-        if not self._encoding:
-            await self._initialize_encoding()
+        self._ensure_encoding()
         content = str(content)
         tokens = self._encoding.encode(content, disallowed_special=())
         self.tokens += len(tokens)
@@ -770,19 +906,6 @@ class MessagesList:
         if model in MODELS_LIMITS:
             limit = MODELS_LIMITS.get(model, limit) - 1000 # 1000 token buffer
 
-        return limit
-
-    @staticmethod
-    def _get_token_limit_raw(model) -> int:
-        """Return the model's full token limit without any buffer.
-
-        Used during the cache window to maximize the prefix length
-        for Gemini implicit caching.
-        """
-        limit = 7000
-        model = model.split("/")[-1].split(":")[0]
-        if model in MODELS_LIMITS:
-            limit = MODELS_LIMITS.get(model, limit)
         return limit
 
     @staticmethod

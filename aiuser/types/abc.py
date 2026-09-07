@@ -39,4 +39,8 @@ class MixinMeta(ABC):
         self.message_queues: dict[int, Queue]
         self.processing_tasks: dict[int, Task]
         self.backfill_anchors: dict[int, discord.Message]
-        self.last_response_at: dict[int, float]
+        # History watermark per channel (HistoryWatermark) — string annotation
+        # avoids a circular import with messages_list.messages
+        self.context_front: Cache[int, "HistoryWatermark"]
+        # Rolling prompt-cache hit stats per channel: [count, cached_sum, prompt_sum]
+        self.cache_hit_stats: Cache[int, list]

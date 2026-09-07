@@ -1,5 +1,7 @@
 
 
+from typing import Optional
+
 import asyncio
 import base64
 import logging
@@ -16,7 +18,15 @@ from aiuser.types.abc import MixinMeta
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
 
-async def process_image_ai_horde(cog: MixinMeta, message: Message, image: Image):
+async def caption_image_ai_horde(cog: MixinMeta, image: Image) -> Optional[str]:
+    """Request a raw caption string for *image* from the AI Horde interrogate API.
+
+    Returns ``None`` on failure.  Callers should pin the result in the
+    caption cache (``aiuser.utils.image_cache.caption_cache``) — the Horde
+    API is crowd-sourced and non-deterministic, so re-requesting captions
+    for the same image produces different text, which breaks the LLM
+    request prefix and provider prompt caching.
+    """
     api_key = (await cog.bot.get_shared_api_tokens("ai-horde")).get("api_key") or "0000000000"
     buffer = BytesIO()
     image.convert('RGB').save(buffer, format='webp', exact=True)
@@ -31,9 +41,14 @@ async def process_image_ai_horde(cog: MixinMeta, message: Message, image: Image)
         ]
     }
     try:
-        caption = await request_ai_horde(payload, api_key)
+        return await request_ai_horde(payload, api_key)
     except Exception:
         logger.exception(f"Failed request to AI Horde")
+        return None
+
+
+async def process_image_ai_horde(cog: MixinMeta, message: Message, image: Image):
+    caption = await caption_image_ai_horde(cog, image)
 
     logger.info(
         f"AI Horde image caption result for message {message.id} in {message.guild.name}: {caption}")

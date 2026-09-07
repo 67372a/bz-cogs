@@ -11,8 +11,8 @@ from aiuser.types.abc import MixinMeta
 from aiuser.types.enums import ScanImageMode
 from aiuser.messages_list.converter.helpers import format_text_content, _get_msg_header
 from aiuser.messages_list.converter.image.AI_horde import \
-    process_image_ai_horde
-from aiuser.utils.image_cache import image_cache, processed_image_cache
+    caption_image_ai_horde, process_image_ai_horde
+from aiuser.utils.image_cache import image_cache, processed_image_cache, caption_cache
 from aiuser.utils.image_processing import (
     compute_byte_hash,
     compute_pixel_hash,
@@ -111,14 +111,32 @@ async def _process_attachment(
 
     elif mode == ScanImageMode.AI_HORDE:
         pil_image = _decode_webp_to_pil(cached_processed)
-        return await process_image_ai_horde(cog, message, pil_image)
+        # Pin the caption text per image: the Horde API is crowd-sourced and
+        # non-deterministic, and the caption is serialized into LLM history —
+        # a re-generated caption diverges the request prefix mid-history and
+        # destroys provider prompt-cache hits.  Failures are pinned as a
+        # stable placeholder (negative caching) and retried after the TTL.
+        caption = caption_cache.get(pixel_hash, max_pixels)
+        if caption is None:
+            caption = await caption_image_ai_horde(cog, pil_image)
+            if not caption:
+                caption = caption_cache.FAILURE_PLACEHOLDER
+            caption_cache.set(pixel_hash, max_pixels, caption)
+        author = message.author
+        return (
+            f'User "{author.name}" with display name "{author.display_name}" '
+            f'sent: [Image: {caption}]'
+        )
 
     elif mode == ScanImageMode.LOCAL:
         try:
             from aiuser.messages_list.converter.image.local import \
                 process_image_locally
             pil_image = _decode_webp_to_pil(cached_processed)
-            return await process_image_locally(cog, message, pil_image)
+            return await process_image_locally(
+                cog, message, pil_image,
+                pixel_hash=pixel_hash, max_pixels=max_pixels,
+            )
         except ImportError:
             logger.exception(
                 "Local image scanning dependencies not installed, "

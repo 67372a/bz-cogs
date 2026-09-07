@@ -364,7 +364,7 @@ class TestAddHistoryCutoff:
             captured["start_time"] = start_time
             return [], []
 
-        async def fake_process(before, after, gap):
+        async def fake_process(before, after, gap, watermark=None):
             pass
 
         async def fake_unopted(messages):

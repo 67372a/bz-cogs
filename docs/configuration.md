@@ -152,3 +152,45 @@ Supports `{botname}`, `{botdisplayname}`, `{authorname}`, `{authordisplayname}` 
 - `/chat <text>` — Slash command to talk to the AI (cooldown: 30s global, 5s per user)
 - `[p]aiuserowner endpoint <url>` — Set custom OpenAI-compatible endpoint or `"openrouter"` shortcut
 - `[p]aiuserowner timeout <seconds>` — Set API request timeout
+
+---
+
+## 8. Prompt Cache Behavior
+
+LLM providers (OpenAI, Gemini via OpenRouter, etc.) discount repeated prompt
+**prefixes** — a request only gets cache read-hits when the beginning of the
+message list is byte-identical to a recent request. AIUser actively manages
+context for this (see [`MessagesList`](../aiuser/messages_list/messages.py)):
+
+**What the cog does to preserve cache hits**
+
+- The system prompt is built from stable variables only; per-request values
+  (time, author, random number) are placed in a trailing `user` message.
+- A per-channel **history watermark** ([`HistoryWatermark`](../aiuser/messages_list/messages.py))
+  pins the oldest message included in context. History is never loaded older
+  than the watermark, so the front of the prefix does not drift between
+  requests. The watermark only advances when token headroom (70% of the
+  token limit) is exhausted, when a genuine conversation time-gap forces a
+  semantic reset, or after 2 hours of inactivity.
+- Image captions (AI Horde / Local modes) are **pinned per image** in
+  [`caption_cache`](../aiuser/utils/image_cache.py) — captions are serialized
+  into history and a re-generated caption would diverge the prefix mid-way.
+  Caption failures are pinned as a stable placeholder and retried after the
+  cache TTL (30 min).
+- Tool-calling rounds append messages only; the final-round stop instruction
+  is a `user`-role message at the tail.
+- A rolling **cache hit ratio** per channel is logged every 20 requests
+  (`Prompt cache hit ratio for channel ...`), sourced from provider
+  `cached_tokens` usage data.
+
+**Events that intentionally reset the cache prefix (expected full misses)**
+
+| Event | Effect |
+|-------|--------|
+| `[p]aiuser forget` (channel) or a prompt reset | History window cold-starts from the new start time |
+| `[p]aiuser backfill <ID>` | The anchored request uses a different context layout; normal layout resumes on the next request |
+| Toggling any function-calling / web tool setting | The system prompt changes (citation instructions are appended when web tools are enabled) |
+| User/bot rename, channel topic change, guild emoji changes | Identity strings embedded in the system prompt or message headers change |
+| First image trigger in a channel (or mix of image/non-image triggers) | Requests switch between the main model and `scan_images_model` — separate cache namespaces |
+| Token headroom exhausted in a long conversation | The history watermark advances (jumps to ≤70% of the token limit) and older history drops from the front |
+| Bot restart | In-memory watermark/caption caches reset; provider caches are typically expired anyway |

@@ -247,7 +247,77 @@ class ProcessedImageCache:
         self._pixel_index.clear()
 
 
+# ── Caption Cache ────────────────────────────────────────────────────────────
+
+
+class CaptionCache:
+    """TTL cache for image caption **text**, keyed by ``(pixel_hash, max_pixels)``.
+
+    The processed-image cache (above) makes the image *bytes* deterministic,
+    but caption text is generated per request — and the AI Horde caption API
+    is crowd-sourced and non-deterministic.  Because the caption string is
+    serialized into the LLM context for that message, a re-generated caption
+    diverges the request prefix mid-history and destroys provider prompt-cache
+    hits.  Pinning the first successful caption keeps the serialized history
+    byte-stable and eliminates redundant caption API round-trips.
+
+    Failures are stored as a stable placeholder ("negative caching") so a
+    transient caption failure does not cause the message to vanish from the
+    context and later reappear mid-prefix.  The placeholder is retried
+    naturally after the TTL expires.
+    """
+
+    CAPTION_CACHE_TTL = 1800        # seconds — matches ProcessedImageCache
+    CAPTION_CACHE_MAX_SIZE = 500    # entries
+    FAILURE_PLACEHOLDER = "[Image: caption unavailable]"
+
+    def __init__(self):
+        # key -> (caption_text, cached_at)
+        self._cache: dict[str, tuple[str, float]] = {}
+
+    @staticmethod
+    def _key(pixel_hash: Optional[str], max_pixels: int) -> str:
+        h = hashlib.sha256()
+        h.update((pixel_hash or "").encode("ascii"))
+        h.update(f"|mp{max_pixels}".encode("ascii"))
+        return h.hexdigest()
+
+    def _is_expired(self, cached_at: float) -> bool:
+        return (time.time() - cached_at) > self.CAPTION_CACHE_TTL
+
+    def get(self, pixel_hash: Optional[str], max_pixels: int) -> Optional[str]:
+        """Return the pinned caption text, or ``None`` on miss/expiry."""
+        key = self._key(pixel_hash, max_pixels)
+        entry = self._cache.get(key)
+        if entry is None:
+            return None
+        caption, cached_at = entry
+        if self._is_expired(cached_at):
+            del self._cache[key]
+            return None
+        return caption
+
+    def set(self, pixel_hash: Optional[str], max_pixels: int, caption: str) -> None:
+        """Pin *caption* for the image identified by the pixel hash."""
+        if not caption:
+            return
+        key = self._key(pixel_hash, max_pixels)
+        self._cache[key] = (caption, time.time())
+        if len(self._cache) > self.CAPTION_CACHE_MAX_SIZE:
+            self._prune()
+
+    def _prune(self) -> None:
+        now = time.time()
+        expired = [k for k, v in self._cache.items() if (now - v[1]) > self.CAPTION_CACHE_TTL]
+        for k in expired:
+            del self._cache[k]
+
+    def clear(self) -> None:
+        self._cache.clear()
+
+
 # ── Module-level singletons ──────────────────────────────────────────────────
 
 image_cache = ImageCache()
 processed_image_cache = ProcessedImageCache()
+caption_cache = CaptionCache()

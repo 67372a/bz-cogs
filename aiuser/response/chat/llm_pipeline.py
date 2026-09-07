@@ -150,12 +150,59 @@ def _extract_reasoning_from_details(reasoning_details: list) -> Optional[str]:
 
 logger = logging.getLogger("red.bz_cogs.aiuser")
 
+# Log the rolling prompt-cache hit ratio every N requests per channel.
+CACHE_STATS_LOG_INTERVAL = 20
+
+
+def update_cache_hit_stats(cog, channel_id: int, usage) -> None:
+    """Accumulate per-channel rolling prompt-cache hit statistics.
+
+    ``usage`` is a provider usage object (or ``None``).  Statistics are
+    stored on the cog as ``cache_hit_stats[channel_id] =
+    [request_count, cached_tokens_sum, prompt_tokens_sum]`` and the rolling
+    ratio is logged every ``CACHE_STATS_LOG_INTERVAL`` requests so operators
+    can verify that context-management changes actually improve cache
+    read-hit rates.
+
+    Never raises — statistics are non-critical.
+    """
+    try:
+        if cog is None or usage is None:
+            return
+        cached = getattr(usage, "cached_tokens", None)
+        if cached is None:
+            details = getattr(usage, "prompt_tokens_details", None)
+            cached = getattr(details, "cached_tokens", None) if details is not None else None
+        cached = int(cached or 0)
+        prompt = int(getattr(usage, "prompt_tokens", 0) or 0)
+
+        stats_cache = getattr(cog, "cache_hit_stats", None)
+        if stats_cache is None:
+            return
+        stats = stats_cache.get(channel_id)
+        if stats is None:
+            stats = [0, 0, 0]
+        stats[0] += 1
+        stats[1] += cached
+        stats[2] += prompt
+        stats_cache[channel_id] = stats
+
+        if stats[0] % CACHE_STATS_LOG_INTERVAL == 0:
+            ratio = (stats[1] / stats[2] * 100.0) if stats[2] else 0.0
+            logger.info(
+                "Prompt cache hit ratio for channel %d (last %d requests): %.1f%%",
+                channel_id, stats[0], ratio,
+            )
+    except Exception:
+        logger.debug("Failed to update cache hit stats", exc_info=True)
+
 
 class LLMPipeline:
     def __init__(self, cog: MixinMeta, ctx: commands.Context, messages: MessagesList):
         self.ctx: commands.Context = ctx
         self.config: Config = cog.config
         self.bot = cog.bot
+        self.cog = cog
         self.msg_list: MessagesList = messages
         self.model: str = messages.model
         self.can_reply: bool = messages.can_reply
@@ -361,11 +408,42 @@ class LLMPipeline:
             cache_key = (self.ctx.channel.id, original_msg.id)
             annotations = cog.pdf_annotations.get(cache_key)
             if annotations:
-                logger.info(f"Injecting {len(annotations)} cached PDF annotation(s) from message {original_msg.id} into reply chain")
-                if self.msg_list.messages:
-                    self._cached_pdf_annotations = annotations
+                text = self._format_annotations_as_text(annotations)
+                if text and self.msg_list.messages:
+                    # Append as a trailing user message (tail injection).
+                    # Injecting annotations into a mid-prefix assistant
+                    # message (the previous approach) mutated the request
+                    # prefix when the annotation cache was populated between
+                    # requests, invalidating provider prompt caches.  The
+                    # tail is never cacheable anyway, so grounding data
+                    # belongs there.
+                    self.msg_list.messages.append(MessageEntry("user", text))
+                    logger.info(f"Injected {len(annotations)} cached PDF annotation(s) from message {original_msg.id} as trailing user context")
         except Exception:
             logger.warning("Error injecting PDF annotations", exc_info=True)
+
+    @staticmethod
+    def _format_annotations_as_text(annotations) -> Optional[str]:
+        """Serialize PDF/web annotations into a deterministic text block.
+
+        Accepts pydantic annotation objects or plain dicts.  Returns ``None``
+        when no usable URL citations are found.
+        """
+        lines = []
+        for ann in annotations or []:
+            if isinstance(ann, dict):
+                citation = ann.get("url_citation") or {}
+                url = citation.get("url") or ann.get("url")
+                title = citation.get("title") or ann.get("title") or ""
+            else:
+                citation = getattr(ann, "url_citation", None)
+                url = getattr(citation, "url", None) or getattr(ann, "url", None)
+                title = getattr(citation, "title", None) or getattr(ann, "title", None) or ""
+            if url:
+                lines.append(f"- {title} ({url})" if title else f"- {url}")
+        if not lines:
+            return None
+        return "Referenced document annotations (sources):\n" + "\n".join(lines[:10])
 
     async def _store_pdf_annotations_from_response(self, response):
         cog = self.bot.get_cog("AIUser")
@@ -515,8 +593,7 @@ class LLMPipeline:
     async def call_client(
         self, kwargs: Dict[str, Any]
     ) -> Tuple[Optional[str], Optional[str], List[ChatCompletionMessageToolCall], Optional[List[Dict]], Optional[Dict]]:
-        injected_annotations = getattr(self, "_cached_pdf_annotations", None)
-        current_messages_json = self.msg_list.get_json(annotations_for_assistant=injected_annotations)
+        current_messages_json = self.msg_list.get_json()
 
         localKwargs = copy.deepcopy(kwargs)
 
@@ -575,6 +652,8 @@ class LLMPipeline:
                     logger.info(f"Cache hit: {cached}/{response.usage.prompt_tokens} prompt tokens served from cache.")
             except Exception:
                 pass  # Non-critical; don't let cache logging break the pipeline
+            # Accumulate the rolling per-channel hit-ratio metric
+            update_cache_hit_stats(self.cog, self.ctx.channel.id, response.usage)
 
         logger.info(f"Raw LLM response (truncated): id={response.id}, finish_reason={response.choices[0].finish_reason}")
 
